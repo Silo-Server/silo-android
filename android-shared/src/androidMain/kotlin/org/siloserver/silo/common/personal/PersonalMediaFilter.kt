@@ -43,10 +43,11 @@ enum class PersonalMediaFilter(@StringRes val label: Int) {
     /**
      * The count for the list header. All uses the server's total. A narrowed
      * view counts what it shows, and only once every page has loaded, so the
-     * number never claims more or fewer titles than the list holds.
+     * number never claims more or fewer titles than the list holds. Pass
+     * [othersHidden] when the caller also drops items the server counted.
      */
-    fun shownTotal(state: PersonalListUiState, shownCount: Int): Int? = when {
-        this == All -> state.total
+    fun shownTotal(state: PersonalListUiState, shownCount: Int, othersHidden: Boolean = false): Int? = when {
+        this == All && !othersHidden -> state.total
         state.hasMore -> null
         else -> shownCount
     }

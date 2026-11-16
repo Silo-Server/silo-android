@@ -58,6 +58,7 @@ import org.siloserver.silo.tv.ui.theme.sectionEyebrow
 import org.siloserver.silo.tv.ui.theme.tvPageContentPadding
 import org.siloserver.silo.tv.ui.theme.tvPageStartPadding
 import org.siloserver.silo.tv.ui.theme.tvPresetGridColumns
+import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.siloserver.silo.viewmodel.FavoritesViewModel
 import org.siloserver.silo.viewmodel.HistoryViewModel
 import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
@@ -337,9 +338,10 @@ private fun PersonalListResumeRefresh(
 private class TvShownItems(val items: List<BrowseItem>, val total: Int?)
 
 /**
- * Narrows [state] to the switch's option. The list pages unscoped, so a
- * narrowed view can come up empty while later pages still hold matches; it
- * keeps asking for pages until one does or the list runs out.
+ * Narrows [state] to the switch's option, after dropping what TV never shows
+ * (ebooks, which have no reader here). The list pages unscoped, so a narrowed
+ * view can come up empty while later pages still hold matches; it keeps
+ * asking for pages until one does or the list runs out.
  */
 @Composable
 private fun rememberShownItems(
@@ -347,16 +349,19 @@ private fun rememberShownItems(
     mediaSwitch: TvMediaSwitch?,
     onLoadMore: () -> Unit,
 ): TvShownItems {
-    val filter = mediaSwitch?.selected
-    val items = remember(state.items, filter) { filter?.apply(state.items) ?: state.items }
+    val filter = mediaSwitch?.selected ?: return TvShownItems(state.items, state.total)
+    val tvItems = remember(state.items) { state.items.visibleOnTv() }
+    val items = remember(tvItems, filter) { filter.apply(tvItems) }
     LaunchedEffect(items.isEmpty(), state.hasMore, state.isLoading, state.isLoadingMore, state.isRefreshing, state.error) {
-        if (filter != null && items.isEmpty() && state.hasMore && !state.isLoading &&
+        if (items.isEmpty() && state.hasMore && !state.isLoading &&
             !state.isLoadingMore && !state.isRefreshing && state.error == null
         ) {
             onLoadMore()
         }
     }
-    return TvShownItems(items, if (filter == null) state.total else filter.shownTotal(state, items.size))
+    // The server's total counts hidden ebooks too.
+    val total = filter.shownTotal(state, items.size, othersHidden = tvItems.size != state.items.size)
+    return TvShownItems(items, total)
 }
 
 /** All · Movies · TV Shows chips above a saved list's Sort/Filter row. */
@@ -488,6 +493,7 @@ private fun PersonalGrid(
                 val controlsState = controls?.uiState?.collectAsState()?.value
                 TvCatalogGrid(
                     items = if (state.error != null) emptyList() else shown.items,
+                    loadedItemCount = state.items.size,
                     // A restored deep scroll position sits at the paging threshold,
                     // so the grid would ask for the next page the moment it lands.
                     // During a refresh that page is fetched at an offset the
@@ -598,6 +604,7 @@ private fun PersonalInlineGrid(
         val listIsEmpty = shown.items.isEmpty() && !state.isLoading && !state.isRefreshing
         TvCatalogGrid(
             items = if (state.error != null) emptyList() else shown.items,
+            loadedItemCount = state.items.size,
             // A restored deep scroll position sits at the paging threshold,
             // so the grid would ask for the next page the moment it lands.
             // During a refresh that page is fetched at an offset the

@@ -31,6 +31,7 @@ class PersonalMediaFilterTest {
         assertEquals(40, PersonalMediaFilter.All.shownTotal(partial, 3))
         assertNull(PersonalMediaFilter.Movies.shownTotal(partial, 1))
         assertEquals(1, PersonalMediaFilter.Movies.shownTotal(partial.copy(hasMore = false), 1))
+        assertNull(PersonalMediaFilter.All.shownTotal(partial, 3, othersHidden = true))
     }
 
     @Test
