@@ -786,9 +786,9 @@ fun TvMainShell(
         navigateToRoute(route)
     }
     // Hands Switch Profile this page. A route with arguments can't be rebuilt
-    // from its pattern, and Home is where a new Main starts anyway.
+    // from its pattern; reopening Main lands on Home for those.
     val switchProfileFromHere: () -> Unit = {
-        onSwitchProfile(currentRoute.takeIf { '{' !in it && it != nestedNav.graph.startDestinationRoute })
+        onSwitchProfile(currentRoute.takeIf { '{' !in it })
     }
 
     // Secondary routes (reached FROM another screen — Settings -> Favorites/

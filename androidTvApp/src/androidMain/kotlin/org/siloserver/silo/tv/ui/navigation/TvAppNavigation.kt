@@ -630,7 +630,11 @@ fun TvAppNavigation(
             if (revision != foregroundRevision || navController.currentBackStackEntry?.id != back.pickerEntryId) {
                 // Silo left the foreground, or the picker went, while the profile
                 // reopened: close it again rather than skip its PIN later.
-                if (tokenManager.getProfileId() == back.profileId) activeProfileReset.clearActiveProfile()
+                // Not under a cast identity: its id isn't this TV's profile, and
+                // clearing there would reach the cast session's state instead.
+                if (!tokenManager.hasTemporaryScope() && tokenManager.getProfileId() == back.profileId) {
+                    activeProfileReset.clearActiveProfile()
+                }
                 return@launch
             }
             enterChosenProfile(restoreShellRoute = back.shellRoute)
@@ -1336,6 +1340,9 @@ fun TvAppNavigation(
         composable(TvRoute.ProfileSelection.route) { pickerEntry ->
             TvProfileSelectionScreen(
                 onCancelSwitch = if (switchReturn?.pickerEntryId == pickerEntry.id) ::cancelProfileSwitch else null,
+                // A profile edited or deleted here may no longer match the proof
+                // the switch kept, so the way back goes once Manage starts.
+                onManageModeStarted = { switchReturn = null },
                 onProfileSelected = onProfileSelected@{
                     // A tile whose session the server already revoked expires
                     // while it is being chosen: the expiry routes to sign-in,

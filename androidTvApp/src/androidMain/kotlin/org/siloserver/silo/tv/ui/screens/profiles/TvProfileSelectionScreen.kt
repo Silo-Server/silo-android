@@ -122,6 +122,8 @@ fun TvProfileSelectionScreen(
     onProfileSelected: () -> Unit,
     /** Set on a picker Switch Profile opened: Back cancels the switch. */
     onCancelSwitch: (() -> Unit)? = null,
+    /** Manage mode started: a profile may now be edited or deleted. */
+    onManageModeStarted: () -> Unit = {},
     onAddProfile: () -> Unit = {},
     onEditProfile: (String) -> Unit = {},
     /** Change Account; a server ID starts it on that server's "Add an account". */
@@ -135,7 +137,8 @@ fun TvProfileSelectionScreen(
     val state by viewModel.uiState.collectAsState()
     rememberTvActiveServer()
     // The PIN pad and the dialogs are their own windows and take Back first.
-    BackHandler(enabled = onCancelSwitch != null) { onCancelSwitch?.invoke() }
+    BackHandler(enabled = onCancelSwitch != null && !state.isManageMode) { onCancelSwitch?.invoke() }
+    LaunchedEffect(state.isManageMode) { if (state.isManageMode) onManageModeStarted() }
 
     // Reload on resume so a profile created/edited on a pushed screen is
     // reflected when we return (the VM otherwise only loads in init).
