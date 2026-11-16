@@ -7012,12 +7012,14 @@ class PlayerViewModel(
         } else {
             userItemStatePort.localPosition(contentId, fileId) ?: unsentBefore?.let { before ->
                 // The server took it while the detail was loading, so that answer can
-                // predate it: read the server's position again.
-                loadLocalWatchMetadata(
+                // predate it: read the server's position again, unless a newer local
+                // one was queued meanwhile.
+                val reread = loadLocalWatchMetadata(
                     catalogRepository, watchOwner, media.serverId, media.profileId, contentId,
                     libraryId = browseLibraryId,
                     fileId = fileId,
-                ) { ownsLoad(loadOwner) }?.userData?.positionSeconds ?: before
+                ) { ownsLoad(loadOwner) }?.userData?.positionSeconds
+                userItemStatePort.localPosition(contentId, fileId) ?: reread ?: before
             }
         }
         if (!ownsLoad(loadOwner)) return false
