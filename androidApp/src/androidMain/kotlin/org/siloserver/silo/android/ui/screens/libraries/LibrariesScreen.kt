@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.libraries
 
+import org.siloserver.silo.android.ui.components.PosterArtworkAspectRatio
+import org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.currentFormatLocale
@@ -1271,6 +1273,7 @@ private fun RecommendedTabContent(
         state.isLoadingSections && state.sections.isEmpty() -> {
             MediaRowsSkeleton(
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
+                posterAspect = state.loadingCardAspect,
             )
         }
         state.sectionsError != null && state.sections.isEmpty() -> {
@@ -1413,6 +1416,7 @@ private fun BrowseTabContent(
                 PosterGridSkeleton(
                     progress = rememberShimmerProgress(),
                     modifier = Modifier.fillMaxSize().padding(top = topInset),
+                    posterAspect = state.loadingCardAspect,
                 )
             }
             state.catalogError != null -> {
@@ -2045,3 +2049,11 @@ private fun UserLibrary.typeLabel(): String = stringResource(
         else -> CommonR.string.library_type_generic
     },
 )
+
+/** The shape of the cards a Recommended or Browse page is loading: square in an audiobook library. */
+private val LibrariesUiState.loadingCardAspect: Float
+    get() = if (isAudiobookLikeLibraryType(libraries.firstOrNull { it.id == selectedLibraryId }?.type)) {
+        1f
+    } else {
+        PosterArtworkAspectRatio
+    }
