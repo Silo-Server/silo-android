@@ -121,6 +121,9 @@ fun MediaRow(
     val imageCapabilities: ImageCapabilitiesSession = koinInject()
     val heroHandoff = LocalHeroSourceHandoff.current
     val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
+    // Square covers when the row is all audiobooks, as on iOS; the row keeps
+    // one card height otherwise.
+    val posterAspectRatio = remember(uniqueItems) { sharedArtworkAspectRatio(uniqueItems.map { it.type }) }
     val diagnosticsKeySnapshot = remember(items) {
         DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
     }
@@ -371,6 +374,7 @@ fun MediaRow(
                             overlay = rowItem.overlay,
                             actions = cardActions(item),
                             modifier = Modifier.animateItem(),
+                            artworkAspectRatio = posterAspectRatio,
                             sharedContentId = item.contentId,
                             widthIsExact = true,
                         )
@@ -381,7 +385,7 @@ fun MediaRow(
             if (onExploreAllClick != null) {
                 item(key = EXPLORE_ALL_KEY, contentType = "explore-all:${cardStyle.name}") {
                     CompositionLocalProvider(LocalViewConfiguration provides baseViewConfiguration) {
-                        ExploreAllCard(cardStyle = cardStyle, onClick = onExploreAllClick)
+                        ExploreAllCard(cardStyle = cardStyle, onClick = onExploreAllClick, posterAspectRatio = posterAspectRatio)
                     }
                 }
             }
@@ -400,10 +404,16 @@ private const val EXPLORE_ALL_KEY = "\u0000explore-all"
  * a movie page's box set row.
  */
 @Composable
-internal fun ExploreAllCard(cardStyle: CardStyle, onClick: () -> Unit, width: Dp? = null) {
+internal fun ExploreAllCard(
+    cardStyle: CardStyle,
+    onClick: () -> Unit,
+    width: Dp? = null,
+    /** The row's poster shape: square in an audiobook row. */
+    posterAspectRatio: Float = PosterArtworkAspectRatio,
+) {
     val scale = LocalCardPresentation.current.posterSize.posterScale
     val (defaultWidth, aspectRatio, shape) = when (cardStyle) {
-        CardStyle.Poster -> Triple(120.dp * scale, 2f / 3.3f, MaterialTheme.shapes.small)
+        CardStyle.Poster -> Triple(120.dp * scale, posterAspectRatio, MaterialTheme.shapes.small)
         CardStyle.Backdrop -> Triple(280.dp * scale, 16f / 9f, RoundedCornerShape(10.dp))
     }
     Box(
