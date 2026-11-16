@@ -80,6 +80,8 @@ internal fun TvAudiobookDetailHero(
                 thumbhash = detail.posterThumbhash,
                 contentDescription = detail.title,
                 contentScale = ContentScale.Crop,
+                // Keeps the card's cover while the full-size one loads.
+                holdPreviousImage = true,
                 modifier = Modifier
                     .matchParentSize()
                     .blur(30.dp)
@@ -117,6 +119,7 @@ internal fun TvAudiobookDetailHero(
                     .shadow(20.dp, RoundedCornerShape(14.dp)),
                 cornerRadius = 14.dp,
                 defaultArtwork = DefaultArtworkKind.Audiobook,
+                holdPreviousImage = true,
             )
 
             Column(
