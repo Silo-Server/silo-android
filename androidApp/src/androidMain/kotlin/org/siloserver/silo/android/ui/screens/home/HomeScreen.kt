@@ -128,7 +128,6 @@ fun HomeScreen(
     onPlayClick: (String, Double?) -> Unit,
     /** Opens a row's full page ("Explore all"). */
     onExploreSection: ((org.siloserver.silo.model.section.ResolvedSection) -> Unit)? = null,
-    onBottomNavMinimizedChange: (Boolean) -> Unit = {},
     viewModel: HomeViewModel,
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
@@ -276,29 +275,6 @@ fun HomeScreen(
 
     val listState = rememberLazyListState()
     val currentDiagnosticsSections by rememberUpdatedState(regularSections)
-    val currentBottomNavCallback by rememberUpdatedState(onBottomNavMinimizedChange)
-    LaunchedEffect(listState) {
-        var previousIndex = listState.firstVisibleItemIndex
-        var previousOffset = listState.firstVisibleItemScrollOffset
-        snapshotFlow {
-            Triple(
-                listState.firstVisibleItemIndex,
-                listState.firstVisibleItemScrollOffset,
-                listState.isScrollInProgress,
-            )
-        }.collect { (index, offset, isScrolling) ->
-            val isAtTop = index == 0 && offset == 0
-            if (isAtTop) {
-                currentBottomNavCallback(false)
-            } else if (isScrolling) {
-                val movingDown = index > previousIndex ||
-                    (index == previousIndex && offset > previousOffset)
-                if (movingDown) currentBottomNavCallback(true)
-            }
-            previousIndex = index
-            previousOffset = offset
-        }
-    }
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
             .distinctUntilChanged()
