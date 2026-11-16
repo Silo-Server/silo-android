@@ -44,6 +44,28 @@ class TvHeroCoverTest {
     }
 
     @Test
+    fun theShownCoverStaysUntilTheDetailPosterHasLoaded() {
+        val book = item("audiobook")
+        val state = TvFocusMarqueeState()
+        state.preview(book, rowTitle = "Row")
+        state.commit(state.candidate)
+        state.applyEnrichment(
+            book.contentId,
+            TvMarqueeEnrichment.from(
+                ItemDetail(contentId = book.contentId, type = "audiobook", title = "Title", posterUrl = "https://art/detail-poster.jpg"),
+            ),
+        )
+
+        // A slow or failed load leaves the row's cover on screen.
+        assertEquals("https://art/row-poster.jpg", state.backdropContent?.heroBackdropUrl)
+        assertEquals(TvPendingCover("https://art/detail-poster.jpg", TvSquareCoverAspect), state.pendingCover)
+
+        state.markCoverLoaded("https://art/detail-poster.jpg")
+        assertEquals("https://art/detail-poster.jpg", state.backdropContent?.heroBackdropUrl)
+        assertNull(state.pendingCover)
+    }
+
+    @Test
     fun aBackdropIsNotReplacedByTheDetailPoster() {
         val content = TvMarqueeContent.from(item("movie", backdropUrl = "https://art/backdrop.jpg"), rowTitle = "Row")
         val enrichment = TvMarqueeEnrichment.from(

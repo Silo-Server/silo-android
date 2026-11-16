@@ -398,9 +398,32 @@ class TvFocusMarqueeState internal constructor() {
     var enrichment: TvMarqueeEnrichment? by mutableStateOf(null)
         private set
 
+    /** Detail posters that have finished loading. A framed cover upgrades to
+     *  its detail poster only once that image is here, so a slow or failed
+     *  load never replaces a cover already on screen. */
+    private var loadedCoverUrls by mutableStateOf(emptySet<String>())
+
     /** Base content with only its effective artwork upgraded for the backdrop. */
     val backdropContent: TvMarqueeContent?
-        get() = content?.let { base -> enrichment?.let(base::withEnrichment) ?: base }
+        get() = content?.let { base ->
+            enrichment?.let { base.withEnrichment(it.withLoadedCoverOnly()) } ?: base
+        }
+
+    private fun TvMarqueeEnrichment.withLoadedCoverOnly(): TvMarqueeEnrichment =
+        if (posterUrl == null || posterUrl in loadedCoverUrls) this else copy(posterUrl = null)
+
+    /** The detail poster the displayed framed cover is waiting on; the feed
+     *  loads it and reports back through [markCoverLoaded]. */
+    internal val pendingCover: TvPendingCover?
+        get() {
+            val aspect = content?.coverAspect ?: return null
+            val url = enrichment?.posterUrl?.takeIf { it !in loadedCoverUrls } ?: return null
+            return TvPendingCover(url, aspect)
+        }
+
+    internal fun markCoverLoaded(url: String) {
+        loadedCoverUrls = loadedCoverUrls + url
+    }
 
     internal var candidate: TvMarqueeContent? by mutableStateOf(null)
 
@@ -508,6 +531,9 @@ internal fun SectionItem.heroCoverAspect(): Float? = when {
     isAudiobookMediaType(type) -> TvSquareCoverAspect
     else -> TvPosterCoverAspect
 }
+
+/** A framed cover's detail poster, and the width over height it is drawn at. */
+internal data class TvPendingCover(val url: String, val aspect: Float)
 
 /** [TvMarqueeContent.coverAspect] for a square audiobook cover. */
 const val TvSquareCoverAspect = 1f

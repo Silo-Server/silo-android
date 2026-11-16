@@ -66,12 +66,11 @@ private const val GlowSigmaPerCoverHeight = 36f / 380f
 private const val GlowOpacity = 0.55f
 
 private suspend fun blurredCover(context: Context, url: String, aspect: Float): ImageBitmap? {
-    val thumbnail = runCatching {
-        val result = SingletonImageLoader.get(context).execute(
-            ImageRequest.Builder(context).data(url).allowHardware(false).size(128).build(),
-        )
-        (result as? SuccessResult)?.image?.toBitmap()
-    }.getOrNull() ?: return null
+    // A failed load comes back as an error result; cancellation propagates.
+    val result = SingletonImageLoader.get(context).execute(
+        ImageRequest.Builder(context).data(url).allowHardware(false).size(128).build(),
+    )
+    val thumbnail = (result as? SuccessResult)?.image?.toBitmap() ?: return null
 
     val sigma = GlowSigmaPerCoverHeight * LayerCoverHeight
     val padding = ceil(sigma * 3).toInt()

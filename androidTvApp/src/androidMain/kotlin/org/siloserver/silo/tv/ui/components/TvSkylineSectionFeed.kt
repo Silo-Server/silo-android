@@ -34,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +52,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.MaterialTheme
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
+import coil3.request.SuccessResult
 import org.siloserver.silo.common.settings.LocalShowTitleArt
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.section.ResolvedSection
@@ -81,6 +83,7 @@ import org.siloserver.silo.tv.ui.util.isAudiobookMediaType
 import kotlinx.coroutines.CancellationException
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -566,19 +569,6 @@ fun TvSkylineSectionFeed(
                                         )
                                     }
                                 }
-                                // Without a backdrop the hero frames the detail's poster.
-                                val coverAspect = item.heroCoverAspect()
-                                val coverUrl = enrichment.posterUrl
-                                if (coverAspect != null && coverUrl != null) {
-                                    runCatching {
-                                        loader.execute(
-                                            ImageRequest.Builder(context)
-                                                .data(coverUrl)
-                                                .size((heroPreload.coverHeight * coverAspect).roundToInt(), heroPreload.coverHeight)
-                                                .build(),
-                                        )
-                                    }
-                                }
                             } finally {
                                 marquee.finishEnrichmentRequest(contentId)
                             }
@@ -588,6 +578,20 @@ fun TvSkylineSectionFeed(
                     }
                 }
             }.awaitAll()
+        }
+    }
+    // Without a backdrop the hero frames the detail's sharper poster, once
+    // that image has loaded, whichever request fetched the detail.
+    LaunchedEffect(marquee, heroPreload) {
+        snapshotFlow { marquee.pendingCover }.collectLatest { cover ->
+            if (cover == null) return@collectLatest
+            val result = SingletonImageLoader.get(context).execute(
+                ImageRequest.Builder(context)
+                    .data(cover.url)
+                    .size((heroPreload.coverHeight * cover.aspect).roundToInt(), heroPreload.coverHeight)
+                    .build(),
+            )
+            if (result is SuccessResult) marquee.markCoverLoaded(cover.url)
         }
     }
 
