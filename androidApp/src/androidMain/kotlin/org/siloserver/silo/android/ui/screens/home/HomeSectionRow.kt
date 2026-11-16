@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.home
 
+import org.siloserver.silo.android.ui.components.areAllAudiobooks
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.runtime.Composable
@@ -55,7 +56,12 @@ fun HomeSectionRow(
     val showProgress = isContinueWatching
     val offersRemoval = onRemoveFromHome != null && section.sectionType in HomeDismissal.sectionTypes
 
-    val useBackdrop = showProgress || section.sectionType == "next_up"
+    // An audiobook row keeps square cover cards even when it resumes: the
+    // cover is square with no backdrop, so a 16:9 still would crop it. The
+    // poster card carries its own progress bar (iOS HomeFeedRow, TV Continue
+    // Listening).
+    val isAudiobookRow = areAllAudiobooks(rowItems.map { it.type })
+    val useBackdrop = !isAudiobookRow && (showProgress || section.sectionType == "next_up")
     val cardStyle = if (useBackdrop) CardStyle.Backdrop else CardStyle.Poster
 
     MediaRow(
