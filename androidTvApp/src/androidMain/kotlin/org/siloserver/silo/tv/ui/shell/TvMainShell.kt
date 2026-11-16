@@ -198,6 +198,9 @@ private const val CONTENT_HANDOFF_ATTEMPTS = 3
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun TvMainShell(
+    /** A page to open once, for a Switch Profile that Back cancelled. */
+    restoreRoute: String? = null,
+    onRestoreRouteConsumed: () -> Unit = {},
     returnToManageServers: Boolean = false,
     onManageServersReturnFocusConsumed: () -> Unit = {},
     onManageServers: () -> Unit,
@@ -222,8 +225,8 @@ fun TvMainShell(
     onOpenSectionBrowse: (sectionId: String, title: String, libraryId: Int?, mediaScope: String?) -> Unit,
     /** Runs the sign-out the user chose in [TvSignOutDialog]. */
     onSignOut: (removeServer: Boolean) -> Unit,
-    /** Opens the open account's picker. */
-    onSwitchProfile: () -> Unit,
+    /** Opens the open account's picker; the route is the page to reopen if Back cancels it. */
+    onSwitchProfile: (returnRoute: String?) -> Unit,
     /** The profile menu's Add Profile: opens the new-profile form. */
     onAddProfile: () -> Unit,
     /** Opens Change Account: the saved servers and their accounts. */
@@ -774,6 +777,18 @@ fun TvMainShell(
                 }
             }
         }
+    }
+
+    // A cancelled Switch Profile reopens on the page it was opened from.
+    LaunchedEffect(restoreRoute) {
+        val route = restoreRoute ?: return@LaunchedEffect
+        onRestoreRouteConsumed()
+        navigateToRoute(route)
+    }
+    // Hands Switch Profile this page. A route with arguments can't be rebuilt
+    // from its pattern, and Home is where a new Main starts anyway.
+    val switchProfileFromHere: () -> Unit = {
+        onSwitchProfile(currentRoute.takeIf { '{' !in it && it != nestedNav.graph.startDestinationRoute })
     }
 
     // Secondary routes (reached FROM another screen — Settings -> Favorites/
@@ -1589,7 +1604,7 @@ fun TvMainShell(
                         initialManageServersFocus = returnToManageServers,
                         onManageServersReturnFocusConsumed = onManageServersReturnFocusConsumed,
                         onSignOut = onSignOut,
-                        onSwitchProfile = onSwitchProfile,
+                        onSwitchProfile = switchProfileFromHere,
                         onNavigateHome = {
                             navigateToRoute(firstTvRoute())
                         },
@@ -1844,7 +1859,7 @@ fun TvMainShell(
                 entersMenu = focusState.profileMenuEntered,
                 focusEntryToken = focusState.profileMenuFocusEntryToken,
                 profileRow = openAccount.profileMenuRow(isHandoffSession),
-                onSwitchProfile = closeMenuAnd(onSwitchProfile),
+                onSwitchProfile = closeMenuAnd(switchProfileFromHere),
                 // Closed as Back closes it, with focus back on the avatar:
                 // the primary profile's PIN prompt may be cancelled, which
                 // leaves the viewer on this screen.
