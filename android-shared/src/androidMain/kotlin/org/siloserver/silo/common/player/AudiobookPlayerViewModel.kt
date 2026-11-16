@@ -551,10 +551,13 @@ class AudiobookPlayerViewModel(
                         _resumePosition.value = explicitStartOverride.takeIf { it > 0.0 }
                         null
                     } else {
-                        val serverPosition = serverResumePosition(d, unsentBefore)
-                        // The re-read can outlast a newer load.
-                        if (generation != startGeneration) return@launch
-                        loadResumePositionSnapshot(serverPosition, offline = false)
+                        loadResumePositionSnapshot(
+                            d.userData?.positionSeconds,
+                            offline = false,
+                            unsentBefore = unsentBefore,
+                            // A re-read of the detail can outlast a newer load.
+                            isCurrent = { generation == startGeneration },
+                        ).also { if (generation != startGeneration) return@launch }
                     }
                     val requestStartPosition = resolvePlaybackStartRequestPosition(
                         overridePosition = explicitStartOverride,
@@ -1842,7 +1845,12 @@ class AudiobookPlayerViewModel(
      *  is the cached one) counts every on-device position.
      *  Exposed via [resumePositionSeconds] for the Compose host to seek to once
      *  the controller + metadata are ready. */
-    private suspend fun loadResumePositionSnapshot(serverPositionSeconds: Double?, offline: Boolean): Double? {
+    private suspend fun loadResumePositionSnapshot(
+        serverPositionSeconds: Double?,
+        offline: Boolean,
+        unsentBefore: Double? = null,
+        isCurrent: () -> Boolean = { true },
+    ): Double? {
         // Content-level local read: the playing fileId isn't known yet at resume,
         // and audiobook resume is per-book — take the newest on-device position
         // across the item's files, maxed with the server's recorded position so we
@@ -1850,29 +1858,25 @@ class AudiobookPlayerViewModel(
         val unsent = userItemStatePort.localPlaybackProgress(contentId, includeSent = offline)
             ?.positionSeconds?.takeIf { it > 0 }
         val local = userItemStatePort.localPositionForContent(contentId, includeSent = offline)?.takeIf { it > 0 }
-        val server = serverPositionSeconds?.takeIf { it > 0 }
+        var server = serverPositionSeconds?.takeIf { it > 0 }
+        if (!offline && unsent == null && unsentBefore != null) {
+            // The server took this device's queued listening ([unsentBefore])
+            // while the detail was loading, so that answer can predate it: read
+            // it again (Apple `onlineContext`). Without an answer, the listening
+            // it took stands.
+            server = when (val again = catalogRepository.getItemDetail(contentId, libraryId, fresh = true)) {
+                is ApiResult.Success -> again.data.userData?.positionSeconds?.takeIf { it > 0 }
+                else -> unsentBefore
+            }
+        }
         // Offline, this device's own newest position is newer than the cached
         // server answer, a rewind included.
         val position = unsent ?: if (offline) local ?: server else listOfNotNull(local, server).maxOrNull()
-        _resumePosition.value = position
+        if (isCurrent()) _resumePosition.value = position
         return position
     }
 
     fun consumeResumePosition() { _resumePosition.value = null }
-
-    /** The server's resume point for [detail]. When the server took this
-     *  device's queued listening ([unsentBefore]) while the detail was loading,
-     *  that answer can predate it, so the detail is read again (Apple
-     *  `onlineContext`); without an answer, the listening it took stands. */
-    private suspend fun serverResumePosition(detail: ItemDetail, unsentBefore: Double?): Double? {
-        if (unsentBefore == null || userItemStatePort.localPlaybackProgress(contentId) != null) {
-            return detail.userData?.positionSeconds
-        }
-        return when (val again = catalogRepository.getItemDetail(contentId, libraryId, fresh = true)) {
-            is ApiResult.Success -> again.data.userData?.positionSeconds
-            else -> unsentBefore
-        }
-    }
 
     /** A download run for [media], or null unless [detail] shows the file is
      *  the whole book and [scope] (captured before the download lookup) is the
