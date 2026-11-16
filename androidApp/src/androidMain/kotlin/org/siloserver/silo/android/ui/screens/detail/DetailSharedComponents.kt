@@ -808,6 +808,7 @@ internal fun DetailHeroArtwork(
                     DetailCoverArtwork(
                         url = artworkUrl,
                         thumbhash = artworkThumbhash,
+                        hidden = hidden,
                         aspectRatio = coverAspectRatio,
                         coverHeight = (artworkHeight * 0.48f).coerceIn(190.dp, 250.dp),
                         contentDescription = contentDescription,
@@ -878,6 +879,8 @@ internal fun DetailHeroArtwork(
 private fun DetailCoverArtwork(
     url: String?,
     thumbhash: String?,
+    /** Spoiler protection hides the artwork: draw the plain surface instead. */
+    hidden: Boolean,
     aspectRatio: Float,
     coverHeight: Dp,
     contentDescription: String?,
@@ -885,6 +888,10 @@ private fun DetailCoverArtwork(
 ) {
     val canBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     Box(modifier = modifier, contentAlignment = Alignment.TopCenter) {
+        if (hidden) {
+            Box(modifier = Modifier.fillMaxSize().background(SiloSurfaceElevated))
+            return@Box
+        }
         if (!url.isNullOrBlank() || !thumbhash.isNullOrBlank()) {
             ThumbhashImage(
                 url = url,

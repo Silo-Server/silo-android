@@ -34,6 +34,15 @@ class AudiobookDetailFormattingTest {
     }
 
     @Test
+    fun `series name is lifted out only before a volume number or separator`() {
+        assertEquals("Dune Messiah", AudiobookDetailFormatting.cleanTitle("Dune Messiah", "Dune"))
+        assertEquals("Children of Dune", AudiobookDetailFormatting.cleanTitle("Children of Dune", "Dune"))
+        assertEquals("Wind and Truth", AudiobookDetailFormatting.cleanTitle("Stormlight Archive: Wind and Truth", "Stormlight Archive"))
+        assertEquals("Wind and Truth", AudiobookDetailFormatting.cleanTitle("Stormlight Archive 5 Wind and Truth", "Stormlight Archive"))
+        assertEquals("Wind and Truth", AudiobookDetailFormatting.cleanTitle("Stormlight Archive #5: Wind and Truth", "Stormlight Archive"))
+    }
+
+    @Test
     fun `a title that is only the series name is kept`() {
         assertEquals("Mistborn", AudiobookDetailFormatting.cleanTitle("Mistborn", "Mistborn"))
     }

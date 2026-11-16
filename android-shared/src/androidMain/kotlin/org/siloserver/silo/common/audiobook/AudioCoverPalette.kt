@@ -19,6 +19,7 @@ import coil3.request.SuccessResult
 import coil3.request.allowHardware
 import coil3.toBitmap
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -73,7 +74,7 @@ fun rememberAudioCoverPalette(coverUrl: String?, fallbackAccent: Color): AudioCo
             target = it
             return@LaunchedEffect
         }
-        val sampled = runCatching {
+        val sampled = try {
             val bitmap = withContext(Dispatchers.IO) {
                 val request = ImageRequest.Builder(context)
                     .data(coverUrl)
@@ -90,7 +91,13 @@ fun rememberAudioCoverPalette(coverUrl: String?, fallbackAccent: Color): AudioCo
                 }
             }
             bitmap?.let { withContext(Dispatchers.Default) { samplePalette(it, fallbackAccent) } }
-        }.getOrNull() ?: return@LaunchedEffect
+        } catch (cancelled: CancellationException) {
+            // A new cover or leaving the screen cancels the sample; let it.
+            throw cancelled
+        } catch (_: Exception) {
+            // An unreadable cover keeps the neutral palette.
+            null
+        } ?: return@LaunchedEffect
         paletteCache[coverUrl] = sampled
         target = sampled
     }

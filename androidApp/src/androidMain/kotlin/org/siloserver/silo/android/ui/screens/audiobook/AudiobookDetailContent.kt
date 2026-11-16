@@ -259,7 +259,9 @@ fun AudiobookDetailContent(
                     primaryProgress = resumeFraction,
                     isFavorite = isFavorite,
                     isInWatchlist = isInWatchlist,
-                    isWatched = isFinished,
+                    // The toggle shows and flips the saved flag; a position near
+                    // the end only turns Play into Play Again.
+                    isWatched = detail.userData?.played == true,
                     onToggleFavorite = onFavoriteClick,
                     onToggleWatchlist = onWatchlistClick,
                     onToggleWatched = onToggleFinished,

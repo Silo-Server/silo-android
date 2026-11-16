@@ -93,14 +93,17 @@ object AudiobookDetailFormatting {
         if (core.isEmpty()) return title
         val hay = droppingLeadingArticle(title)
         if (!hay.lowercase().startsWith(core.lowercase())) return title
-        var rest = hay.substring(core.length)
-        // The name must end at a word boundary: "Dune" is no prefix of "Dunes of Arrakis".
-        if (rest.firstOrNull()?.isLetter() == true) return title
-        rest = rest.dropWhile { it == ' ' || it.isDigit() || it in "-–—:#" }
-        val candidate = rest.trim()
+        // Only a volume number or a separator marks the series name as a
+        // locator: "Dune Messiah" in the "Dune" series is the book's own title,
+        // and "Dunes of Arrakis" doesn't open with "Dune" at a word boundary.
+        val locator = SeriesLocator.find(hay.substring(core.length)) ?: return title
+        val candidate = locator.groupValues[1].trim()
         // Consuming everything means the "prefix" was the title itself.
         return candidate.ifEmpty { title }
     }
+
+    /** After the series name: a volume ("5", "#5", "2.5") and/or a separator, then the title. */
+    private val SeriesLocator = Regex("""^\s*(?:#?\d+(?:\.\d+)?\s*[-–—:]?|[-–—:])\s*(.*)$""")
 
     private fun strippingTrailingVolume(title: String): String {
         var result = title

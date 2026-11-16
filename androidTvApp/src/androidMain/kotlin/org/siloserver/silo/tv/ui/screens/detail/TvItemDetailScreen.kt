@@ -999,7 +999,6 @@ private fun TvDetailContent(
                             playFocus = playFocus,
                             onPlay = onPlay,
                             chapters = audiobookChapters.map { it.title to it.startSeconds },
-                            partCount = audiobookParts.size,
                             totalSeconds = audiobookTotalSeconds,
                             pageSurface = pageSurfaceColor,
                             onOpenChapters = { chaptersDialogOpen = true },

@@ -114,11 +114,12 @@ fun ChapterProgressBar(
                             val down = awaitFirstDown()
                             if (currentDuration <= 0) return@awaitEachGesture
                             scrubTime = timeAt(down.position.x)
-                            drag(down.id) { change ->
+                            val completed = drag(down.id) { change ->
                                 change.consume()
                                 moveTo(change.position.x)
                             }
-                            scrubTime?.let(currentOnSeek)
+                            // A drag the scrolling page took over is no seek.
+                            if (completed) scrubTime?.let(currentOnSeek)
                             scrubTime = null
                         }
                     },

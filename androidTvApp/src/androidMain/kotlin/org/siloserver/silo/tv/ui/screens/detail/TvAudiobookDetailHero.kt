@@ -1,24 +1,26 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
 import android.content.res.Resources
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
@@ -26,45 +28,46 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.Icons
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.audiobook.AudiobookText
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.localizedResources
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.tv.ui.components.TvPrimaryPillButton
 import org.siloserver.silo.tv.ui.components.TvSecondaryPillButton
 import org.siloserver.silo.tv.ui.components.TvSquareToggleButton
-import org.siloserver.silo.tv.ui.navigation.TvSubtitleLaunchSelection
 import org.siloserver.silo.tv.ui.navigation.explicitTvSubtitleLaunchSelection
+import org.siloserver.silo.tv.ui.navigation.TvSubtitleLaunchSelection
 import org.siloserver.silo.tv.ui.theme.Spacing
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.geometry.Size
 
 /**
  * The tvOS "Lounge" audiobook hero (`TVAudiobookDetailView`): one first
@@ -83,7 +86,6 @@ internal fun TvAudiobookDetailHero(
     onPlay: (contentId: String, fileId: Int?, versionChosen: Boolean, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     /** Whole-book chapter starts with their display titles, in order. */
     chapters: List<Pair<String, Double>>,
-    partCount: Int,
     totalSeconds: Double,
     pageSurface: Color,
     onOpenChapters: () -> Unit,
@@ -99,7 +101,8 @@ internal fun TvAudiobookDetailHero(
     val isFinished = state.isWatched ||
         (totalSeconds > 0 && position > 0 && position >= totalSeconds - 5)
     val resumePosition = position.takeIf { it > 30 && !isFinished && totalSeconds > 0 }
-    val showsChapters = chapters.isNotEmpty() || partCount > 1
+    // The chapter dialog lists chapters only; parts have their own section below.
+    val showsChapters = chapters.isNotEmpty()
 
     fun play(startPosition: Double?) {
         if (state.isProvisional) return
@@ -147,7 +150,9 @@ internal fun TvAudiobookDetailHero(
                     .border(0.5.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(CoverCorner)),
             )
 
-            Column(modifier = Modifier.widthIn(max = 520.dp)) {
+            // The text keeps tvOS's 520dp measure; the action row may use the
+            // hero's full width (see below).
+            Column(modifier = Modifier.weight(1f)) {
                 Eyebrow(text = eyebrowText(resources, detail))
 
                 Text(
@@ -159,7 +164,7 @@ internal fun TvAudiobookDetailHero(
                     color = Color.White,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier.padding(top = 8.dp).widthIn(max = IdentityWidth),
                 )
 
                 AudiobookText.seriesLine(resources, detail)?.let { series ->
@@ -171,7 +176,7 @@ internal fun TvAudiobookDetailHero(
                         color = SeriesGold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 7.dp),
+                        modifier = Modifier.padding(top = 7.dp).widthIn(max = IdentityWidth),
                     )
                 }
 
@@ -183,7 +188,7 @@ internal fun TvAudiobookDetailHero(
                         color = Color.White.copy(alpha = 0.72f),
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 9.dp),
+                        modifier = Modifier.padding(top = 9.dp).widthIn(max = IdentityWidth),
                     )
                 }
 
@@ -194,13 +199,20 @@ internal fun TvAudiobookDetailHero(
                     resumePosition = resumePosition,
                     isFinished = isFinished,
                     chapters = chapters,
-                    modifier = Modifier.padding(top = 25.dp),
+                    modifier = Modifier.padding(top = 25.dp).widthIn(max = IdentityWidth),
                 )
 
                 // Every control keeps its size on focus, as on the movie and
-                // series pages, so moving along the row never reflows it.
+                // series pages, so moving along the row never reflows it. Five
+                // controls, with a toggle widened by its focused label, can
+                // outgrow the hero in a longer language, so the row scrolls
+                // with focus; the inner padding keeps focus rings unclipped.
                 Row(
-                    modifier = Modifier.padding(top = 25.dp),
+                    modifier = Modifier
+                        .padding(top = 25.dp - FocusRoom)
+                        .offset(x = -FocusRoom)
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = FocusRoom, vertical = FocusRoom),
                     horizontalArrangement = Arrangement.spacedBy(9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -251,9 +263,10 @@ internal fun TvAudiobookDetailHero(
                     TvSquareToggleButton(
                         icon = Icons.Filled.CheckCircleOutline,
                         iconActive = Icons.Filled.CheckCircle,
-                        isActive = isFinished,
+                        // The saved flag the toggle flips, not the near-the-end guess.
+                        isActive = state.isWatched,
                         contentDescription = stringResource(
-                            if (isFinished) CommonR.string.detail_audiobook_markNotFinished else CommonR.string.detail_audiobook_markFinished,
+                            if (state.isWatched) CommonR.string.detail_audiobook_markNotFinished else CommonR.string.detail_audiobook_markFinished,
                         ),
                         titleOnFocus = stringResource(CommonR.string.detail_audiobook_finished),
                         onClick = { if (!state.isProvisional) onToggleFinished() },
@@ -265,6 +278,12 @@ internal fun TvAudiobookDetailHero(
 }
 
 private val CoverCorner = 8.dp
+
+/** tvOS's 1040pt identity column at half scale. */
+private val IdentityWidth = 520.dp
+
+/** Room for a focused control's ring and scale inside the scrolling action row. */
+private val FocusRoom = 8.dp
 
 // Sizes are tvOS points at half scale, raised to the TV app's 14sp floor except
 // the uppercase tracked chrome (eyebrow, series line), which keeps the
