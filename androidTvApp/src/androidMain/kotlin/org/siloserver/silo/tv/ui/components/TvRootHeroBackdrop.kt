@@ -9,7 +9,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -18,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -28,6 +31,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -107,10 +111,11 @@ fun TvRootHeroBackdrop(
         else -> 0.0f
     }
 
+    val background = MaterialTheme.colorScheme.background
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(background),
     ) {
         // Diagonal sampled-tint wash: richest in the top-right behind the art,
         // carried dimmed to the bottom-left (tvOS stops 1.0 / 0.5 / 0.18).
@@ -119,14 +124,25 @@ fun TvRootHeroBackdrop(
             drawRect(
                 brush = Brush.linearGradient(
                     colorStops = smoothedWashStops(
-                        tint = displayedTint,
                         leadingAlpha = leadingWashAlpha,
                         midAlpha = midWashAlpha,
                         trailingAlpha = trailingWashAlpha,
-                    ),
+                    ).map { (stop, alpha) -> stop to displayedTint.copy(alpha = alpha) }.toTypedArray(),
                     start = Offset(size.width, 0f),
                     end = Offset(0f, size.height),
                 ),
+            )
+        }
+
+        // While art shows, the same wash (and a framed cover's glow and
+        // shadow) is drawn again, dithered, over the GPU gradient above.
+        if (isVisible) {
+            TvHeroAmbientWash(
+                background = background,
+                tint = targetAccent,
+                stops = smoothedWashStops(leadingWashAlpha, midWashAlpha, trailingWashAlpha),
+                cover = content?.heroCover(),
+                crossfadeMillis = if (animateTransition && !snapInitialTint) TvMarqueeCrossfadeMs else 0,
             )
         }
 
@@ -155,23 +171,60 @@ fun TvRootHeroBackdrop(
                     // A departing item follows the current preferences too.
                     else -> value.underPrefs(spoilerPrefs)
                 }
-                if (art?.heroBackdropUrl != null) {
-                    CornerAnchoredArt(
-                        url = art.heroBackdropUrl,
-                        thumbhash = art.heroBackdropThumbhash,
-                    )
-                } else {
-                    Box(modifier = Modifier.fillMaxSize())
-                }
+                if (art != null) HeroArt(art) else Box(modifier = Modifier.fillMaxSize())
             }
-        } else if (content?.heroBackdropUrl != null) {
-            CornerAnchoredArt(
-                url = content.heroBackdropUrl,
-                thumbhash = content.heroBackdropThumbhash,
-            )
+        } else if (content != null) {
+            HeroArt(content)
         }
 
     }
+}
+
+@Composable
+private fun HeroArt(content: TvMarqueeContent) {
+    val url = content.heroBackdropUrl
+    val aspect = content.coverAspect
+    when {
+        url == null -> Box(modifier = Modifier.fillMaxSize())
+        aspect != null -> FramedCover(url = url, thumbhash = content.heroBackdropThumbhash, aspect = aspect)
+        else -> CornerAnchoredArt(url = url, thumbhash = content.heroBackdropThumbhash)
+    }
+}
+
+/**
+ * A cover standing in for a missing backdrop, drawn whole and sharp at a size
+ * its artwork can carry (tvOS `coverImage`): top-right, between the top menu
+ * and the rows. Its glow and shadow are part of [TvHeroAmbientWash].
+ */
+@Composable
+private fun FramedCover(url: String, thumbhash: String?, aspect: Float) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
+        ThumbhashImage(
+            url = url,
+            thumbhash = thumbhash,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            // As for the backdrop, the feed owns the one shared crossfade.
+            crossfadeMillis = 0,
+            modifier = Modifier
+                .padding(top = CoverTopInset, end = CoverTrailingInset)
+                .size(width = TvHeroCoverHeight * aspect, height = TvHeroCoverHeight)
+                .clip(RoundedCornerShape(CoverCornerRadius)),
+        )
+    }
+}
+
+/** Where [FramedCover] draws this content's cover, for the wash's glow and shadow. */
+private fun TvMarqueeContent.heroCover(): TvHeroCover? {
+    val url = heroBackdropUrl ?: return null
+    val aspect = coverAspect ?: return null
+    return TvHeroCover(
+        url = url,
+        width = TvHeroCoverHeight.value * aspect,
+        height = TvHeroCoverHeight.value,
+        topInset = CoverTopInset.value,
+        trailingInset = CoverTrailingInset.value,
+    )
 }
 
 /**
@@ -269,19 +322,28 @@ private const val ArtHeightFraction = 0.70f
 private const val TintOnlyDitherAlpha = 0.28f
 private const val EmptyWashDitherAlpha = 0.34f
 
+/**
+ * A framed cover's height and insets, tvOS's 380 / 170 / 150 pt on the 960 ×
+ * 540 dp canvas: it sits between the top menu and the row band.
+ */
+internal val TvHeroCoverHeight = 190.dp
+private val CoverTopInset = 85.dp
+private val CoverTrailingInset = 75.dp
+private val CoverCornerRadius = 7.dp
+
+/** The wash's alpha at each position along the diagonal, start to end. */
 private fun smoothedWashStops(
-    tint: Color,
     leadingAlpha: Float,
     midAlpha: Float,
     trailingAlpha: Float,
-): Array<Pair<Float, Color>> = arrayOf(
-    0.00f to tint.copy(alpha = leadingAlpha),
-    0.12f to tint.copy(alpha = lerpAlpha(leadingAlpha, midAlpha, 0.18f)),
-    0.26f to tint.copy(alpha = lerpAlpha(leadingAlpha, midAlpha, 0.48f)),
-    0.45f to tint.copy(alpha = midAlpha),
-    0.62f to tint.copy(alpha = lerpAlpha(midAlpha, trailingAlpha, 0.36f)),
-    0.80f to tint.copy(alpha = lerpAlpha(midAlpha, trailingAlpha, 0.68f)),
-    1.00f to tint.copy(alpha = trailingAlpha),
+): Array<Pair<Float, Float>> = arrayOf(
+    0.00f to leadingAlpha,
+    0.12f to lerpAlpha(leadingAlpha, midAlpha, 0.18f),
+    0.26f to lerpAlpha(leadingAlpha, midAlpha, 0.48f),
+    0.45f to midAlpha,
+    0.62f to lerpAlpha(midAlpha, trailingAlpha, 0.36f),
+    0.80f to lerpAlpha(midAlpha, trailingAlpha, 0.68f),
+    1.00f to trailingAlpha,
 )
 
 private fun lerpAlpha(start: Float, end: Float, fraction: Float): Float =
