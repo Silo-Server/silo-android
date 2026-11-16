@@ -6,7 +6,10 @@ import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
 import org.siloserver.silo.model.ebook.SaveEbookProgressRequest
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.model.request.RequestMutationFailure
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.CleartextOriginNotApprovedException
+import org.siloserver.silo.network.SiloAuthUnavailableException
 import org.siloserver.silo.network.api.DownloadProgressReceipt
 import org.siloserver.silo.network.api.EbookReaderApi
 import org.siloserver.silo.network.api.PersonalDataApi
@@ -206,23 +209,42 @@ class SyncEngine(
             // event changes nothing unless the device clock ran over two minutes
             // fast. Settling on doubt instead would delete positions the server
             // never received.
-            else -> WriteOutcome.RETRIABLE
+            else -> {
+                // It may have arrived, so it no longer beats the server's answer at
+                // start; newer progress from another device would win. Offline it
+                // stays the resume point.
+                if (mayHaveArrived(result)) markProgressSent(op)
+                WriteOutcome.RETRIABLE
+            }
         }
     }
 
+    /** True when a progress send left the device and got no usable answer. */
+    private fun mayHaveArrived(result: ApiResult<*>): Boolean {
+        if (!RequestMutationFailure.isUncertain(result)) return false
+        // Refused by the client before sending: sign-in unavailable, or a
+        // cleartext server the user hasn't approved.
+        val failure = (result as? ApiResult.NetworkError)?.exception ?: return true
+        return generateSequence(failure) { it.cause?.takeIf { cause -> cause !== it } }
+            .none { it is SiloAuthUnavailableException || it is CleartextOriginNotApprovedException }
+    }
+
+    private suspend fun markProgressSent(op: DirtyOperationEntity) =
+        userStateDao.markPlaybackProgressSent(op.serverId, op.accountId, op.profileId, op.targetContentId, op.createdAtMs)
+
     /**
      * The server has the position (or refused it for good), so from now on its
-     * answer stands: drop the op. Cards, detail and the video player read only
-     * positions still queued, so the local copy stops overriding the server
-     * there. An accepted copy is kept for the audiobook player, which resumes a
-     * downloaded book from it offline, where there is no server answer to read.
-     * A refused one is cleared. A newer sample queued meanwhile keeps its row
-     * until its own op settles.
+     * answer stands: drop the op. An accepted copy is kept, marked sent: online
+     * the server's answer stands over it, and offline, where there is no server
+     * answer to read, it is the resume point. A refused one is cleared. A newer
+     * sample queued meanwhile keeps its row, unmarked, until its own op settles.
      */
     private suspend fun settleDownloadProgress(op: DirtyOperationEntity, accepted: Boolean) {
         db.withTransaction {
             dao.deleteById(op.id)
-            if (!accepted &&
+            if (accepted) {
+                markProgressSent(op)
+            } else if (
                 dao.countNewerForTargetKind(op.serverId, op.accountId, op.profileId, op.targetContentId, op.opKind, op.id) == 0
             ) {
                 // Stamped with the event it settles, so a sample taken after it but

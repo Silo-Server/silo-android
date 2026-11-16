@@ -128,7 +128,8 @@ class SyncEngineTest {
         ))
     }
     private suspend fun storedPosition() = db.userItemStateDao().get("s1", "", "p1", "c1", 7)?.positionSeconds
-    private suspend fun unsentPositions() = db.userItemStateDao().pendingProgressForContentIds("s1", "", "p1", listOf("c1"))
+    private suspend fun unsentPositions(includeSent: Boolean = false) =
+        db.userItemStateDao().pendingProgressForContentIds("s1", "", "p1", listOf("c1"), includeSent)
 
     @Test
     fun downloadProgressIsSentWithItsEventTimeAndThenStopsOverridingTheServer() = runTest {
@@ -142,6 +143,7 @@ class SyncEngineTest {
         val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertTrue(unsentPositions().isEmpty(), "the server's answer stands once it has the position")
         assertEquals(646.5, row?.positionSeconds, "kept as the offline resume point")
+        assertEquals(5_000L, row?.serverUpdatedAtMs, "marked sent, so online the server's answer stands")
         assertEquals("audio", row?.audioFingerprint)
     }
 
@@ -170,6 +172,9 @@ class SyncEngineTest {
         assertEquals(1, progressEngine().drainOnce().retriable)
         assertEquals(646.5, storedPosition(), "the position stays until the server confirms it")
         assertEquals(1, db.dirtyOperationDao().count())
+        // It may have arrived: it no longer beats the server at start, but stays the offline resume point.
+        assertTrue(unsentPositions().isEmpty())
+        assertEquals(1, unsentPositions(includeSent = true).size)
 
         progressFailure = null
         clock = 10_000_000L
@@ -177,6 +182,16 @@ class SyncEngineTest {
         // The same event time both times, so a repeat is a no-op on the server.
         assertEquals(1, progressBodies.distinct().size)
         assertTrue(unsentPositions().isEmpty())
+    }
+
+    @Test
+    fun downloadProgressThatNeverConnectedStillBeatsTheServer() = runTest {
+        queueDownloadPosition()
+        progressFailure = java.net.ConnectException("Connection refused")
+
+        assertEquals(1, progressEngine().drainOnce().retriable)
+
+        assertEquals(1, unsentPositions().size, "nothing reached the server")
     }
 
     @Test

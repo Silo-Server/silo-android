@@ -204,6 +204,17 @@ interface DirtyOperationDao {
     )
     suspend fun claim(id: Long): Int
 
+    /**
+     * Ends the backoff of queued download playback progress, so the next drain
+     * sends it. Used once the server is reachable again.
+     */
+    @Query(
+        "UPDATE dirty_operations SET nextAttemptAtMs = :nowMs " +
+            "WHERE opKind = 'SET_POSITION' AND opVersion >= 2 " +
+            "AND state = '${DirtyOperationEntity.STATE_PENDING}' AND nextAttemptAtMs > :nowMs",
+    )
+    suspend fun makeDownloadProgressDue(nowMs: Long)
+
     /** Pending or in-flight [opKind] ops for the same item that were queued after [id]. */
     @Query(
         "SELECT COUNT(*) FROM dirty_operations WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId " +

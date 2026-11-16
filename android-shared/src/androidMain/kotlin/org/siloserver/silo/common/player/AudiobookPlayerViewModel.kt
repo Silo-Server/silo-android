@@ -502,7 +502,12 @@ class AudiobookPlayerViewModel(
         // older load can't overwrite the context of a newer one (Apple parity).
         val generation = ++startGeneration
         viewModelScope.launch {
-            when (val r = catalogRepository.getItemDetail(contentId, libraryId)) {
+            // Read before the detail: if the server takes it meanwhile, the detail
+            // can predate it.
+            val unsentBefore = userItemStatePort.localPlaybackProgress(contentId)?.positionSeconds
+            // Live only: a cached detail isn't a server answer, so offline takes
+            // the offline path, which resumes from this device's positions.
+            when (val r = catalogRepository.getItemDetail(contentId, libraryId, fresh = true)) {
                 is ApiResult.Success -> {
                     if (generation != startGeneration) return@launch
                     val d = r.data
@@ -546,7 +551,7 @@ class AudiobookPlayerViewModel(
                         _resumePosition.value = explicitStartOverride.takeIf { it > 0.0 }
                         null
                     } else {
-                        loadResumePositionSnapshot(d.userData?.positionSeconds)
+                        loadResumePositionSnapshot(serverResumePosition(d, unsentBefore), offline = false)
                     }
                     val requestStartPosition = resolvePlaybackStartRequestPosition(
                         overridePosition = explicitStartOverride,
@@ -1121,7 +1126,7 @@ class AudiobookPlayerViewModel(
         // server's position this device last saw (unless the user explicitly
         // chose to play from the beginning).
         val resume = if (!startFromBeginning) {
-            loadResumePositionSnapshot(cachedDetail?.userData?.positionSeconds)
+            loadResumePositionSnapshot(cachedDetail?.userData?.positionSeconds, offline = true)
         } else {
             null
         }
@@ -1828,15 +1833,19 @@ class AudiobookPlayerViewModel(
      *  so we never resume behind progress made on another device — and so a
      *  device that has never played this book locally still resumes from the
      *  server's Continue-Listening position instead of 0:00.
+     *  Online, positions the server already has (or may have) don't count:
+     *  its answer stands. [offline] (no live answer, [serverPositionSeconds]
+     *  is the cached one) counts every on-device position.
      *  Exposed via [resumePositionSeconds] for the Compose host to seek to once
      *  the controller + metadata are ready. */
-    private suspend fun loadResumePositionSnapshot(serverPositionSeconds: Double? = null): Double? {
+    private suspend fun loadResumePositionSnapshot(serverPositionSeconds: Double?, offline: Boolean): Double? {
         // Content-level local read: the playing fileId isn't known yet at resume,
-        // and audiobook resume is per-book — take the furthest on-device position
+        // and audiobook resume is per-book — take the newest on-device position
         // across the item's files, maxed with the server's recorded position so we
         // never resume behind progress made on another device.
-        val unsent = userItemStatePort.localPlaybackProgress(contentId)?.positionSeconds?.takeIf { it > 0 }
-        val local = userItemStatePort.localPositionForContent(contentId)?.takeIf { it > 0 }
+        val unsent = userItemStatePort.localPlaybackProgress(contentId, includeSent = offline)
+            ?.positionSeconds?.takeIf { it > 0 }
+        val local = userItemStatePort.localPositionForContent(contentId, includeSent = offline)?.takeIf { it > 0 }
         val server = serverPositionSeconds?.takeIf { it > 0 }
         val position = unsent ?: listOfNotNull(local, server).maxOrNull()
         _resumePosition.value = position
@@ -1844,6 +1853,20 @@ class AudiobookPlayerViewModel(
     }
 
     fun consumeResumePosition() { _resumePosition.value = null }
+
+    /** The server's resume point for [detail]. When the server took this
+     *  device's queued listening ([unsentBefore]) while the detail was loading,
+     *  that answer can predate it, so the detail is read again (Apple
+     *  `onlineContext`); without an answer, the listening it took stands. */
+    private suspend fun serverResumePosition(detail: ItemDetail, unsentBefore: Double?): Double? {
+        if (unsentBefore == null || userItemStatePort.localPlaybackProgress(contentId) != null) {
+            return detail.userData?.positionSeconds
+        }
+        return when (val again = catalogRepository.getItemDetail(contentId, libraryId, fresh = true)) {
+            is ApiResult.Success -> again.data.userData?.positionSeconds
+            else -> unsentBefore
+        }
+    }
 
     /** A download run for [media], or null unless [detail] shows the file is
      *  the whole book and [scope] (captured before the download lookup) is the

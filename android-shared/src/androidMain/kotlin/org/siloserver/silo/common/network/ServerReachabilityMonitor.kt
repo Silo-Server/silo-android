@@ -41,6 +41,10 @@ class ServerReachabilityMonitor(
     targetChanges: kotlinx.coroutines.flow.Flow<*> = kotlinx.coroutines.flow.emptyFlow<Unit>(),
     private val nowMs: () -> Long = { SystemClock.elapsedRealtime() },
     private val onServerReconnected: suspend () -> Unit = {},
+    /** Called when a probe finds the server reachable after it was unknown
+     *  (foreground start) or unreachable. Runs under the probe lock, so it
+     *  must hand slow work off. */
+    private val onServerReachable: suspend () -> Unit = {},
 ) {
     private val _state = MutableStateFlow(ServerReachabilityState())
     val state: StateFlow<ServerReachabilityState> = _state.asStateFlow()
@@ -96,7 +100,8 @@ class ServerReachabilityMonitor(
                 _state.value = ServerReachabilityState()
             }
             if (target == null) return@withLock _state.value
-            val wasUnreachable = _state.value.status == ServerReachabilityStatus.Unreachable
+            val previous = _state.value.status
+            val wasUnreachable = previous == ServerReachabilityStatus.Unreachable
             val result = probe(target.url)
             currentCoroutineContext().ensureActive()
             if (!current()) return@withLock _state.value
@@ -107,6 +112,9 @@ class ServerReachabilityMonitor(
             }
             _state.value = next
             if (wasUnreachable && next.status == ServerReachabilityStatus.Reachable && current()) onServerReconnected()
+            if (previous != ServerReachabilityStatus.Reachable && next.status == ServerReachabilityStatus.Reachable && current()) {
+                onServerReachable()
+            }
             next
         }
     }

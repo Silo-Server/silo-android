@@ -94,26 +94,33 @@ interface UserItemStatePort {
     /**
      * The download playback position for this file that is still waiting to reach
      * the server, or null. Lets the player resume a download from the newest
-     * on-device position while it is unsynced. No-op (null) on the default port.
+     * on-device position while it is unsynced. [includeSent] also counts one
+     * sent without an answer, for a caller with no server answer to read
+     * (offline). No-op (null) on the default port.
      */
-    suspend fun localPosition(contentId: String, fileId: Int): Double? = null
+    suspend fun localPosition(contentId: String, fileId: Int, includeSent: Boolean = false): Double? = null
 
     /**
-     * The furthest locally-recorded position across all files of a content item.
+     * The newest locally-recorded position across all files of a content item.
      * For content-level resume (e.g. audiobooks) where the playing file id isn't
-     * known yet at resume time. No-op (null) on the default port.
+     * known yet at resume time. Without [includeSent], positions the server has
+     * (or may have) are left out, so online the server's answer stands over
+     * them. No-op (null) on the default port.
      */
-    suspend fun localPositionForContent(contentId: String): Double? = null
+    suspend fun localPositionForContent(contentId: String, includeSent: Boolean = true): Double? = null
 
     /**
      * The download playback position for a content item that is still waiting to
      * reach the server, including the file that produced it. Once the server
      * accepts it, this is null and the server's answer stands.
      */
-    suspend fun localPlaybackProgress(contentId: String): LocalPlaybackProgress? = null
+    suspend fun localPlaybackProgress(contentId: String, includeSent: Boolean = false): LocalPlaybackProgress? = null
 
     /** Batched [localPlaybackProgress] for card/detail overlays. */
-    suspend fun localPlaybackProgressForContent(contentIds: List<String>): Map<String, LocalPlaybackProgress> = emptyMap()
+    suspend fun localPlaybackProgressForContent(
+        contentIds: List<String>,
+        includeSent: Boolean = false,
+    ): Map<String, LocalPlaybackProgress> = emptyMap()
 
     /**
      * Clears local resume samples recorded before [admittedAtMs] for [contentIds].
