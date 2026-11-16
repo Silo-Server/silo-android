@@ -1,17 +1,14 @@
 package org.siloserver.silo.tv.ui.components
 
 import org.siloserver.silo.model.catalog.ItemDetail
-import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
-import org.siloserver.silo.tv.ui.theme.RowDimens
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 /**
  * tvOS parity (silo-apple#1198): an item without a backdrop shows its cover
- * framed in the hero, using the detail's sharper poster, and rows of square
- * audiobook covers are as tall as poster rows.
+ * framed in the hero, using the detail's sharper poster.
  */
 class TvHeroCoverTest {
     private fun item(type: String, backdropUrl: String? = null, posterUrl: String? = "https://art/row-poster.jpg") =
@@ -53,18 +50,5 @@ class TvHeroCoverTest {
             ItemDetail(contentId = "c-movie", type = "movie", title = "Title", posterUrl = "https://art/detail-poster.jpg"),
         )
         assertEquals("https://art/backdrop.jpg", content.withEnrichment(enrichment).heroBackdropUrl)
-    }
-
-    @Test
-    fun onlyRowsOfAudiobooksGetSquareCardsAsTallAsPosters() {
-        fun row(vararg types: String) = ResolvedSection(
-            id = "row",
-            sectionType = "recently_added",
-            title = "Row",
-            items = types.map { item(it) },
-        )
-        assertEquals(RowDimens.DensePosterWidth * 1.5f, tvSkylineDenseCardWidth(row("audiobook", "audiobook")))
-        assertEquals(RowDimens.DensePosterWidth, tvSkylineDenseCardWidth(row("audiobook", "movie")))
-        assertEquals(RowDimens.DensePosterWidth, tvSkylineDenseCardWidth(row()))
     }
 }

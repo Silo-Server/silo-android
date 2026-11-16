@@ -567,7 +567,7 @@ fun TvSkylineSectionFeed(
                                     }
                                 }
                                 // Without a backdrop the hero frames the detail's poster.
-                                val coverAspect = TvMarqueeContent.from(item, rowTitle = "").coverAspect
+                                val coverAspect = item.heroCoverAspect()
                                 val coverUrl = enrichment.posterUrl
                                 if (coverAspect != null && coverUrl != null) {
                                     runCatching {

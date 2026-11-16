@@ -150,9 +150,9 @@ data class TvMarqueeContent(
             )
             // A framed cover uses the detail's poster, which the server sizes
             // for the detail page and so comes back sharper than the card's.
+            // Its ThumbHash is already the same item's poster's.
             coverAspect != null && !enrichment.posterUrl.isNullOrBlank() -> withLine.copy(
                 backdropUrl = enrichment.posterUrl,
-                backdropThumbhash = enrichment.posterThumbhash ?: backdropThumbhash,
             )
             else -> withLine
         }
@@ -199,8 +199,6 @@ data class TvMarqueeContent(
             val hidesPoster = spoilers.hidesImage(unwatchedEpisode, item.posterIsEpisodeStill)
             val sectionBackdropUrl = seriesBackdrop?.url ?: item.backdropUrl?.takeIf { it.isNotBlank() }
             val sectionPosterUrl = item.posterUrl?.takeIf { it.isNotBlank() }
-            val framesCover = !isEpisode && sectionBackdropUrl == null && sectionPosterUrl != null &&
-                !hidesPoster && item.posterIsEpisodeStill != true
             return TvMarqueeContent(
                 id = "$rowIdentity#${item.contentId}",
                 title = if (isEpisode) (item.seriesTitle ?: item.title) else item.title,
@@ -235,11 +233,7 @@ data class TvMarqueeContent(
                 } else {
                     item.posterIsEpisodeStill
                 },
-                coverAspect = when {
-                    !framesCover -> null
-                    isAudiobookMediaType(item.type) -> TvSquareCoverAspect
-                    else -> TvPosterCoverAspect
-                },
+                coverAspect = item.heroCoverAspect(),
             )
         }
 
@@ -346,9 +340,8 @@ data class TvMarqueeEnrichment(
     /** The detail's provenance for [backdropUrl]; null when unknown. */
     val backdropIsEpisodeStill: Boolean? = null,
     val airDate: String? = null,
-    /** The detail's poster, which a framed hero cover prefers; null when it is an episode still. */
+    /** The detail's poster, which a framed hero cover prefers. */
     val posterUrl: String? = null,
-    val posterThumbhash: String? = null,
 ) {
     companion object {
         fun from(detail: ItemDetail): TvMarqueeEnrichment {
@@ -357,15 +350,13 @@ data class TvMarqueeEnrichment(
                 .take(3)
                 .map { it.name }
                 .filter { it.isNotBlank() }
-            val posterIsStill = detail.posterIsEpisodeStill == true
             return TvMarqueeEnrichment(
                 detailLine = if (cast.isEmpty()) null else cast.joinToString(", "),
                 backdropUrl = detail.backdropUrl?.takeIf { it.isNotBlank() },
                 backdropThumbhash = detail.backdropThumbhash,
                 backdropIsEpisodeStill = detail.backdropIsEpisodeStill,
                 airDate = detail.airDate?.takeIf { airDateText(it) != null },
-                posterUrl = detail.posterUrl?.takeIf { it.isNotBlank() && !posterIsStill },
-                posterThumbhash = detail.posterThumbhash.takeIf { !posterIsStill },
+                posterUrl = detail.posterUrl?.takeIf { it.isNotBlank() },
             )
         }
 
@@ -504,6 +495,18 @@ class TvFocusMarqueeState internal constructor() {
         enrichmentCache[contentId] = value
         if (content?.contentId == contentId) enrichment = value
     }
+}
+
+/**
+ * The shape the root hero frames this item's poster at when it has no
+ * backdrop: square for audiobooks, 2:3 for other posters. Null when it has a
+ * backdrop, and for an episode, whose poster can be a landscape still.
+ */
+internal fun SectionItem.heroCoverAspect(): Float? = when {
+    type.equals("episode", ignoreCase = true) || posterIsEpisodeStill == true -> null
+    !backdropUrl.isNullOrBlank() || posterUrl.isNullOrBlank() -> null
+    isAudiobookMediaType(type) -> TvSquareCoverAspect
+    else -> TvPosterCoverAspect
 }
 
 /** [TvMarqueeContent.coverAspect] for a square audiobook cover. */
