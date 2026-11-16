@@ -42,6 +42,10 @@ fun AudiobookPlaybackBridge(session: ActiveAudiobook) {
     val activity = LocalActivity.current
 
     var controller by remember { mutableStateOf<MediaController?>(null) }
+    // The controller while the engine still holds this book. The engine is
+    // shared with video; the book must not pause, speed up, seek or read a
+    // video that has taken it over.
+    fun bookController(): MediaController? = controller?.takeIf { it.holdsAudiobook() }
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, SiloPlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
@@ -149,7 +153,7 @@ fun AudiobookPlaybackBridge(session: ActiveAudiobook) {
     // to stream identity, not just engine time.
     LaunchedEffect(controller) {
         while (true) {
-            controller?.takeIf { it.holdsAudiobook() }?.let { c ->
+            bookController()?.let { c ->
                 viewModel.onPositionChanged(
                     c.currentPosition / 1000.0,
                     c.currentMediaItem?.localConfiguration?.uri?.toString(),
@@ -161,19 +165,22 @@ fun AudiobookPlaybackBridge(session: ActiveAudiobook) {
 
     // Mirror play/pause intent into the controller.
     LaunchedEffect(controller, state.isPaused) {
-        controller?.playWhenReady = !state.isPaused
+        bookController()?.playWhenReady = !state.isPaused
     }
 
     // Apply speed when the user changes it.
     LaunchedEffect(controller, state.playbackSpeed) {
-        controller?.playbackParameters = PlaybackParameters(state.playbackSpeed)
+        bookController()?.playbackParameters = PlaybackParameters(state.playbackSpeed)
     }
 
-    // Apply seeks requested by the VM (chapter jumps, skips).
+    // Apply seeks requested by the VM (chapter jumps, skips). A seek stays
+    // pending until a controller holding the book applies it, so one asked for
+    // while the controller reconnects (a recreated activity) isn't lost.
     val pendingSeek by viewModel.pendingSeekToSeconds.collectAsState()
     LaunchedEffect(controller, pendingSeek) {
         val seconds = pendingSeek ?: return@LaunchedEffect
-        controller?.seekTo((seconds * 1000).toLong())
+        val c = bookController() ?: return@LaunchedEffect
+        c.seekTo((seconds * 1000).toLong())
         viewModel.consumePendingSeek()
     }
 }

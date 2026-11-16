@@ -566,6 +566,7 @@ class AudiobookPlayerViewModel(
                     // Captured before the download lookup suspends, so a profile
                     // switch meanwhile can't move this book's progress to it.
                     val writeScope = finalPlaybackPositionWriter.captureScope()
+                    sessionWriteScope = writeScope
                     val (downloadServerId, downloadAccountId, downloadProfileId) = resolveScope()
                     val offlineMedia = offlineMediaResolver.findLocalMedia(
                         serverId = downloadServerId,
@@ -1101,6 +1102,7 @@ class AudiobookPlayerViewModel(
 
     private suspend fun loadOfflineOnly(error: String?) {
         val writeScope = finalPlaybackPositionWriter.captureScope()
+        sessionWriteScope = writeScope
         val (serverId, accountId, profileId) = resolveScope()
         val media = offlineMediaResolver.findLocalMedia(
             serverId = serverId,
@@ -1784,6 +1786,18 @@ class AudiobookPlayerViewModel(
     private var positionSaveJob: Job? = null
     private var stoppingSessionId: String? = null
 
+    /** The signed-in identity this book started under. A minimized book can
+     *  outlive its account or profile (the phone's mini player), and the
+     *  on-device position writes resolve the identity active when they run,
+     *  so they are skipped once another identity is active rather than
+     *  landing in its resume state. */
+    private var sessionWriteScope: PlaybackWriteScope? = null
+
+    private suspend fun isSessionIdentityActive(): Boolean {
+        val started = sessionWriteScope ?: return true
+        return finalPlaybackPositionWriter.captureScope() == started
+    }
+
     /** Snapshot the current position (and any future server progress
      *  report). Called from periodic timer + pause + seek + close. */
     private fun savePosition(periodic: Boolean = false) {
@@ -1813,7 +1827,7 @@ class AudiobookPlayerViewModel(
             return
         }
         viewModelScope.launch {
-            if (state.positionSeconds > 0 && !suppressWholeBookPersistence) {
+            if (state.positionSeconds > 0 && !suppressWholeBookPersistence && isSessionIdentityActive()) {
                 // SINK 2 — whole-book durable resume. Records the WHOLE-BOOK
                 // (global) position against the WHOLE-BOOK total as a local
                 // snapshot only; a stream's session reports progress to the
@@ -1946,7 +1960,7 @@ class AudiobookPlayerViewModel(
         viewModelScope.launch {
             try {
                 withContext(NonCancellable + Dispatchers.IO) {
-                    if (state.positionSeconds > 0 && !suppressWholeBookPersistence) {
+                    if (state.positionSeconds > 0 && !suppressWholeBookPersistence && isSessionIdentityActive()) {
                         // SINK 2: whole-book global position + whole-book total.
                         // Skipped on offline part-local playback, where
                         // positionSeconds is a PART position that must never be
