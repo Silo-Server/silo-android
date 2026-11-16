@@ -123,6 +123,8 @@ internal fun TvDetailHero(
                 thumbhash = backdropThumbhash,
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
+                // Keeps the opening card's artwork until the full-size image loads.
+                holdPreviousImage = true,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     // Movie and Series artwork share the same top edge. A

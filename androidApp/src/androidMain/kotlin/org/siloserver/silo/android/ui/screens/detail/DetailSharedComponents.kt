@@ -63,6 +63,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,6 +77,7 @@ import org.koin.compose.koinInject
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.cast.engagedStatus
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
@@ -360,6 +362,7 @@ private fun ExpandedDetailHero(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
                                 defaultArtwork = DefaultArtworkKind.forItemType(detail.type),
+                                holdPreviousImage = true,
                             )
                         }
                     }
@@ -473,6 +476,7 @@ internal fun ExpandedDetailHeroBackdrop(
             contentScale = ContentScale.Crop,
             crossfadeMillis = DetailArtworkCrossfadeMs,
             modifier = Modifier.matchParentSize(),
+            holdPreviousImage = true,
         )
         Box(
             modifier = Modifier
@@ -560,6 +564,7 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
             contentDescription = detail.title,
             contentScale = ContentScale.Fit,
             transparent = true,
+            holdPreviousImage = true,
             modifier = Modifier
                 .fillMaxWidth(0.72f)
                 .height(112.dp),
@@ -766,6 +771,7 @@ internal fun DetailHeroArtwork(
                         .graphicsLayer {
                             translationY = parallaxDp * ParallaxFactor * density
                         },
+                    holdPreviousImage = true,
                 )
                 // Deepens as the hero leaves, so the artwork recedes
                 // instead of just sliding.
@@ -976,6 +982,7 @@ private fun HeroTitle(detail: ItemDetail) {
             contentDescription = detail.title,
             contentScale = ContentScale.Fit,
             transparent = true,
+            holdPreviousImage = true,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(160.dp),
@@ -1172,6 +1179,15 @@ private fun OverviewBlock(
 // ── Action buttons ────────────────────────────────────────────
 
 /**
+ * False while a detail page draws the card it was opened from
+ * (`ItemDetailUiState.isProvisional`): the page's actions need the fetched
+ * detail, so they show as unavailable and Play reads Loading until it lands.
+ */
+val LocalDetailActionsReady = compositionLocalOf { true }
+
+internal const val DetailActionDisabledAlpha = 0.45f
+
+/**
  * Solid-white Play pill for a movie, series or box set, matching the iOS
  * `PhoneVideoPlayButton`. Full width, 52dp tall, label inline with the icon.
  *
@@ -1186,6 +1202,7 @@ fun PrimaryPillButton(
 ) {
     val castState by koinInject<SiloCastController>().state.collectAsState()
     val remoteStatus = castState.engagedStatus()
+    val ready = LocalDetailActionsReady.current
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1193,10 +1210,13 @@ fun PrimaryPillButton(
     ) {
         Button(
             onClick = onClick,
+            enabled = ready,
             shape = PillShape,
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color.White,
                 contentColor = Color.Black,
+                disabledContainerColor = Color.White.copy(alpha = 0.45f),
+                disabledContentColor = Color.Black.copy(alpha = 0.7f),
             ),
             contentPadding = PaddingValues(horizontal = 24.dp, vertical = 0.dp),
             modifier = Modifier
@@ -1213,7 +1233,7 @@ fun PrimaryPillButton(
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                text = label,
+                text = if (ready) label else stringResource(CommonR.string.common_loading),
                 fontSize = 17.sp,
                 lineHeight = 22.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -1261,8 +1281,11 @@ fun CircleActionButton(
     label: String,
     modifier: Modifier = Modifier,
 ) {
+    val ready = LocalDetailActionsReady.current
     Column(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier
+            .alpha(if (ready) 1f else DetailActionDisabledAlpha)
+            .clickable(enabled = ready, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -1301,9 +1324,12 @@ fun CircleOverflowButton(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val ready = LocalDetailActionsReady.current
     Box(modifier = modifier, contentAlignment = Alignment.TopCenter) {
         Column(
-            modifier = Modifier.clickable { expanded = true },
+            modifier = Modifier
+                .alpha(if (ready) 1f else DetailActionDisabledAlpha)
+                .clickable(enabled = ready) { expanded = true },
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {

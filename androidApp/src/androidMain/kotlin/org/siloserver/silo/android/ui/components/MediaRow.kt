@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.viewmodel.DetailSeeds
 import org.siloserver.silo.common.R as CommonR
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
@@ -248,6 +249,7 @@ fun MediaRow(
         // vertical fling (the helper ORs in any deferral already in scope).
         val rowState = rememberLazyListState()
         fun openDetail(item: SectionItem) {
+            DetailSeeds.offer(item)
             // An episode opens on its series page, so hand off the series
             // backdrop its card carries. It is never a still.
             item.seriesHeroBackdrop()?.let { series ->

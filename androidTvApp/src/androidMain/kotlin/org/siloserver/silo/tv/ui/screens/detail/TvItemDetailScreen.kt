@@ -1843,7 +1843,10 @@ private fun HeroActionRow(
     // For series/season we must NOT fall back to playing the container — Play is
     // a no-op until the next-up episode resolves (episodes still loading, or an
     // empty/error season). Movie/episode are always ready.
-    val playReady = !isSeriesOrSeason || (nextUp != null && state.nextUpTargetReady)
+    // A card seed (state.isProvisional) has no files or watch state yet, so
+    // Play and the More menu wait for the fetched detail.
+    val playReady = !state.isProvisional &&
+        (!isSeriesOrSeason || (nextUp != null && state.nextUpTargetReady))
     val containerResume = remember(detail.userData) { detail.resumePositionSeconds() }
     val nextUpResume = remember(nextUp?.userData) { nextUp?.userData?.resumePositionSeconds() }
     val resumePosition = if (isSeriesOrSeason) nextUpResume else containerResume
@@ -1992,14 +1995,18 @@ private fun HeroActionRow(
                 TvPrimaryPillButton(
                     stableHero = true,
                     icon = Icons.Filled.PlayArrow,
-                    title = playButtonLabel(
-                        resources = resources,
-                        isSeriesOrSeason = isSeriesOrSeason,
-                        seriesContainer = detail.type == "series",
-                        nextUp = nextUp,
-                        hasResume = hasResume,
-                        resumePosition = resumePosition,
-                    ),
+                    title = if (state.isProvisional) {
+                        stringResource(CommonR.string.common_loading)
+                    } else {
+                        playButtonLabel(
+                            resources = resources,
+                            isSeriesOrSeason = isSeriesOrSeason,
+                            seriesContainer = detail.type == "series",
+                            nextUp = nextUp,
+                            hasResume = hasResume,
+                            resumePosition = resumePosition,
+                        )
+                    },
                     onClick = {
                         if (playReady && !playLaunchPending) {
                             playLaunchPending = true
@@ -2111,7 +2118,7 @@ private fun HeroActionRow(
                     isActive = false,
                     contentDescription = stringResource(CommonR.string.detail_moreOptions),
                     titleOnFocus = stringResource(CommonR.string.detail_more),
-                    onClick = { moreOpen = true },
+                    onClick = { if (!state.isProvisional) moreOpen = true },
                 )
             }
         }

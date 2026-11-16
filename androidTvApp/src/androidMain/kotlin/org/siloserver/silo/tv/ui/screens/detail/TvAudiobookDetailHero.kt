@@ -80,6 +80,8 @@ internal fun TvAudiobookDetailHero(
                 thumbhash = detail.posterThumbhash,
                 contentDescription = detail.title,
                 contentScale = ContentScale.Crop,
+                // Keeps the card's cover while the full-size one loads.
+                holdPreviousImage = true,
                 modifier = Modifier
                     .matchParentSize()
                     .blur(30.dp)
@@ -117,6 +119,7 @@ internal fun TvAudiobookDetailHero(
                     .shadow(20.dp, RoundedCornerShape(14.dp)),
                 cornerRadius = 14.dp,
                 defaultArtwork = DefaultArtworkKind.Audiobook,
+                holdPreviousImage = true,
             )
 
             Column(
@@ -167,9 +170,15 @@ internal fun TvAudiobookDetailHero(
                 ) {
                     TvPrimaryPillButton(
                         icon = Icons.Filled.PlayArrow,
-                        title = audiobookPlayLabel(localizedResources(), resumePosition, isFinished),
+                        // A card seed has no files yet: Play waits for the detail.
+                        title = if (state.isProvisional) {
+                            stringResource(CommonR.string.common_loading)
+                        } else {
+                            audiobookPlayLabel(localizedResources(), resumePosition, isFinished)
+                        },
                         focusRequester = playFocus,
-                        onClick = {
+                        onClick = onClick@{
+                            if (state.isProvisional) return@onClick
                             // Resume → stored whole-book position; finished with no
                             // resume → restart at 0; fresh → null (VM resolves from
                             // its own furthest-position snapshot). Never a part fileId.
@@ -193,7 +202,8 @@ internal fun TvAudiobookDetailHero(
                     TvSecondaryPillButton(
                         icon = Icons.Filled.Replay,
                         title = stringResource(CommonR.string.detail_startOver),
-                        onClick = {
+                        onClick = onClick@{
+                            if (state.isProvisional) return@onClick
                             onPlay(
                                 detail.contentId,
                                 null,
