@@ -734,6 +734,7 @@ val androidModule = module {
             bookmarksStore = get(),
             userItemStatePort = get(),
             outboxSyncScheduler = get(),
+            finalPlaybackPositionWriter = get(),
             serverRegistry = get(),
             profileRepository = get(),
             offlineMediaResolver = get(),

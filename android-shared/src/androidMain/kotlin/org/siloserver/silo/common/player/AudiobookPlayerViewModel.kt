@@ -12,9 +12,11 @@ import org.siloserver.silo.audiobook.AudiobookChapter
 import org.siloserver.silo.audiobook.AudiobookChapters
 import org.siloserver.silo.audiobook.AudiobookTimeline
 import org.siloserver.silo.audiobook.buildAudiobookTimeline
+import org.siloserver.silo.audiobook.isWholeBookFile
 import org.siloserver.silo.common.R
 import org.siloserver.silo.common.audiobook.AudiobookBookmarksStore
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
+import org.siloserver.silo.common.downloads.OfflineMedia
 import org.siloserver.silo.common.downloads.OfflineMediaResolver
 import org.siloserver.silo.common.settings.SeekIntervalStore
 import org.siloserver.silo.domain.settings.SeekIntervalController
@@ -23,6 +25,7 @@ import org.siloserver.silo.model.settings.SeekIntervalPair
 import org.siloserver.silo.model.settings.SeekIntervals
 import org.siloserver.silo.model.settings.SeekMedia
 import org.siloserver.silo.model.audiobook.AudiobookBookmark
+import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.playback.QUALITY_ORIGINAL_V3
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
@@ -38,6 +41,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.ProfileRepository
+import org.siloserver.silo.repository.port.PlaybackWriteScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -193,6 +197,7 @@ class AudiobookPlayerViewModel(
     // + AudiobookProgressSyncer — same furthest-wins syncProgress semantics).
     private val userItemStatePort: org.siloserver.silo.repository.port.UserItemStatePort,
     private val outboxSyncScheduler: org.siloserver.silo.common.data.sync.OutboxSyncScheduler,
+    private val finalPlaybackPositionWriter: FinalPlaybackPositionWriter,
     private val serverRegistry: ServerRegistry,
     private val profileRepository: ProfileRepository,
     private val offlineMediaResolver: OfflineMediaResolver,
@@ -322,6 +327,14 @@ class AudiobookPlayerViewModel(
      *  part-local position against the book's total would corrupt resume /
      *  Continue Listening everywhere. */
     private var suppressWholeBookPersistence = false
+
+    /** The download playback run of a book whose downloaded file is the whole
+     *  book. Its positions are queued for the server with the time each was
+     *  sampled, since local-file playback has no session to report them. */
+    private data class DownloadRun(val scope: PlaybackWriteScope, val fileId: Int, val startedAtMs: Long)
+    private var downloadRun: DownloadRun? = null
+    /** The last position queued from the periodic save, for its throttle. */
+    private var lastQueuedPositionSeconds: Double? = null
 
     init {
         audiobookSeekRouter.register(sessionSeekHandler)
@@ -539,6 +552,9 @@ class AudiobookPlayerViewModel(
                         overridePosition = explicitStartOverride,
                         detailPosition = resumePosition,
                     )
+                    // Captured before the download lookup suspends, so a profile
+                    // switch meanwhile can't move this book's progress to it.
+                    val writeScope = finalPlaybackPositionWriter.captureScope()
                     val (downloadServerId, downloadAccountId, downloadProfileId) = resolveScope()
                     val offlineMedia = offlineMediaResolver.findLocalMedia(
                         serverId = downloadServerId,
@@ -584,6 +600,7 @@ class AudiobookPlayerViewModel(
                             builtTimeline.toWholeBookChapters()
                         else -> selectedVersion.chapters.orEmpty()
                     }
+                    downloadRun = offlineMedia?.let { downloadRunFor(writeScope, it, d) }
                     _uiState.update {
                         it.copy(
                             isLoading = false,
@@ -1072,6 +1089,7 @@ class AudiobookPlayerViewModel(
     }
 
     private suspend fun loadOfflineOnly(error: String?) {
+        val writeScope = finalPlaybackPositionWriter.captureScope()
         val (serverId, accountId, profileId) = resolveScope()
         val media = offlineMediaResolver.findLocalMedia(
             serverId = serverId,
@@ -1090,7 +1108,8 @@ class AudiobookPlayerViewModel(
         // file. The item detail may still be cached from an earlier online visit
         // — when it shows the book is multi-part, run in part-local space and map
         // the resume through the timeline instead of seeding a global position.
-        val cachedTimeline = catalogRepository.getCachedItemDetail(contentId)?.let { cached ->
+        val cachedDetail = catalogRepository.getCachedItemDetail(contentId)
+        val cachedTimeline = cachedDetail?.let { cached ->
             buildAudiobookTimeline(
                 versions = cached.versions,
                 serverTotalSeconds = cached.audiobook?.totalDurationSeconds?.toDouble(),
@@ -1098,9 +1117,14 @@ class AudiobookPlayerViewModel(
             )
         }?.takeIf { !it.isSingle }
         val offlinePart = cachedTimeline?.tracks?.firstOrNull { it.fileId == media.fileId }
-        // No server detail when offline — resume from the local snapshot alone
-        // (unless the user explicitly chose to play from the beginning).
-        val resume = if (!startFromBeginning) loadResumePositionSnapshot() else null
+        // No server detail when offline: resume from the local snapshot, or the
+        // server's position this device last saw (unless the user explicitly
+        // chose to play from the beginning).
+        val resume = if (!startFromBeginning) {
+            loadResumePositionSnapshot(cachedDetail?.userData?.positionSeconds)
+        } else {
+            null
+        }
         if (cachedTimeline != null && offlinePart != null) {
             suppressWholeBookPersistence = true
             val globalResume = resume ?: 0.0
@@ -1121,6 +1145,11 @@ class AudiobookPlayerViewModel(
                 _resumePosition.value = null
             }
         }
+        // Without a cached detail nothing shows this file is the whole book,
+        // so its time stays on this device.
+        downloadRun = cachedDetail
+            ?.takeIf { !suppressWholeBookPersistence }
+            ?.let { downloadRunFor(writeScope, media, it) }
         _uiState.update {
             it.copy(
                 isLoading = false,
@@ -1745,17 +1774,39 @@ class AudiobookPlayerViewModel(
 
     /** Snapshot the current position (and any future server progress
      *  report). Called from periodic timer + pause + seek + close. */
-    private fun savePosition() {
+    private fun savePosition(periodic: Boolean = false) {
         val state = _uiState.value
         if (state.durationSeconds <= 0) return  // metadata not loaded yet
+        val run = downloadRun
+        if (run != null) {
+            val position = state.positionSeconds
+            val last = lastQueuedPositionSeconds
+            // While playing, queue about every 10 s of listening, as video does;
+            // pause, seek and close always queue the exact spot.
+            if (position <= 0 || periodic && last != null && abs(position - last) < QUEUED_POSITION_INTERVAL_SECONDS) return
+            lastQueuedPositionSeconds = position
+            // Submitted here, not in a coroutine, so the write a closing player
+            // asks for can't be cancelled with the screen. The app-owned writer
+            // queues it for the server with this sample time.
+            finalPlaybackPositionWriter.submit(
+                FinalPlaybackPosition(
+                    scope = run.scope,
+                    contentId = contentId,
+                    fileId = run.fileId,
+                    positionSeconds = position,
+                    durationSeconds = state.durationSeconds,
+                    runStartedAtMs = run.startedAtMs,
+                ),
+            )
+            return
+        }
         viewModelScope.launch {
             if (state.positionSeconds > 0 && !suppressWholeBookPersistence) {
                 // SINK 2 — whole-book durable resume. Records the WHOLE-BOOK
-                // (global) position against the WHOLE-BOOK total via a durable
-                // local projection + a content-level outbox op drained through
-                // syncProgress (furthest-position-wins). This is what powers
-                // resume + Continue Listening, and is what the multi-part fix
-                // protects: positionSeconds is now global, so a part-local
+                // (global) position against the WHOLE-BOOK total as a local
+                // snapshot only; a stream's session reports progress to the
+                // server. This is what powers on-device resume, and is what the
+                // multi-part fix protects: positionSeconds is now global, so a part-local
                 // position is never persisted here as the book's position
                 // (offline single-part playback runs part-local and skips this
                 // sink entirely via suppressWholeBookPersistence).
@@ -1770,11 +1821,13 @@ class AudiobookPlayerViewModel(
         }
     }
 
-    /** Resume-on-open. Returns the furthest of the on-device local snapshot
-     *  and the server's recorded position ([serverPositionSeconds], from the
-     *  item's `user_data`) so we never resume behind progress made on another
-     *  device — and so a device that has never played this book locally still
-     *  resumes from the server's Continue-Listening position instead of 0:00.
+    /** Resume-on-open. Listening from a download that hasn't reached the
+     *  server yet is newer than the server's position, so it wins. Otherwise
+     *  returns the furthest of the on-device local snapshot and the server's
+     *  recorded position ([serverPositionSeconds], from the item's `user_data`)
+     *  so we never resume behind progress made on another device — and so a
+     *  device that has never played this book locally still resumes from the
+     *  server's Continue-Listening position instead of 0:00.
      *  Exposed via [resumePositionSeconds] for the Compose host to seek to once
      *  the controller + metadata are ready. */
     private suspend fun loadResumePositionSnapshot(serverPositionSeconds: Double? = null): Double? {
@@ -1782,14 +1835,26 @@ class AudiobookPlayerViewModel(
         // and audiobook resume is per-book — take the furthest on-device position
         // across the item's files, maxed with the server's recorded position so we
         // never resume behind progress made on another device.
+        val unsent = userItemStatePort.localPlaybackProgress(contentId)?.positionSeconds?.takeIf { it > 0 }
         val local = userItemStatePort.localPositionForContent(contentId)?.takeIf { it > 0 }
         val server = serverPositionSeconds?.takeIf { it > 0 }
-        val position = listOfNotNull(local, server).maxOrNull()
+        val position = unsent ?: listOfNotNull(local, server).maxOrNull()
         _resumePosition.value = position
         return position
     }
 
     fun consumeResumePosition() { _resumePosition.value = null }
+
+    /** A download run for [media], or null unless [detail] shows the file is
+     *  the whole book and [scope] (captured before the download lookup) is the
+     *  identity the download belongs to. */
+    private fun downloadRunFor(scope: PlaybackWriteScope?, media: OfflineMedia, detail: ItemDetail): DownloadRun? {
+        val total = detail.audiobook?.totalDurationSeconds?.toDouble()
+        if (!isWholeBookFile(detail.versions, media.fileId, total)) return null
+        return scope
+            ?.takeIf { it.serverId == media.serverId && it.profileId == media.profileId }
+            ?.let { DownloadRun(it, media.fileId, System.currentTimeMillis()) }
+    }
 
     /** Persist position every 5s while playing so a crash loses at
      *  most a few seconds. Also fires on pause/seek/close via direct
@@ -1799,7 +1864,7 @@ class AudiobookPlayerViewModel(
         positionSaveJob = viewModelScope.launch {
             while (true) {
                 delay(5000)
-                if (_uiState.value.isPlaying) savePosition()
+                if (_uiState.value.isPlaying) savePosition(periodic = true)
             }
         }
     }
@@ -1927,6 +1992,10 @@ class AudiobookPlayerViewModel(
          *  mapping resumes. Wide enough to absorb the ~250ms poll cadence and a
          *  fresh prepare's initial seek. */
         private const val TRACK_LOAD_SETTLE_TOLERANCE = 3.0
+
+        /** Listening (seconds) between positions the periodic save queues for
+         *  the server during download playback. */
+        private const val QUEUED_POSITION_INTERVAL_SECONDS = 10.0
     }
 }
 

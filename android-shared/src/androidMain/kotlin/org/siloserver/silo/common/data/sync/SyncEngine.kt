@@ -113,11 +113,11 @@ class SyncEngine(
                 }
                 when (outcome) {
                     WriteOutcome.SYNCED -> {
-                        if (op.opKind == OutboxOperation.SET_POSITION) settleDownloadProgress(op) else dao.deleteById(op.id)
+                        if (op.opKind == OutboxOperation.SET_POSITION) settleDownloadProgress(op, accepted = true) else dao.deleteById(op.id)
                         synced++
                     }
                     WriteOutcome.TERMINAL -> if (op.opKind == OutboxOperation.SET_POSITION) {
-                        settleDownloadProgress(op)
+                        settleDownloadProgress(op, accepted = false)
                         dropped++
                     } else {
                         // A stale in-flight op must not roll back a newer pending
@@ -212,13 +212,19 @@ class SyncEngine(
 
     /**
      * The server has the position (or refused it for good), so from now on its
-     * answer stands: drop the op and the local copy it sent. A newer sample
-     * queued meanwhile keeps its row until its own op settles.
+     * answer stands: drop the op. Cards, detail and the video player read only
+     * positions still queued, so the local copy stops overriding the server
+     * there. An accepted copy is kept for the audiobook player, which resumes a
+     * downloaded book from it offline, where there is no server answer to read.
+     * A refused one is cleared. A newer sample queued meanwhile keeps its row
+     * until its own op settles.
      */
-    private suspend fun settleDownloadProgress(op: DirtyOperationEntity) {
+    private suspend fun settleDownloadProgress(op: DirtyOperationEntity, accepted: Boolean) {
         db.withTransaction {
             dao.deleteById(op.id)
-            if (dao.countNewerForTargetKind(op.serverId, op.accountId, op.profileId, op.targetContentId, op.opKind, op.id) == 0) {
+            if (!accepted &&
+                dao.countNewerForTargetKind(op.serverId, op.accountId, op.profileId, op.targetContentId, op.opKind, op.id) == 0
+            ) {
                 // Stamped with the event it settles, so a sample taken after it but
                 // written after this still counts as newer.
                 userStateDao.clearPlaybackProgressBefore(

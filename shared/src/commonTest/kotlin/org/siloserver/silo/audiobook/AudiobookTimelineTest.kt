@@ -345,4 +345,20 @@ class AudiobookTimelineTest {
         val timeline = buildAudiobookTimeline(versions, serverTotalSeconds = null)!!
         assertEquals(listOf(70, 71), timeline.tracks.map { it.fileId })
     }
+    @Test
+    fun `only a file that is the whole book counts as the whole book`() {
+        // A single file, with or without the server's total.
+        val single = listOf(part(fileId = 20, duration = 1800.0, partIndex = 0))
+        assertTrue(isWholeBookFile(single, 20, serverTotalSeconds = 1800.0))
+        assertTrue(isWholeBookFile(single, 20, serverTotalSeconds = null))
+        // One part of a book split into parts, even when the other parts have no
+        // duration and the timeline would drop them.
+        val split = listOf(part(fileId = 10, duration = 100.0, partIndex = 0), part(fileId = 11, duration = 0.0, partIndex = 1))
+        assertFalse(isWholeBookFile(split, 10, serverTotalSeconds = null))
+        // Untagged parts: the file is far shorter than the book.
+        val untagged = listOf(part(fileId = 30, duration = 600.0, kind = null), part(fileId = 31, duration = 600.0, kind = null))
+        assertFalse(isWholeBookFile(untagged, 30, serverTotalSeconds = 1200.0))
+        // A file the detail doesn't list.
+        assertFalse(isWholeBookFile(single, 99, serverTotalSeconds = 1800.0))
+    }
 }

@@ -128,6 +128,7 @@ class SyncEngineTest {
         ))
     }
     private suspend fun storedPosition() = db.userItemStateDao().get("s1", "", "p1", "c1", 7)?.positionSeconds
+    private suspend fun unsentPositions() = db.userItemStateDao().pendingProgressForContentIds("s1", "", "p1", listOf("c1"))
 
     @Test
     fun downloadProgressIsSentWithItsEventTimeAndThenStopsOverridingTheServer() = runTest {
@@ -139,7 +140,8 @@ class SyncEngineTest {
         assertTrue("\"position_ms\":646500" in body && "\"updated_at\":\"1970-01-01T00:00:05Z\"" in body, body)
         assertEquals(0, db.dirtyOperationDao().count())
         val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
-        assertEquals(0.0, row?.positionSeconds, "the server's answer stands once it has the position")
+        assertTrue(unsentPositions().isEmpty(), "the server's answer stands once it has the position")
+        assertEquals(646.5, row?.positionSeconds, "kept as the offline resume point")
         assertEquals("audio", row?.audioFingerprint)
     }
 
@@ -174,7 +176,7 @@ class SyncEngineTest {
         assertEquals(1, progressEngine().drainOnce().synced)
         // The same event time both times, so a repeat is a no-op on the server.
         assertEquals(1, progressBodies.distinct().size)
-        assertEquals(0.0, storedPosition())
+        assertTrue(unsentPositions().isEmpty())
     }
 
     @Test
@@ -187,7 +189,7 @@ class SyncEngineTest {
 
         assertTrue("\"updated_at\":\"1970-01-01T00:00:05Z\"" in progressBodies.single())
         assertEquals(0, db.dirtyOperationDao().count())
-        assertEquals(0.0, storedPosition())
+        assertTrue(unsentPositions().isEmpty())
     }
 
     @Test
