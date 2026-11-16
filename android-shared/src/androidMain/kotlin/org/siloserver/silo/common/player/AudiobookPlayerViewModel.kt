@@ -7,6 +7,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.audiobook.AudiobookDetailFormatting
 import org.siloserver.silo.audiobook.AudioPlaybackTrack
 import org.siloserver.silo.audiobook.AudiobookChapter
 import org.siloserver.silo.audiobook.AudiobookChapters
@@ -615,7 +616,9 @@ class AudiobookPlayerViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            title = d.title,
+                            // Without the series name and volume the server baked
+                            // in, as Apple's player shows it.
+                            title = AudiobookDetailFormatting.cleanTitle(d.title, d.audiobook?.series?.name),
                             author = d.audiobook?.authorNames,
                             narrator = d.audiobook?.narratorNames,
                             overview = d.overview,

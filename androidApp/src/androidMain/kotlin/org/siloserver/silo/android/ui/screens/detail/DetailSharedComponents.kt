@@ -78,6 +78,7 @@ import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.cast.engagedStatus
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
@@ -126,6 +127,13 @@ import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import java.util.Locale
 import kotlinx.coroutines.flow.first
+import android.os.Build
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 
 // ── Tokens ────────────────────────────────────────────────────
 
@@ -186,6 +194,14 @@ fun AdaptiveDetailHero(
     compactEyebrow: Boolean = false,
     /** Scales the compact hero's artwork height; see [DetailHeroArtwork]. */
     compactArtworkHeightFactor: Float = 1f,
+    /** The title to draw; an audiobook passes its title without the series locator. */
+    displayTitle: String = detail.title,
+    /**
+     * Width ÷ height of a cover to draw whole over a wash of itself (Apple's
+     * `.cover` artwork style, for a book with no backdrop); null keeps the
+     * cropped backdrop and 2:3 poster.
+     */
+    coverAspectRatio: Float? = null,
     actions: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -211,6 +227,8 @@ fun AdaptiveDetailHero(
                 reserveOverviewSpace = reserveOverviewSpace,
                 translation = translation,
                 belowOverview = expandedBelowOverview,
+                displayTitle = displayTitle,
+                coverAspectRatio = coverAspectRatio,
                 actions = actions,
             )
         } else {
@@ -229,6 +247,8 @@ fun AdaptiveDetailHero(
                 belowOverview = belowOverview,
                 showEyebrow = compactEyebrow,
                 artworkHeightFactor = compactArtworkHeightFactor,
+                displayTitle = displayTitle,
+                coverAspectRatio = coverAspectRatio,
                 actions = actions,
             )
         }
@@ -311,10 +331,13 @@ private fun ExpandedDetailHero(
     reserveOverviewSpace: Boolean,
     translation: (@Composable () -> Unit)?,
     belowOverview: (@Composable () -> Unit)?,
+    displayTitle: String,
+    coverAspectRatio: Float?,
     actions: @Composable () -> Unit,
 ) {
     val hasPortrait = portraitArtwork.reserveSpace || !portraitArtwork.url.isNullOrBlank()
-    val posterHeight = posterWidth * 1.5f
+    val portraitAspect = coverAspectRatio ?: (2f / 3f)
+    val posterHeight = posterWidth / portraitAspect
     val pageSurface = lerp(Color.Black, dominantColor, 0.42f)
 
     Column(
@@ -325,9 +348,16 @@ private fun ExpandedDetailHero(
         // This cinematic box is measured by the row. Its last opaque gradient
         // stop therefore lands exactly at the bottom of the poster/buttons.
         val seriesBackdrop = detail.seriesHeroBackdrop()
+        // A cover-led page with no backdrop washes the hero with its cover.
+        val coverWash = coverAspectRatio != null && detail.backdropUrl.isNullOrBlank()
         ExpandedDetailHeroBackdrop(
-            artworkUrl = seriesBackdrop?.url ?: detail.backdropUrl,
-            artworkThumbhash = if (seriesBackdrop != null) seriesBackdrop.thumbhash else detail.backdropThumbhash,
+            artworkUrl = seriesBackdrop?.url ?: if (coverWash) detail.posterUrl else detail.backdropUrl,
+            artworkThumbhash = when {
+                seriesBackdrop != null -> seriesBackdrop.thumbhash
+                coverWash -> detail.posterThumbhash
+                else -> detail.backdropThumbhash
+            },
+            blurred = coverWash,
             hidden = seriesBackdrop == null && detail.hidesEpisodeArtwork(detail.backdropIsEpisodeStill),
             pageSurface = pageSurface,
         ) {
@@ -343,7 +373,7 @@ private fun ExpandedDetailHero(
                     Box(
                         modifier = Modifier
                             .width(posterWidth)
-                            .aspectRatio(2f / 3f)
+                            .aspectRatio(portraitAspect)
                             .clip(RoundedCornerShape(12.dp))
                             .background(Color.White.copy(alpha = 0.06f))
                             .border(
@@ -387,7 +417,7 @@ private fun ExpandedDetailHero(
                             modifier = if (hasPortrait) Modifier.weight(1f, fill = false).clipToBounds() else Modifier,
                             contentAlignment = Alignment.Center,
                         ) {
-                            ExpandedHeroTitle(detail = detail)
+                            ExpandedHeroTitle(detail = detail, displayTitle = displayTitle)
                         }
                         val metadataTokens = (factsLine + sourceTokens).distinct()
                         if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
@@ -465,6 +495,8 @@ internal fun ExpandedDetailHeroBackdrop(
     artworkThumbhash: String?,
     pageSurface: Color,
     hidden: Boolean = false,
+    /** Softens a cover standing in for a backdrop, which reads as noise when enlarged sharp. */
+    blurred: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
@@ -475,7 +507,9 @@ internal fun ExpandedDetailHeroBackdrop(
             contentDescription = null,
             contentScale = ContentScale.Crop,
             crossfadeMillis = DetailArtworkCrossfadeMs,
-            modifier = Modifier.matchParentSize(),
+            modifier = Modifier
+                .matchParentSize()
+                .then(if (blurred) Modifier.blur(44.dp, BlurredEdgeTreatment.Rectangle) else Modifier),
             holdPreviousImage = true,
         )
         Box(
@@ -506,7 +540,7 @@ internal fun ExpandedDetailHeroBackdrop(
 }
 
 @Composable
-private fun ExpandedHeroTitle(detail: ItemDetail) {
+private fun ExpandedHeroTitle(detail: ItemDetail, displayTitle: String) {
     val isEpisode = detail.type == "episode"
     val seriesTitle = detail.seriesTitle?.takeIf { it.isNotBlank() }
     if (isEpisode && seriesTitle != null) {
@@ -572,7 +606,7 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
         return
     }
 
-    val (primary, subtitle) = splitHeroTitle(detail.title)
+    val (primary, subtitle) = splitHeroTitle(displayTitle)
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -636,6 +670,10 @@ fun DetailHero(
     showEyebrow: Boolean = false,
     /** Scales the artwork's height; see [DetailHeroArtwork]. */
     artworkHeightFactor: Float = 1f,
+    /** The title to draw in place of the item's own. */
+    displayTitle: String = detail.title,
+    /** Draws the poster whole over a wash of itself; see [AdaptiveDetailHero]. */
+    coverAspectRatio: Float? = null,
     actions: @Composable () -> Unit,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -643,18 +681,23 @@ fun DetailHero(
         val seriesBackdrop = detail.seriesHeroBackdrop()
         DetailHeroArtwork(
             heightFactor = artworkHeightFactor,
-            artworkUrl = seriesBackdrop?.url ?: detail.backdropUrl ?: detail.posterUrl,
-            artworkThumbhash = if (seriesBackdrop != null) {
-                seriesBackdrop.thumbhash
-            } else {
-                detail.backdropThumbhash ?: detail.posterThumbhash
+            artworkUrl = when {
+                seriesBackdrop != null -> seriesBackdrop.url
+                coverAspectRatio != null -> detail.posterUrl
+                else -> detail.backdropUrl ?: detail.posterUrl
             },
+            artworkThumbhash = when {
+                seriesBackdrop != null -> seriesBackdrop.thumbhash
+                coverAspectRatio != null -> detail.posterThumbhash
+                else -> detail.backdropThumbhash ?: detail.posterThumbhash
+            },
+            coverAspectRatio = coverAspectRatio,
             hidden = seriesBackdrop == null && detail.hidesEpisodeArtwork(
                 if (detail.backdropUrl != null) detail.backdropIsEpisodeStill else detail.posterIsEpisodeStill,
             ),
             contentDescription = detail.title,
         ) {
-            HeroTitle(detail = detail)
+            HeroTitle(detail = detail, displayTitle = displayTitle)
         }
 
         Column(
@@ -713,6 +756,8 @@ internal fun DetailHeroArtwork(
      * starts on the first screen.
      */
     heightFactor: Float = 1f,
+    /** Draws [artworkUrl] whole at this aspect over a blurred wash of itself instead of cropped. */
+    coverAspectRatio: Float? = null,
     title: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
@@ -759,20 +804,35 @@ internal fun DetailHeroArtwork(
                         )
                     },
             ) {
-                SpoilerImage(
-                    url = artworkUrl,
-                    thumbhash = artworkThumbhash,
-                    hidden = hidden,
-                    contentDescription = contentDescription,
-                    contentScale = ContentScale.Crop,
-                    crossfadeMillis = DetailArtworkCrossfadeMs,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            translationY = parallaxDp * ParallaxFactor * density
-                        },
-                    holdPreviousImage = true,
-                )
+                if (coverAspectRatio != null) {
+                    DetailCoverArtwork(
+                        url = artworkUrl,
+                        thumbhash = artworkThumbhash,
+                        aspectRatio = coverAspectRatio,
+                        coverHeight = (artworkHeight * 0.48f).coerceIn(190.dp, 250.dp),
+                        contentDescription = contentDescription,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                translationY = parallaxDp * ParallaxFactor * density
+                            },
+                    )
+                } else {
+                    SpoilerImage(
+                        url = artworkUrl,
+                        thumbhash = artworkThumbhash,
+                        hidden = hidden,
+                        contentDescription = contentDescription,
+                        contentScale = ContentScale.Crop,
+                        crossfadeMillis = DetailArtworkCrossfadeMs,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                translationY = parallaxDp * ParallaxFactor * density
+                            },
+                        holdPreviousImage = true,
+                    )
+                }
                 // Deepens as the hero leaves, so the artwork recedes
                 // instead of just sliding.
                 if (scrimAlpha > 0f) {
@@ -804,6 +864,69 @@ internal fun DetailHeroArtwork(
                 title()
             }
         }
+    }
+}
+
+/**
+ * Apple's `PhoneDetailCoverArtwork`: the cover drawn whole, 100dp down so it
+ * clears the floating top controls, over a blurred, saturated, dimmed wash
+ * of itself that fills the hero. The title overlays the lower part as usual.
+ * Below API 31, where `Modifier.blur` does nothing, the wash is the cover
+ * dimmed further instead of a sharp enlarged copy.
+ */
+@Composable
+private fun DetailCoverArtwork(
+    url: String?,
+    thumbhash: String?,
+    aspectRatio: Float,
+    coverHeight: Dp,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+) {
+    val canBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    Box(modifier = modifier, contentAlignment = Alignment.TopCenter) {
+        if (!url.isNullOrBlank() || !thumbhash.isNullOrBlank()) {
+            ThumbhashImage(
+                url = url,
+                thumbhash = thumbhash,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                decodeSizePx = 256,
+                crossfadeMillis = 0,
+                colorFilter = ColorFilter.colorMatrix(
+                    ColorMatrix().apply { setToSaturation(1.2f) },
+                ),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = 1.25f
+                        scaleY = 1.25f
+                    }
+                    .then(if (canBlur) Modifier.blur(44.dp, BlurredEdgeTreatment.Rectangle) else Modifier),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = if (canBlur) 0.26f else 0.62f)),
+            )
+        } else {
+            Box(modifier = Modifier.fillMaxSize().background(SiloSurfaceElevated))
+        }
+        ThumbhashImage(
+            url = url,
+            thumbhash = thumbhash,
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            crossfadeMillis = DetailArtworkCrossfadeMs,
+            holdPreviousImage = true,
+            defaultArtwork = DefaultArtworkKind.Audiobook,
+            modifier = Modifier
+                .padding(top = 100.dp)
+                .height(coverHeight)
+                .aspectRatio(aspectRatio)
+                .clip(RoundedCornerShape(12.dp))
+                .border(0.5.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(12.dp)),
+        )
     }
 }
 
@@ -923,7 +1046,7 @@ private fun ItemDetail.hidesEpisodeArtwork(artworkIsEpisodeStill: Boolean?): Boo
         LocalEpisodeSpoilerPrefs.current.hidesImage(EpisodeSpoilers.isUnwatched(userData), artworkIsEpisodeStill)
 
 @Composable
-private fun HeroTitle(detail: ItemDetail) {
+private fun HeroTitle(detail: ItemDetail, displayTitle: String) {
     val isEpisode = detail.type == "episode"
     val seriesTitle = detail.seriesTitle?.takeIf { it.isNotBlank() }
 
@@ -992,7 +1115,7 @@ private fun HeroTitle(detail: ItemDetail) {
 
     // iOS PhoneHeroTitle: primary 30pt heavy, optional subtitle 13pt heavy
     // tracked, spacing 4.
-    val (primary, subtitle) = splitHeroTitle(detail.title)
+    val (primary, subtitle) = splitHeroTitle(displayTitle)
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1199,6 +1322,8 @@ fun PrimaryPillButton(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Listening or watching progress, 0..1, drawn as a thin track along the pill's bottom (Apple `progress`). */
+    progress: Float? = null,
 ) {
     val castState by koinInject<SiloCastController>().state.collectAsState()
     val remoteStatus = castState.engagedStatus()
@@ -1222,6 +1347,7 @@ fun PrimaryPillButton(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp)
+                .then(if (progress != null && progress > 0f) Modifier.pillProgressTrack(progress) else Modifier)
                 // TalkBack reads the destination with Play, not as a separate stop.
                 .semantics { remoteStatus?.let { stateDescription = it } },
         ) {
@@ -1265,6 +1391,35 @@ fun PrimaryPillButton(
         }
     }
 }
+
+/** Apple `PhonePrimaryPillButton.progressTrack`: a 3dp track inset 24dp, 6dp above the pill's bottom. */
+private fun Modifier.pillProgressTrack(progress: Float): Modifier = drawWithContent {
+    drawContent()
+    val inset = 24.dp.toPx()
+    val width = (size.width - inset * 2).coerceAtLeast(0f)
+    val height = 3.dp.toPx()
+    val top = size.height - 6.dp.toPx() - height
+    val radius = CornerRadius(height / 2, height / 2)
+    drawRoundRect(
+        color = Color.Black.copy(alpha = 0.14f),
+        topLeft = Offset(inset, top),
+        size = Size(width, height),
+        cornerRadius = radius,
+    )
+    drawRoundRect(
+        color = Color.Black.copy(alpha = 0.78f),
+        topLeft = Offset(inset, top),
+        size = Size(maxOf(4.dp.toPx(), width * progress.coerceIn(0f, 1f)), height),
+        cornerRadius = radius,
+    )
+}
+
+/**
+ * The caption and spoken labels of a [HeroActionStack] toggle, for a page
+ * that names it in its own words (an audiobook's "Want to Listen" and
+ * "Finished" in place of Watchlist and Watched).
+ */
+data class HeroToggleLabels(val caption: String, val turnOn: String, val turnOff: String)
 
 /**
  * 42dp circle toggle used for favorite, watchlist, watched. Active
@@ -1441,6 +1596,12 @@ fun HeroActionStack(
     // resuming immediately, matching iOS. Null → the button plays directly.
     onPlayFromBeginning: (() -> Unit)? = null,
     resumeStoppedAtLabel: String? = null,
+    /** Replaces the Watchlist toggle's wording; null keeps it. */
+    watchlistLabels: HeroToggleLabels? = null,
+    /** Replaces the Watched toggle's wording; null keeps it. */
+    watchedLabels: HeroToggleLabels? = null,
+    /** Resume progress drawn along the Play pill, 0..1. */
+    primaryProgress: Float? = null,
 ) {
     var showResumeDialog by remember { mutableStateOf(false) }
     Column(
@@ -1451,6 +1612,7 @@ fun HeroActionStack(
         PrimaryPillButton(
             label = primaryLabel,
             onClick = { if (onPlayFromBeginning != null) showResumeDialog = true else onPlay() },
+            progress = primaryProgress,
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1472,22 +1634,24 @@ fun HeroActionStack(
                 icon = Icons.Filled.BookmarkBorder,
                 activeIcon = Icons.Filled.Bookmark,
                 isActive = isInWatchlist,
-                contentDescription = stringResource(
-                    if (isInWatchlist) CommonR.string.detail_watchlistRemove else CommonR.string.detail_watchlistAdd,
-                ),
+                contentDescription = watchlistLabels?.let { if (isInWatchlist) it.turnOff else it.turnOn }
+                    ?: stringResource(
+                        if (isInWatchlist) CommonR.string.detail_watchlistRemove else CommonR.string.detail_watchlistAdd,
+                    ),
                 onClick = onToggleWatchlist,
-                label = stringResource(CommonR.string.detail_watchlist),
+                label = watchlistLabels?.caption ?: stringResource(CommonR.string.detail_watchlist),
                 modifier = Modifier.weight(1f),
             )
             CircleActionButton(
                 icon = Icons.Filled.CheckCircleOutline,
                 activeIcon = Icons.Filled.CheckCircle,
                 isActive = isWatched,
-                contentDescription = stringResource(
-                    if (isWatched) CommonR.string.detail_markUnwatched else CommonR.string.detail_markWatched,
-                ),
+                contentDescription = watchedLabels?.let { if (isWatched) it.turnOff else it.turnOn }
+                    ?: stringResource(
+                        if (isWatched) CommonR.string.detail_markUnwatched else CommonR.string.detail_markWatched,
+                    ),
                 onClick = onToggleWatched,
-                label = stringResource(CommonR.string.detail_watched),
+                label = watchedLabels?.caption ?: stringResource(CommonR.string.detail_watched),
                 modifier = Modifier.weight(1f),
             )
             if (downloadSlot != null) {
@@ -1845,8 +2009,10 @@ fun DetailFactsList(
     detail: ItemDetail,
     runtimeMinutes: Int = detail.runtime,
     modifier: Modifier = Modifier,
+    /** Rows to show in place of the film facts (an audiobook's author, narrator, length and format). */
+    facts: List<Pair<String, String>>? = null,
 ) {
-    val rows = buildDetailFacts(detail, runtimeMinutes)
+    val rows = facts ?: buildDetailFacts(detail, runtimeMinutes)
     if (rows.isEmpty()) return
 
     SectionHeader(title = stringResource(CommonR.string.detail_details))

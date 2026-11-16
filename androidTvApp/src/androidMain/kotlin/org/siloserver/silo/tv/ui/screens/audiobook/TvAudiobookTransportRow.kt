@@ -150,11 +150,11 @@ private fun TransportIconButton(
     val buttonHeight = if (isPrimary) primaryButtonHeight else buttonSize
     val buttonShape = RoundedCornerShape(buttonHeight / 2)
     val symbolSize = if (isPrimary) (buttonHeight * 0.44f) else (buttonSize * 0.40f)
-    val focusBg = if (isFocused) Color(0xFFE8F5F7) else Color(0xFF173137).copy(alpha = 0.92f)
+    val focusBg = if (isFocused) TvAudiobookControlFocusedFill else TvAudiobookControlFill
     val iconTint = when {
         !enabled -> Color.White.copy(alpha = 0.30f)
         isFocused -> Color.Black
-        else -> Color(0xFF23A8F2)
+        else -> Color.White
     }
     val scale by animateFloatAsState(
         targetValue = if (isFocused) 1.025f else 1f,
@@ -170,7 +170,7 @@ private fun TransportIconButton(
             .background(focusBg)
             .border(
                 width = if (isFocused) 0.dp else 1.dp,
-                color = if (isFocused) Color.Transparent else Color.White.copy(alpha = 0.06f),
+                color = Color.Transparent,
                 shape = buttonShape,
             )
             .let { mod -> if (focusRequester != null) mod.focusRequester(focusRequester) else mod }

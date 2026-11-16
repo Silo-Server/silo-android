@@ -52,6 +52,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import org.siloserver.silo.common.audiobook.AudioPlayerBackground
+import org.siloserver.silo.common.audiobook.rememberAudioCoverPalette
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -351,9 +353,17 @@ fun TvAudiobookPlayerScreen(
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val metrics = tvAudiobookPlayerMetrics(maxWidth.value.toInt(), maxHeight.value.toInt())
+        // Apple's AudioCoverPalette: the cover tints the backdrop, and its
+        // most vivid color marks the progress and the current chapter.
+        val palette = rememberAudioCoverPalette(state.coverUrl, fallbackAccent = TvAudiobookFallbackAccent)
 
         Box(modifier = Modifier.fillMaxSize()) {
-            TvAudiobookPlayerBackdrop()
+            AudioPlayerBackground(
+                palette = palette,
+                isPlaying = !state.isPaused && state.streamUrl != null,
+                baseColor = Color.Black,
+                modifier = Modifier.fillMaxSize(),
+            )
             when {
                 state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Color.White)
@@ -437,7 +447,7 @@ fun TvAudiobookPlayerScreen(
                                 Text(
                                     text = currentChapterLabel,
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = TvAudiobookAccent,
+                                    color = palette.accent.copy(alpha = 0.9f),
                                     maxLines = 1,
                                 )
                             }
@@ -450,6 +460,7 @@ fun TvAudiobookPlayerScreen(
                                 ),
                                 chapterMarkers = state.chapters,
                                 durationSeconds = state.durationSeconds,
+                                accent = palette.accent,
                             )
                             Spacer(Modifier.height(metrics.transportTopGapDp.dp))
                             TvAudiobookTransportRow(
@@ -597,10 +608,11 @@ internal fun tvAudiobookPlayerMetrics(
     return if (compact) {
         TvAudiobookPlayerMetrics(
             compact = true,
-            coverSizeDp = 218,
+            // tvOS: a 620pt cover beside the controls, 90pt apart, on a 1920pt screen.
+            coverSizeDp = 300,
             horizontalPaddingDp = 44,
             verticalPaddingDp = 38,
-            coverGapDp = 36,
+            coverGapDp = 44,
             coverCornerRadiusDp = 20,
             coverShadowDp = 22,
             eyebrowGapDp = 5,
@@ -618,7 +630,7 @@ internal fun tvAudiobookPlayerMetrics(
     } else {
         TvAudiobookPlayerMetrics(
             compact = false,
-            coverSizeDp = 312,
+            coverSizeDp = 420,
             horizontalPaddingDp = 80,
             verticalPaddingDp = 96,
             coverGapDp = 46,
@@ -639,33 +651,12 @@ internal fun tvAudiobookPlayerMetrics(
     }
 }
 
-private val TvAudiobookAccent = Color(0xFF23A8F2)
-private val TvAudiobookPanel = Color(0xFF173137)
+/** The accent before the cover is sampled, or for a cover with no color to take. */
+private val TvAudiobookFallbackAccent = Color(0xFFEDEDED)
 
-@Composable
-private fun TvAudiobookPlayerBackdrop() {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(
-                        Color(0xFF123B42),
-                        Color(0xFF071A1F),
-                        Color(0xFF020708),
-                    ),
-                ),
-            )
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(
-                        Color.Black.copy(alpha = 0.06f),
-                        Color.Black.copy(alpha = 0.52f),
-                    ),
-                ),
-            ),
-    )
-}
+/** tvOS `.bordered` buttons: a translucent fill with white glyphs until focused. */
+internal val TvAudiobookControlFill = Color.White.copy(alpha = 0.12f)
+internal val TvAudiobookControlFocusedFill = Color(0xFFF2F2F2)
 
 @Composable
 private fun TvAudiobookProgressBar(
@@ -674,6 +665,7 @@ private fun TvAudiobookProgressBar(
     remainingLabel: String,
     chapterMarkers: List<VersionChapter>,
     durationSeconds: Double,
+    accent: Color,
 ) {
     Column(Modifier.fillMaxWidth()) {
         Box(
@@ -681,14 +673,14 @@ private fun TvAudiobookProgressBar(
                 .fillMaxWidth()
                 .height(10.dp)
                 .clip(RoundedCornerShape(5.dp))
-                .background(Color.White.copy(alpha = 0.23f)),
+                .background(Color.White.copy(alpha = 0.16f)),
         ) {
             Box(
                 Modifier
                     .fillMaxWidth(fraction.coerceIn(0f, 1f))
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(5.dp))
-                    .background(TvAudiobookAccent),
+                    .background(Brush.horizontalGradient(listOf(accent.copy(alpha = 0.75f), accent))),
             )
             TvAudiobookChapterTicks(
                 chapters = chapterMarkers,
@@ -920,8 +912,8 @@ private fun TvAudiobookPillButton(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val bg = if (isFocused) Color(0xFFE8F5F7) else TvAudiobookPanel.copy(alpha = 0.92f)
-    val fg = if (isFocused) Color.Black else TvAudiobookAccent
+    val bg = if (isFocused) TvAudiobookControlFocusedFill else TvAudiobookControlFill
+    val fg = if (isFocused) Color.Black else Color.White
     Row(
         modifier = modifier
             .height(height)
