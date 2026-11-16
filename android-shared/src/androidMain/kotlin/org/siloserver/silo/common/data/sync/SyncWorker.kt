@@ -8,9 +8,11 @@ import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
 
 /**
@@ -29,43 +31,51 @@ class SyncWorker(
     private val syncEngine: SyncEngine,
 ) : CoroutineWorker(appContext, params) {
 
-    override suspend fun doWork(): Result = try {
-        drainRequested.set(false)
-        var result = syncEngine.drainOnce()
-        // A drain asked for while this one ran (see [enqueueNow]) may find ops
-        // this one passed over, so drain again before deciding.
-        while (drainRequested.getAndSet(false)) result = syncEngine.drainOnce()
-        Log.i(
-            TAG,
-            "drain: synced=${result.synced} dropped=${result.dropped} " +
-                "retriable=${result.retriable} remaining=${result.remaining}",
-        )
-        if (result.hasPendingWork) Result.retry() else Result.success()
-    } catch (t: Throwable) {
-        Log.w(TAG, "drain failed; will retry", t)
-        Result.retry()
+    override suspend fun doWork(): Result {
+        val now = inputData.getBoolean(KEY_NOW, false)
+        return try {
+            // One drain at a time: the main chain and a drain-now request never
+            // reset or claim each other's in-flight ops.
+            val result = drainLock.withLock { syncEngine.drainOnce() }
+            Log.i(
+                TAG,
+                "drain${if (now) " (now)" else ""}: synced=${result.synced} dropped=${result.dropped} " +
+                    "retriable=${result.retriable} remaining=${result.remaining}",
+            )
+            when {
+                // A drain-now request never starts its own retry chain; the main
+                // chain carries whatever is left.
+                now -> Result.success().also { if (result.hasPendingWork) enqueue(applicationContext) }
+                result.hasPendingWork -> Result.retry()
+                else -> Result.success()
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            Log.w(TAG, "drain failed; will retry", t)
+            if (now) Result.success().also { enqueue(applicationContext) } else Result.retry()
+        }
     }
 
     companion object {
         private const val TAG = "SyncWorker"
         const val UNIQUE_NAME = "silo-outbox-sync"
+        private const val NOW_UNIQUE_NAME = "silo-outbox-sync-now"
+        private const val KEY_NOW = "now"
 
-        private val drainRequested = java.util.concurrent.atomic.AtomicBoolean(false)
+        private val drainLock = Mutex()
 
         /**
          * Drain now, for example once the server is reachable again. [enqueue]
          * keeps a retry already waiting in WorkManager's backoff, which can be
-         * hours; this replaces it. A running drain isn't cancelled (a cancelled
-         * membership send waits for the next app start); it drains once more
-         * before it finishes instead. Blocks on WorkManager, so call it off the
-         * main thread.
+         * hours, so this runs as its own work instead of replacing that chain:
+         * nothing running is cancelled (a cancelled membership send waits for
+         * the next app start). It waits for a drain already running and then
+         * drains once more, so a request made while one finishes isn't lost.
          */
         fun enqueueNow(context: Context) {
-            drainRequested.set(true)
-            val workManager = WorkManager.getInstance(context)
-            val running = workManager.getWorkInfosForUniqueWork(UNIQUE_NAME).get()
-                .any { it.state == WorkInfo.State.RUNNING }
-            if (!running) workManager.enqueueUniqueWork(UNIQUE_NAME, ExistingWorkPolicy.REPLACE, request())
+            WorkManager.getInstance(context)
+                .enqueueUniqueWork(NOW_UNIQUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request(now = true))
         }
 
         /**
@@ -78,7 +88,8 @@ class SyncWorker(
                 .enqueueUniqueWork(UNIQUE_NAME, ExistingWorkPolicy.KEEP, request())
         }
 
-        private fun request() = OneTimeWorkRequestBuilder<SyncWorker>()
+        private fun request(now: Boolean = false) = OneTimeWorkRequestBuilder<SyncWorker>()
+            .setInputData(workDataOf(KEY_NOW to now))
             .setConstraints(
                 Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED)
