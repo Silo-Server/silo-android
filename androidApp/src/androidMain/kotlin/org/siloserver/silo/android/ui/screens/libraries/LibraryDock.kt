@@ -348,10 +348,19 @@ private fun LibraryDockSegments(
                 size -= 0.5f
                 measured = widths(size)
             }
-            // Each segment is its label plus an equal share of the room left
-            // over, as on iPhone.
-            val share = ((totalPx - measured.sum()) / labels.size.coerceAtLeast(1)).coerceAtLeast(0f)
-            size to measured.map { it + share }
+            val labelsPx = measured.sum()
+            val widths = if (labelsPx <= totalPx) {
+                // Each segment is its label plus an equal share of the room
+                // left over, as on iPhone.
+                val share = (totalPx - labelsPx) / labels.size.coerceAtLeast(1)
+                measured.map { it + share }
+            } else {
+                // Even the smallest labels overflow (large text, a long
+                // translation): split the width in proportion so every
+                // segment stays on screen and tappable, and labels ellipsize.
+                measured.map { it / labelsPx * totalPx }
+            }
+            size to widths
         }
         val (labelSp, segmentPx) = layout
         val starts = segmentPx.runningFold(0f) { acc, w -> acc + w }
