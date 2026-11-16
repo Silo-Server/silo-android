@@ -32,6 +32,12 @@ class TvTypographyReadabilityTest {
         // the title and panel sections, and the SDH/FORCED track chips.
         "org/siloserver/silo/tv/ui/screens/player/TvPlayerChrome.kt|fontSize = 11.sp,",
         "org/siloserver/silo/tv/ui/screens/player/TvPlayerChrome.kt|fontSize = 9.sp,",
+        // Audiobook detail at tvOS half scale: the uppercase tracked eyebrow and
+        // gold series line over the title, and the About card's fact labels,
+        // at the detail hero eyebrow's 12sp.
+        "org/siloserver/silo/tv/ui/screens/detail/TvAudiobookDetailHero.kt|fontSize = 12.sp,",
+        "org/siloserver/silo/tv/ui/screens/detail/TvAudiobookDetailHero.kt|fontSize = 12.sp,",
+        "org/siloserver/silo/tv/ui/screens/detail/TvItemDetailScreen.kt|fontSize = 12.sp,",
     )
 
     @Test
