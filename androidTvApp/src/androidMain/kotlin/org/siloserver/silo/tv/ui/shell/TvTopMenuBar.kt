@@ -77,8 +77,10 @@ import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.tv.ui.theme.navRailLabel
 
-private const val TopMenuInitialPreviewDelayMillis = 180L
-private const val TopMenuPanelSwitchDelayMillis = 80L
+// tvOS `TVTopMenuBar` (silo-apple #1195): 120 ms before the first preview,
+// and a showing menu swaps at once when focus reaches a neighbouring menu tab.
+private const val TopMenuInitialPreviewDelayMillis = 120L
+private const val TopMenuPanelSwitchDelayMillis = 0L
 
 /**
  * How long a non-anchor focus must hold before it disarms dwell suppression.
@@ -219,8 +221,7 @@ fun TvTopMenuBar(
     var focusedButton by remember { mutableStateOf<TvTopMenuFocus?>(null) }
 
     // tvOS keeps the tab focused after Back closes its panel, but suppresses
-    // that tab's dwell preview until focus leaves it. Android additionally
-    // uses the first Down from that state as a direct handoff to content.
+    // that tab's dwell preview until focus leaves it. Down still opens it.
     var dwellSuppressedButton by remember { mutableStateOf<TvTopMenuFocus?>(null) }
 
     // While a Back-close handoff is in flight, the anchor is the ONLY focusable
@@ -480,19 +481,16 @@ fun TvTopMenuBar(
                 val focus = focusedButton
                 when {
                     event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown -> {
-                        // On a library-type tab, d-pad-down opens that tab's cascade
-                        // panel (and focuses into it) instead of diving to content.
-                        // Home/Calendar/Search keep the move-to-content behavior.
+                        // On a library-type tab or For You, d-pad-down always opens
+                        // that tab's cascade panel (and focuses into it) instead of
+                        // diving to content, including right after Back closed it
+                        // (tvOS parity, silo-apple #1195). Home/Calendar/Search keep
+                        // the move-to-content behavior.
                         val panel = panelForFocus(focus)
                         if (focus == TvTopMenuFocus.Profile) {
                             onEnterProfileMenu()
-                        } else if (panel != null && dwellSuppressedButton == focus) {
-                            // Back just dismissed this tab's panel. Treat the
-                            // next Down as the user's intent to leave chrome
-                            // and enter the first/remembered content row.
-                            dwellSuppressedButton = null
-                            onMoveDown()
                         } else if (panel != null) {
+                            dwellSuppressedButton = null
                             onEnterPanel(panel)
                         } else {
                             onMoveDown()

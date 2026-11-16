@@ -286,6 +286,7 @@ class TvShellFocusState {
      * previously-entered tab while moving along the bar.
      */
     fun updateMenuFocused(focused: Boolean) {
+        val returnedToBar = focused && !isMenuFocused
         if (isMenuFocused != focused) {
             DiagnosticsFocusLogger.transition("menu", if (focused) "focused" else "blurred")
         }
@@ -293,7 +294,11 @@ class TvShellFocusState {
         if (focused) {
             // The bar answered, so the outstanding handoff is settled.
             barHandoffAttempted = false
-            panelEntersFocus = false
+            // Only focus coming back to the bar ends an entry. The bar reports a
+            // move between its own tabs a frame late, so clearing on that report
+            // undid a Down pressed right after the move: the menu opened but
+            // focus stayed on the tab (silo-apple #1195 confirms hand-in too).
+            if (returnedToBar) panelEntersFocus = false
             if (profileMenuOpen && !profileMenuEntered) profileMenuOpen = false
         }
     }

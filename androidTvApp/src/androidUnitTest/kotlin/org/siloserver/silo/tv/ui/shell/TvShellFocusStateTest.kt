@@ -403,6 +403,17 @@ class TvShellFocusStateTest {
     }
 
     @Test
+    fun aLateTabMoveReportDoesNotUndoAFreshEntry() {
+        val s = TvShellFocusState()
+        s.updateMenuFocused(true) // focus rests on a bar tab
+        // Down right after moving to the next tab: the bar reports that move a
+        // frame later, after the entry.
+        s.enterPanel(moviesPanel)
+        s.updateMenuFocused(true)
+        assertTrue(s.panelEntersFocus)
+    }
+
+    @Test
     fun focusingTheBarClearsAStaleEnteredFlag() {
         val s = TvShellFocusState()
         s.enterPanel(moviesPanel)
