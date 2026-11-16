@@ -194,7 +194,8 @@ fun isWholeBookFile(versions: List<FileVersion>, fileId: Int, serverTotalSeconds
     val audio = versions.filter { it.isAudioPartCandidate() }
     val file = audio.firstOrNull { it.fileId == fileId } ?: return false
     if (audio.mapNotNull { it.presentationPartIndex }.distinct().size > 1) return false
-    val total = serverTotalSeconds?.takeIf { it.isFinite() && it > 0.0 } ?: return true
+    // Without the server's total, several audio files could be parts nothing labels.
+    val total = serverTotalSeconds?.takeIf { it.isFinite() && it > 0.0 } ?: return audio.size == 1
     return partDuration(file) >= total * WHOLE_BOOK_MIN_SHARE
 }
 

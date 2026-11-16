@@ -1851,7 +1851,9 @@ class AudiobookPlayerViewModel(
             ?.positionSeconds?.takeIf { it > 0 }
         val local = userItemStatePort.localPositionForContent(contentId, includeSent = offline)?.takeIf { it > 0 }
         val server = serverPositionSeconds?.takeIf { it > 0 }
-        val position = unsent ?: listOfNotNull(local, server).maxOrNull()
+        // Offline, this device's own newest position is newer than the cached
+        // server answer, a rewind included.
+        val position = unsent ?: if (offline) local ?: server else listOfNotNull(local, server).maxOrNull()
         _resumePosition.value = position
         return position
     }

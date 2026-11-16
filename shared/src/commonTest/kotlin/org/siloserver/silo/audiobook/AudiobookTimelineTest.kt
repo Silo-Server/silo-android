@@ -358,6 +358,7 @@ class AudiobookTimelineTest {
         // Untagged parts: the file is far shorter than the book.
         val untagged = listOf(part(fileId = 30, duration = 600.0, kind = null), part(fileId = 31, duration = 600.0, kind = null))
         assertFalse(isWholeBookFile(untagged, 30, serverTotalSeconds = 1200.0))
+        assertFalse(isWholeBookFile(untagged, 30, serverTotalSeconds = null))
         // A file the detail doesn't list.
         assertFalse(isWholeBookFile(single, 99, serverTotalSeconds = 1800.0))
     }

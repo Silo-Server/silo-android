@@ -7010,8 +7010,15 @@ class PlayerViewModel(
             // newest this device knows.
             userItemStatePort.localPosition(contentId, fileId, includeSent = true)
         } else {
-            // One the server took while the detail was loading is newer than that answer.
-            userItemStatePort.localPosition(contentId, fileId) ?: unsentBefore
+            userItemStatePort.localPosition(contentId, fileId) ?: unsentBefore?.let { before ->
+                // The server took it while the detail was loading, so that answer can
+                // predate it: read the server's position again.
+                loadLocalWatchMetadata(
+                    catalogRepository, watchOwner, media.serverId, media.profileId, contentId,
+                    libraryId = browseLibraryId,
+                    fileId = fileId,
+                ) { ownsLoad(loadOwner) }?.userData?.positionSeconds ?: before
+            }
         }
         if (!ownsLoad(loadOwner)) return false
         val title = watchDetail?.title ?: sidecar.title

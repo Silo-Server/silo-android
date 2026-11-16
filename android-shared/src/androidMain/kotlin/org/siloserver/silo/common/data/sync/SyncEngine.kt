@@ -213,7 +213,16 @@ class SyncEngine(
                 // It may have arrived, so it no longer beats the server's answer at
                 // start; newer progress from another device would win. Offline it
                 // stays the resume point.
-                if (mayHaveArrived(result)) markProgressSent(op)
+                if (mayHaveArrived(result)) {
+                    // A local failure here must not turn the op terminal: it stays queued.
+                    try {
+                        markProgressSent(op)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG, "op ${op.id}: couldn't mark its position sent", e)
+                    }
+                }
                 WriteOutcome.RETRIABLE
             }
         }
