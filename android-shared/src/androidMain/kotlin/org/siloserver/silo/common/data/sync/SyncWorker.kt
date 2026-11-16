@@ -45,7 +45,7 @@ class SyncWorker(
             when {
                 // A drain-now request never starts its own retry chain; the main
                 // chain carries whatever is left.
-                now -> Result.success().also { if (result.hasPendingWork) enqueue(applicationContext) }
+                now -> Result.success().also { if (result.hasPendingWork) enqueueFollowUp(applicationContext) }
                 result.hasPendingWork -> Result.retry()
                 else -> Result.success()
             }
@@ -53,7 +53,7 @@ class SyncWorker(
             throw e
         } catch (t: Throwable) {
             Log.w(TAG, "drain failed; will retry", t)
-            if (now) Result.success().also { enqueue(applicationContext) } else Result.retry()
+            if (now) Result.success().also { enqueueFollowUp(applicationContext) } else Result.retry()
         }
     }
 
@@ -76,6 +76,15 @@ class SyncWorker(
         fun enqueueNow(context: Context) {
             WorkManager.getInstance(context)
                 .enqueueUniqueWork(NOW_UNIQUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request(now = true))
+        }
+
+        /**
+         * A main-chain drain after whatever that chain is doing now: KEEP would
+         * drop it while a drain finishes, leaving no retry for the work left.
+         */
+        private fun enqueueFollowUp(context: Context) {
+            WorkManager.getInstance(context)
+                .enqueueUniqueWork(UNIQUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request())
         }
 
         /**

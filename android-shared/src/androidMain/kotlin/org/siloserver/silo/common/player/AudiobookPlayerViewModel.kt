@@ -1855,9 +1855,11 @@ class AudiobookPlayerViewModel(
         // and audiobook resume is per-book — take the newest on-device position
         // across the item's files, maxed with the server's recorded position so we
         // never resume behind progress made on another device.
-        val unsent = userItemStatePort.localPlaybackProgress(contentId, includeSent = offline)
+        suspend fun unsent() = userItemStatePort.localPlaybackProgress(contentId, includeSent = offline)
             ?.positionSeconds?.takeIf { it > 0 }
-        val local = userItemStatePort.localPositionForContent(contentId, includeSent = offline)?.takeIf { it > 0 }
+        suspend fun local() = userItemStatePort.localPositionForContent(contentId, includeSent = offline)?.takeIf { it > 0 }
+        var unsent = unsent()
+        var local = local()
         var server = serverPositionSeconds?.takeIf { it > 0 }
         if (!offline && unsent == null && unsentBefore != null) {
             // The server took this device's queued listening ([unsentBefore])
@@ -1868,6 +1870,9 @@ class AudiobookPlayerViewModel(
                 is ApiResult.Success -> again.data.userData?.positionSeconds?.takeIf { it > 0 }
                 else -> unsentBefore
             }
+            // A position queued while that read ran is newer than its answer.
+            unsent = unsent()
+            local = local()
         }
         // Offline, this device's own newest position is newer than the cached
         // server answer, a rewind included.
