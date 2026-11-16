@@ -54,6 +54,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -575,8 +576,10 @@ private fun TvProfileTile(
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
             color = if (focused) MarqueeColors.Ink else MarqueeColors.InkSecondary,
-            maxLines = 1,
+            // Two centered lines, so names that share a beginning stay apart.
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = if (focused) 22.dp else 13.dp),
         )
         // The server never deletes the primary profile (409
