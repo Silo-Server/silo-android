@@ -1331,9 +1331,14 @@ fun PrimaryPillButton(
     modifier: Modifier = Modifier,
     /** Listening or watching progress, 0..1, drawn as a thin track along the pill's bottom (Apple `progress`). */
     progress: Float? = null,
+    /**
+     * False when this Play always starts on the phone (audiobooks), so a
+     * connected TV doesn't decorate a pill whose playback never goes there.
+     */
+    playsOnConnectedTv: Boolean = true,
 ) {
     val castState by koinInject<SiloCastController>().state.collectAsState()
-    val remoteStatus = castState.engagedStatus()
+    val remoteStatus = castState.engagedStatus()?.takeIf { playsOnConnectedTv }
     val ready = LocalDetailActionsReady.current
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -1609,6 +1614,8 @@ fun HeroActionStack(
     watchedLabels: HeroToggleLabels? = null,
     /** Resume progress drawn along the Play pill, 0..1. */
     primaryProgress: Float? = null,
+    /** See [PrimaryPillButton]'s `playsOnConnectedTv`. */
+    playsOnConnectedTv: Boolean = true,
 ) {
     var showResumeDialog by remember { mutableStateOf(false) }
     Column(
@@ -1620,6 +1627,7 @@ fun HeroActionStack(
             label = primaryLabel,
             onClick = { if (onPlayFromBeginning != null) showResumeDialog = true else onPlay() },
             progress = primaryProgress,
+            playsOnConnectedTv = playsOnConnectedTv,
         )
         Row(
             modifier = Modifier.fillMaxWidth(),

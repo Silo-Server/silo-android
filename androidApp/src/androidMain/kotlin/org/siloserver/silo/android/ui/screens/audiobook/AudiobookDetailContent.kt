@@ -257,6 +257,8 @@ fun AudiobookDetailContent(
                         }
                     },
                     primaryProgress = resumeFraction,
+                    // Audiobooks always play in the phone's own player.
+                    playsOnConnectedTv = false,
                     isFavorite = isFavorite,
                     isInWatchlist = isInWatchlist,
                     // The toggle shows and flips the saved flag; a position near
