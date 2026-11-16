@@ -257,6 +257,8 @@ class RoomUserItemStateRepository(
                 positionSeconds = positionSeconds,
                 durationSeconds = safeDuration,
                 clientUpdatedAtMs = eventTimeMs,
+                // A new sample hasn't reached the server.
+                serverUpdatedAtMs = null,
             ) ?: UserItemStateEntity(
                 serverId = serverId,
                 accountId = accountId,
@@ -304,24 +306,25 @@ class RoomUserItemStateRepository(
         return written
     }
 
-    override suspend fun localPosition(contentId: String, fileId: Int): Double? {
+    override suspend fun localPosition(contentId: String, fileId: Int, includeSent: Boolean): Double? {
         val snapshot = snapshotProvider() ?: return null
         val profileId = snapshot.profileId ?: return null
-        return userStateDao.pendingProgressForContentIds(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, listOf(contentId))
+        return userStateDao.pendingProgressForContentIds(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, listOf(contentId), includeSent)
             .firstOrNull { it.fileId == fileId }
             ?.positionSeconds
     }
 
-    override suspend fun localPositionForContent(contentId: String): Double? {
+    override suspend fun localPositionForContent(contentId: String, includeSent: Boolean): Double? {
         val snapshot = snapshotProvider() ?: return null
         val profileId = snapshot.profileId ?: return null
-        // Every row, queued or not: the audiobook player's own resume snapshot.
+        // Queued or not: the audiobook player's own resume snapshot.
         return userStateDao.getByContent(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, contentId)
+            .filter { includeSent || it.serverUpdatedAtMs == null }
             .latestProgress()?.positionSeconds
     }
 
-    override suspend fun localPlaybackProgress(contentId: String): LocalPlaybackProgress? =
-        localPlaybackProgressForContent(listOf(contentId))[contentId]
+    override suspend fun localPlaybackProgress(contentId: String, includeSent: Boolean): LocalPlaybackProgress? =
+        localPlaybackProgressForContent(listOf(contentId), includeSent)[contentId]
 
     override suspend fun clearLocalPlaybackProgressBefore(
         contentIds: List<String>,
@@ -340,12 +343,15 @@ class RoomUserItemStateRepository(
         }
     }
 
-    override suspend fun localPlaybackProgressForContent(contentIds: List<String>): Map<String, LocalPlaybackProgress> {
+    override suspend fun localPlaybackProgressForContent(
+        contentIds: List<String>,
+        includeSent: Boolean,
+    ): Map<String, LocalPlaybackProgress> {
         if (contentIds.isEmpty()) return emptyMap()
         val snapshot = snapshotProvider() ?: return emptyMap()
         val profileId = snapshot.profileId ?: return emptyMap()
         return contentIds.distinct().chunked(MAX_IN_LIST_IDS)
-            .flatMap { userStateDao.pendingProgressForContentIds(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, it) }
+            .flatMap { userStateDao.pendingProgressForContentIds(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, it, includeSent) }
             .groupBy { it.contentId }
             .mapValues { (_, rows) -> rows.latestProgress(byPositionTime = true) }
             .filterValues { it != null }

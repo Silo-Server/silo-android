@@ -6997,13 +6997,31 @@ class PlayerViewModel(
         // Best-effort online metadata (richer fields: intro/credits/chapters).
         // Network failure is fine; the sidecar already has title + poster
         // so airplane-mode playback still has something to render.
-        val localPos = userItemStatePort.localPosition(contentId, fileId)
+        val unsentBefore = userItemStatePort.localPosition(contentId, fileId)
         if (!ownsLoad(loadOwner)) return false
         val watchDetail = loadLocalWatchMetadata(
             catalogRepository, watchOwner, media.serverId, media.profileId, contentId,
             libraryId = browseLibraryId,
             fileId = fileId,
         ) { ownsLoad(loadOwner) }
+        if (!ownsLoad(loadOwner)) return false
+        val localPos = if (watchDetail == null) {
+            // No live server answer: a position sent without a reply is still the
+            // newest this device knows.
+            userItemStatePort.localPosition(contentId, fileId, includeSent = true)
+        } else {
+            userItemStatePort.localPosition(contentId, fileId) ?: unsentBefore?.let { before ->
+                // The server took it while the detail was loading, so that answer can
+                // predate it: read the server's position again, unless a newer local
+                // one was queued meanwhile.
+                val reread = loadLocalWatchMetadata(
+                    catalogRepository, watchOwner, media.serverId, media.profileId, contentId,
+                    libraryId = browseLibraryId,
+                    fileId = fileId,
+                ) { ownsLoad(loadOwner) }?.userData?.positionSeconds
+                userItemStatePort.localPosition(contentId, fileId) ?: reread ?: before
+            }
+        }
         if (!ownsLoad(loadOwner)) return false
         val title = watchDetail?.title ?: sidecar.title
         val subtitle = watchDetail?.let { buildSubtitle(it) } ?: sidecar.subtitle.orEmpty()

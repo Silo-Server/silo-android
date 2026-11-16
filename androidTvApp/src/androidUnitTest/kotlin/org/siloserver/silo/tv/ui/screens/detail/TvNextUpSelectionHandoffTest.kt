@@ -1298,8 +1298,8 @@ class TvNextUpSelectionHandoffTest {
         val readGates = ConcurrentHashMap<Pair<String, Int>, CompletableDeferred<Unit>>()
         val startedReads: MutableSet<Pair<String, Int>> = ConcurrentHashMap.newKeySet()
         val progress = ConcurrentHashMap<String, LocalPlaybackProgress>()
-        override suspend fun localPlaybackProgress(contentId: String) = progress[contentId]
-        override suspend fun localPlaybackProgressForContent(contentIds: List<String>) = progress.filterKeys { it in contentIds }
+        override suspend fun localPlaybackProgress(contentId: String, includeSent: Boolean) = progress[contentId]
+        override suspend fun localPlaybackProgressForContent(contentIds: List<String>, includeSent: Boolean) = progress.filterKeys { it in contentIds }
 
         private var nextPersonalWrite = 0L
         override suspend fun beginPersonalWrite(command: PersonalWrite) =
