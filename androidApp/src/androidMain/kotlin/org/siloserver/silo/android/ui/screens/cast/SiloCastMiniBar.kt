@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.cast.SiloCastArtwork
 import org.siloserver.silo.android.cast.SiloCastController
+import org.siloserver.silo.android.cast.SiloCastControllerState
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 
@@ -77,13 +78,8 @@ fun SiloCastMiniBar(
     val launch = state.launch
     val isIdle = playback?.contentId.isNullOrEmpty()
     val targetName = state.connectedTarget?.name ?: SILO_TV_NAME
-    // Keep the bar up through a reconnect (with a spinner) instead of having
-    // it vanish and pop back; hide it while an auto-resume probe is still
-    // unconfirmed so idle TVs never surface a phantom session.
-    val visible = (state.hasActiveSession && !state.isAutoResuming) || state.isReconnecting
-
     AnimatedVisibility(
-        visible = visible,
+        visible = state.showsMiniBar,
         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
         modifier = modifier,
@@ -194,6 +190,14 @@ private fun MiniBarThumb(posterUrl: String?, thumbhash: String?, width: Dp, heig
         }
     }
 }
+
+/**
+ * Whether the Remote Control bar is up. It stays up through a reconnect (with a
+ * spinner) instead of vanishing and popping back, and stays hidden while an
+ * auto-resume probe is unconfirmed so idle TVs never surface a phantom session.
+ */
+val SiloCastControllerState.showsMiniBar: Boolean
+    get() = (hasActiveSession && !isAutoResuming) || isReconnecting
 
 /** The name a TV goes by before it reports its own; a product name, not translated. */
 internal const val SILO_TV_NAME = "Silo TV"
