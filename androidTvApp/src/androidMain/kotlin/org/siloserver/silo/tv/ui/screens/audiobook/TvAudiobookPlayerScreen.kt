@@ -628,12 +628,24 @@ internal fun tvAudiobookPlayerMetrics(
             transportButtonSpacingDp = 16,
         )
     } else {
+        val horizontalPadding = 80
+        val verticalPadding = 96
+        val coverGap = 46
+        val transportButton = 94
+        val transportPrimaryWidth = 136
+        val transportSpacing = 24
+        // Four buttons, the wider play button, and the four gaps between them.
+        val transportWidth = 4 * transportButton + transportPrimaryWidth + 4 * transportSpacing
         TvAudiobookPlayerMetrics(
             compact = false,
-            coverSizeDp = 420,
-            horizontalPaddingDp = 80,
-            verticalPaddingDp = 96,
-            coverGapDp = 46,
+            // As large as tvOS's cover, but never so large that the transport
+            // row loses width beside it or the cover outgrows the height.
+            coverSizeDp = (maxWidthDp - 2 * horizontalPadding - coverGap - transportWidth)
+                .coerceIn(312, 420)
+                .coerceAtMost((maxHeightDp - 2 * verticalPadding).coerceAtLeast(312)),
+            horizontalPaddingDp = horizontalPadding,
+            verticalPaddingDp = verticalPadding,
+            coverGapDp = coverGap,
             coverCornerRadiusDp = 24,
             coverShadowDp = 34,
             eyebrowGapDp = 10,
@@ -643,10 +655,10 @@ internal fun tvAudiobookPlayerMetrics(
             utilityTopGapDp = 24,
             utilityButtonHeightDp = 58,
             utilityButtonSpacingDp = 16,
-            transportButtonSizeDp = 94,
-            transportPrimaryButtonWidthDp = 136,
+            transportButtonSizeDp = transportButton,
+            transportPrimaryButtonWidthDp = transportPrimaryWidth,
             transportPrimaryButtonHeightDp = 72,
-            transportButtonSpacingDp = 24,
+            transportButtonSpacingDp = transportSpacing,
         )
     }
 }

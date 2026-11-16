@@ -100,7 +100,9 @@ internal fun TvAudiobookDetailHero(
     val position = (detail.userData?.positionSeconds ?: 0.0).coerceAtLeast(0.0)
     val isFinished = state.isWatched ||
         (totalSeconds > 0 && position > 0 && position >= totalSeconds - 5)
-    val resumePosition = position.takeIf { it > 30 && !isFinished && totalSeconds > 0 }
+    // Apple's PlaybackResumePoint: past a 30s grace and not finished; an unknown
+    // length still resumes.
+    val resumePosition = position.takeIf { it > 30 && !isFinished }
     // The chapter dialog lists chapters only; parts have their own section below.
     val showsChapters = chapters.isNotEmpty()
 
@@ -421,7 +423,7 @@ private fun StateCluster(
     val runtime = AudiobookText.runtime(resources, totalSeconds)
     when {
         resumePosition != null -> {
-            val fraction = (position / totalSeconds).coerceIn(0.0, 1.0)
+            val fraction = if (totalSeconds > 0) (position / totalSeconds).coerceIn(0.0, 1.0) else null
             val chapterIndex = chapters.indexOfLast { it.second <= position }.takeIf { it >= 0 }
             val line1 = chapterIndex?.let {
                 resources.getString(
@@ -439,12 +441,16 @@ private fun StateCluster(
                         AudiobookText.clock(position - chapters[it].second),
                     )
                 },
-                AudiobookText.runtime(resources, (totalSeconds - position).coerceAtLeast(0.0)).takeIf { it.isNotEmpty() }
+                fraction?.let { AudiobookText.runtime(resources, (totalSeconds - position).coerceAtLeast(0.0)) }
+                    ?.takeIf { it.isNotEmpty() }
                     ?.let { resources.getString(CommonR.string.detail_audiobook_leftInBook, it) },
             ).joinToString(" · ").takeIf { it.isNotEmpty() }
+            // Without a known length there is no share to ring or time left to name.
             Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-                ProgressRing(fraction = fraction.toFloat(), label = LocaleFormat.percent((fraction * 100 + 0.5).toInt()))
-                Spacer(Modifier.width(11.dp))
+                if (fraction != null) {
+                    ProgressRing(fraction = fraction.toFloat(), label = LocaleFormat.percent((fraction * 100 + 0.5).toInt()))
+                    Spacer(Modifier.width(11.dp))
+                }
                 StateLines(line1, line2)
             }
         }

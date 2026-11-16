@@ -3,9 +3,13 @@ package org.siloserver.silo.android.ui.screens.audiobook
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +31,12 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
@@ -46,9 +56,12 @@ import org.siloserver.silo.model.catalog.VersionChapter
 /**
  * Apple's `AudioScrubberSection`: a slim whole-book capsule with an
  * accent-gradient fill and a tick at each chapter after the first, then
- * elapsed and remaining time. Dragging thickens the track, previews the
- * target in the time labels, ticks the haptics as it crosses a chapter, and
- * seeks once on release. [onSeek] receives whole-book seconds.
+ * elapsed and remaining time. A horizontal drag thickens the track, previews
+ * the target in the time labels, ticks the haptics as it crosses a chapter,
+ * and seeks once on release; a tap seeks where it lands, and a vertical swipe
+ * is left to the scrolling page. With a keyboard or D-pad the track takes
+ * focus (drawn thick) and Left and Right skip by the player's intervals, as
+ * Apple's adjustable action does. [onSeek] receives whole-book seconds.
  */
 @Composable
 fun ChapterProgressBar(
@@ -56,15 +69,19 @@ fun ChapterProgressBar(
     positionSeconds: Double,
     durationSeconds: Double,
     accent: Color,
+    skipBackSeconds: Int,
+    skipForwardSeconds: Int,
     onSeek: (Double) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
     var scrubTime by remember { mutableStateOf<Double?>(null) }
     val displayed = scrubTime ?: positionSeconds
     val duration = durationSeconds.coerceAtLeast(0.0)
     val fraction = if (duration > 0) (displayed / duration).coerceIn(0.0, 1.0).toFloat() else 0f
     val trackHeight by animateDpAsState(
-        targetValue = if (scrubTime == null) 6.dp else 10.dp,
+        targetValue = if (scrubTime == null && !isFocused) 6.dp else 10.dp,
         animationSpec = tween(150),
         label = "audiobookScrubberHeight",
     )
@@ -73,6 +90,7 @@ fun ChapterProgressBar(
     val haptics = LocalHapticFeedback.current
     val currentDuration by rememberUpdatedState(duration)
     val currentOnSeek by rememberUpdatedState(onSeek)
+    val currentPosition by rememberUpdatedState(positionSeconds)
     val remaining = (duration - displayed).coerceAtLeast(0.0)
     val positionLabel = stringResource(CommonR.string.player_progress_position)
     val positionState = stringResource(
@@ -99,6 +117,17 @@ fun ChapterProgressBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(30.dp)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown || currentDuration <= 0) return@onPreviewKeyEvent false
+                        val step = when (event.key) {
+                            Key.DirectionLeft -> -skipBackSeconds
+                            Key.DirectionRight -> skipForwardSeconds
+                            else -> return@onPreviewKeyEvent false
+                        }
+                        currentOnSeek((currentPosition + step).coerceIn(0.0, currentDuration))
+                        true
+                    }
+                    .focusable(interactionSource = interactionSource)
                     .pointerInput(tickTimes) {
                         fun timeAt(x: Float): Double =
                             (x / size.width).coerceIn(0f, 1f) * currentDuration
@@ -113,12 +142,25 @@ fun ChapterProgressBar(
                         awaitEachGesture {
                             val down = awaitFirstDown()
                             if (currentDuration <= 0) return@awaitEachGesture
-                            scrubTime = timeAt(down.position.x)
-                            val completed = drag(down.id) { change ->
+                            // Claim the gesture only once it moves sideways past touch
+                            // slop, so a vertical swipe stays with the scrolling page.
+                            val start = awaitHorizontalTouchSlopOrCancellation(down.id) { change, _ ->
+                                change.consume()
+                            }
+                            if (start == null) {
+                                // Lifted before any sideways move: a tap seeks there. A
+                                // gesture the page took over ends with no seek.
+                                val lift = currentEvent.changes.firstOrNull { it.id == down.id }
+                                if (lift != null && lift.changedToUp() && !lift.isConsumed) {
+                                    currentOnSeek(timeAt(down.position.x))
+                                }
+                                return@awaitEachGesture
+                            }
+                            scrubTime = timeAt(start.position.x)
+                            val completed = horizontalDrag(start.id) { change ->
                                 change.consume()
                                 moveTo(change.position.x)
                             }
-                            // A drag the scrolling page took over is no seek.
                             if (completed) scrubTime?.let(currentOnSeek)
                             scrubTime = null
                         }

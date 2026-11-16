@@ -320,6 +320,8 @@ fun AudiobookPlayerScreen(
                 positionSeconds = state.positionSeconds,
                 durationSeconds = state.durationSeconds,
                 accent = accent,
+                skipBackSeconds = state.skipBackSeconds,
+                skipForwardSeconds = state.skipForwardSeconds,
                 onSeek = { viewModel.seekTo(it) },
                 modifier = Modifier.padding(horizontal = 8.dp),
             )

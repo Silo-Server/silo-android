@@ -174,6 +174,8 @@ import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.common.audiobook.AudiobookText
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 
 internal data class TvSeriesDetailRedirect(
     val seriesContentId: String,
@@ -2621,8 +2623,16 @@ private fun TvAudiobookPartsSection(
 /**
  * tvOS `TVAudiobookDetailSections.aboutSection`: one full-width focus stop
  * holding the description beside the book's facts. Select shows the whole
- * description in place (tvOS opens it full screen) when it is cut off.
+ * description in place (tvOS opens it full screen) when it is cut off; a
+ * description taller than the card scrolls with Down and Up before focus
+ * leaves the card.
  */
+/** Tall enough for most descriptions, short enough to stay on one screen with its heading. */
+private val AboutExpandedMaxHeight = 300.dp
+
+/** About three lines of the description per Down or Up. */
+private val AboutScrollStep = 63.dp
+
 @Composable
 private fun TvAudiobookAboutSection(
     overview: String,
@@ -2634,6 +2644,10 @@ private fun TvAudiobookAboutSection(
     var expanded by remember(overview) { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
+    val textScroll = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    val scrollStep = with(LocalDensity.current) { AboutScrollStep.toPx() }
+    LaunchedEffect(expanded) { if (!expanded) textScroll.scrollTo(0) }
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -2654,15 +2668,24 @@ private fun TvAudiobookAboutSection(
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
             modifier = Modifier
                 .fillMaxWidth()
-                .then(
-                    if (onDirectionUp != null) {
-                        Modifier.onPreviewKeyEvent { event ->
-                            event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp && onDirectionUp()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionDown -> if (expanded && textScroll.canScrollForward) {
+                            scope.launch { textScroll.animateScrollBy(scrollStep) }
+                            true
+                        } else {
+                            false
                         }
-                    } else {
-                        Modifier
-                    },
-                )
+                        Key.DirectionUp -> if (expanded && textScroll.canScrollBackward) {
+                            scope.launch { textScroll.animateScrollBy(-scrollStep) }
+                            true
+                        } else {
+                            onDirectionUp?.invoke() == true
+                        }
+                        else -> false
+                    }
+                }
                 .then(if (upFocusRequester != null) Modifier.focusProperties { up = upFocusRequester } else Modifier),
         ) {
             Row(
@@ -2681,7 +2704,16 @@ private fun TvAudiobookAboutSection(
                         overflow = TextOverflow.Ellipsis,
                         // tvOS keeps the description to a readable measure with
                         // the facts right beside it.
-                        modifier = Modifier.weight(1f, fill = false).widthIn(max = 500.dp),
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .widthIn(max = 500.dp)
+                            .then(
+                                if (expanded) {
+                                    Modifier.heightIn(max = AboutExpandedMaxHeight).verticalScroll(textScroll)
+                                } else {
+                                    Modifier
+                                },
+                            ),
                     )
                 }
                 if (facts.isNotEmpty()) {
