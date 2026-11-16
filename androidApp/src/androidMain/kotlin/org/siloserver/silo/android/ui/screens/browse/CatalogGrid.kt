@@ -90,8 +90,9 @@ fun CatalogGrid(
     bottomContentInset: Dp = 0.dp,
     topContentInset: Dp = 0.dp,
     header: (@Composable () -> Unit)? = null,
+    /** Hoisted by a caller that keeps the position while the grid is away, or scrolls it. */
+    gridState: LazyGridState = rememberLazyGridState(),
 ) {
-    val gridState = rememberLazyGridState()
     // Feeds the shared header's glass when this grid fills For You.
     ReportTabHeaderScrim(gridState)
     val uniqueItems = remember(items) { items.distinctBy { it.contentId } }

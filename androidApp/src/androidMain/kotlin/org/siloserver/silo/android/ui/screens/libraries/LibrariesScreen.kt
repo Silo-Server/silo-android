@@ -17,6 +17,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -33,6 +34,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -61,6 +63,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -231,7 +236,29 @@ data class LibrariesUiState(
     val collections: List<LibraryCollection> = emptyList(),
     val collectionsError: UiText? = null,
     val librariesError: UiText? = null,
+    /** The selected library's exact size under its Movies/Series scope; null until read, or when the server can't count it. */
+    val libraryCount: Int? = null,
+    /** The Browse page's exact total under its filters; null until its first page loads, or when the server can't count it. */
+    val browseFilteredTotal: Int? = null,
+    /** The library had collections when they last loaded, so the phone dock offers that page. Fixed while the library is open. */
+    val hasCollections: Boolean = true,
 ) {
+    /**
+     * The count under the library's name: the Browse page's filtered total
+     * while it narrows the list, otherwise the library's size. Null shows the
+     * library's kind instead (iOS #1159).
+     */
+    val headerCount: Int?
+        get() = if (selectedTab == LibrariesSubtab.Browse && filterState.hasActiveFilters) {
+            browseFilteredTotal
+        } else {
+            libraryCount
+        }
+
+    /** The pages the phone dock offers, in order. */
+    val dockTabs: List<LibrariesSubtab>
+        get() = if (hasCollections) LibrariesSubtab.entries else LibrariesSubtab.entries - LibrariesSubtab.Collections
+
     /** The sort list's media: the selected library's type, or the mixed library side being browsed. */
     val browseSortRelevance: CatalogSortRelevance
         get() = CatalogSortRelevance.forLibrary(
@@ -273,6 +300,7 @@ class LibrariesViewModel(
     private var catalogRequestGeneration = 0L
     private var catalogQueryGeneration = 0L
     private var collectionsRequestGeneration = 0L
+    private var headerDetailsGeneration = 0L
     // Library-list loads run one at a time, in order, so an older response
     // can't overwrite a newer one (on screen or in the offline cache). A
     // request made mid-load queues one follow-up pass.
@@ -334,7 +362,15 @@ class LibrariesViewModel(
      * short — hiding the switcher and every other library — until the process
      * died.
      */
-    fun refreshLibraryList() = loadLibraries(reloadContent = false)
+    fun refreshLibraryList() {
+        // A library opened without collections can gain some while the app
+        // runs; with one library there is no reopening to learn it, so look
+        // again each time the screen comes back.
+        val state = _uiState.value
+        val libraryId = state.selectedLibraryId
+        if (libraryId != null && !state.hasCollections) loadCollections(libraryId, force = true)
+        loadLibraries(reloadContent = false)
+    }
 
     private fun loadLibraries(reloadContent: Boolean) {
         if (reloadContent) pendingContentReload = true
@@ -418,6 +454,7 @@ class LibrariesViewModel(
 
                 if (selectedLibraryId != null && (reload || selectionChanged || recovering)) {
                     loadCurrentTab(selectedLibraryId, force = true)
+                    loadHeaderDetails(selectedLibraryId)
                 }
             }
             is ApiResult.Error -> {
@@ -495,6 +532,7 @@ class LibrariesViewModel(
         val library = _uiState.value.libraries.firstOrNull { it.id == libraryId }
         resetForLibrary(libraryId, library?.let(::defaultMediaScope))
         loadCurrentTab(libraryId, force = true)
+        loadHeaderDetails(libraryId)
     }
 
     fun selectMediaScope(mediaScope: String) {
@@ -503,6 +541,30 @@ class LibrariesViewModel(
         val libraryId = state.selectedLibraryId ?: return
         resetForLibrary(libraryId, mediaScope)
         loadCurrentTab(libraryId, force = true)
+        loadHeaderDetails(libraryId)
+    }
+
+    /**
+     * Read what the phone header and dock show about the open library: its
+     * size under the current scope, and whether it has collections. The
+     * collections load early, as on iOS; [loadCollections] remembers the
+     * answer only for the library's next opening, so the dock never gains or
+     * loses a section on screen.
+     */
+    private fun loadHeaderDetails(libraryId: Int) {
+        val mediaScope = _uiState.value.mediaScope
+        val generation = ++headerDetailsGeneration
+        viewModelScope.launch {
+            val count = catalogRepository.libraryCount(libraryId, mediaScope)
+            _uiState.update {
+                if (generation == headerDetailsGeneration && it.selectedLibraryId == libraryId && it.mediaScope == mediaScope) {
+                    it.copy(libraryCount = count)
+                } else {
+                    it
+                }
+            }
+        }
+        loadCollections(libraryId, force = false)
     }
 
     /** A mixed library opens on Movies; other libraries have no media scope. */
@@ -529,12 +591,23 @@ class LibrariesViewModel(
         catalogContinuation = null
         letterJumpController.reset(null)
         val savedFilterState = libraryId?.let { browsePrefs?.savedState(it, mediaScope) } ?: CatalogFilterState()
+        val hasCollections = libraryId?.let { browsePrefs?.hasCollections(it) } ?: true
         _uiState.update {
             val (restoredSort, restoredOrder) = restoredLibraryBrowseSort(savedFilterState)
             val restoredFilterState = savedFilterState.copy(sort = restoredSort.wireValue, order = restoredOrder)
             it.copy(
                 selectedLibraryId = libraryId,
                 mediaScope = mediaScope,
+                // A library without the Collections section never opens on
+                // it, which would leave no section selected in the dock.
+                selectedTab = if (!hasCollections && it.selectedTab == LibrariesSubtab.Collections) {
+                    LibrariesSubtab.Recommended
+                } else {
+                    it.selectedTab
+                },
+                hasCollections = hasCollections,
+                libraryCount = if (libraryId == it.selectedLibraryId && mediaScope == it.mediaScope) it.libraryCount else null,
+                browseFilteredTotal = null,
                 sections = emptyList(),
                 sectionsError = null,
                 isLoadingSections = false,
@@ -577,6 +650,7 @@ class LibrariesViewModel(
                 catalogItems = emptyList(),
                 catalogTotal = 0,
                 catalogHasMore = false,
+                browseFilteredTotal = null,
             )
         }
         browsePrefs?.saveState(_uiState.value.selectedLibraryId, reconciled, _uiState.value.mediaScope)
@@ -870,6 +944,11 @@ class LibrariesViewModel(
                                 isLoadingMoreCatalog = false,
                                 catalogItems = if (reset) overlaid else it.catalogItems + overlaid,
                                 catalogTotal = result.data.total,
+                                browseFilteredTotal = if (reset) {
+                                    result.data.total.takeIf { result.data.totalExact != false }
+                                } else {
+                                    it.browseFilteredTotal
+                                },
                                 catalogHasMore = result.data.hasMore,
                                 catalogLibraryHasItems = if (reset) libraryHasItems else it.catalogLibraryHasItems,
                                 browseMediaType = detectedMediaType ?: it.browseMediaType,
@@ -927,7 +1006,10 @@ class LibrariesViewModel(
     }
 
     private fun loadCollections(libraryId: Int, force: Boolean) {
-        if (!force && collectionsLoadedLibraryId == libraryId && _uiState.value.collections.isNotEmpty()) {
+        // Already shown, or already on its way (the early load the header
+        // starts when a library opens).
+        val current = _uiState.value
+        if (!force && collectionsLoadedLibraryId == libraryId && (current.collections.isNotEmpty() || current.isLoadingCollections)) {
             return
         }
         collectionsLoadedLibraryId = libraryId
@@ -948,12 +1030,18 @@ class LibrariesViewModel(
             when (val result = sectionRepository.getLibraryCollections(libraryId)) {
                 is ApiResult.Success -> {
                     if (!isCollectionsRequestCurrent(requestGeneration, libraryId)) return@launch
+                    browsePrefs?.rememberHasCollections(libraryId, result.data.isNotEmpty())
                     _uiState.update {
                         if (isCollectionsRequestCurrent(requestGeneration, libraryId, it)) {
                             it.copy(
                                 isLoadingCollections = false,
                                 collections = result.data,
                                 collectionsError = null,
+                                // The dock gains the section as soon as there
+                                // is something in it; losing it waits for the
+                                // library's next opening, so a section never
+                                // vanishes from under a finger.
+                                hasCollections = it.hasCollections || result.data.isNotEmpty(),
                             )
                         } else {
                             it
@@ -1095,7 +1183,37 @@ fun LibrariesScreen(
     // Recommended tab scroll state — drives the chrome scrim opacity so the
     // header fades in its scrim once the user scrolls the rows underneath it.
     val recommendedListState = rememberLazyListState()
-    LaunchedEffect(state.selectedLibraryId, state.mediaScope) { recommendedListState.scrollToItem(0) }
+    // Each page keeps its own position while another is on screen, and when
+    // the screen comes back from a title. A new library or Movies/Series side
+    // starts every page at its top, and a new sort or filter starts Browse at
+    // its top. The keys are saved with the positions, so returning to the
+    // screen is not mistaken for a change. requestScrollToItem waits for no
+    // layout, so a page not on screen moves too.
+    val browseGridState = rememberLazyGridState()
+    val collectionsGridState = rememberLazyGridState()
+    val pagesKey = "${state.selectedLibraryId}|${state.mediaScope}"
+    val browseListKey = "$pagesKey|${state.filterState}"
+    var positionsPagesKey by rememberSaveable { mutableStateOf(pagesKey) }
+    var positionsBrowseKey by rememberSaveable { mutableStateOf(browseListKey) }
+    if (positionsPagesKey != pagesKey) {
+        positionsPagesKey = pagesKey
+        recommendedListState.requestScrollToItem(0)
+        collectionsGridState.requestScrollToItem(0)
+    }
+    if (positionsBrowseKey != browseListKey) {
+        positionsBrowseKey = browseListKey
+        browseGridState.requestScrollToItem(0)
+    }
+    val pageScope = rememberCoroutineScope()
+    val scrollPageToTop: (LibrariesSubtab) -> Unit = { tab ->
+        pageScope.launch {
+            when (tab) {
+                LibrariesSubtab.Recommended -> recommendedListState.animateScrollToItem(0)
+                LibrariesSubtab.Browse -> browseGridState.animateScrollToItem(0)
+                LibrariesSubtab.Collections -> collectionsGridState.animateScrollToItem(0)
+            }
+        }
+    }
     val density = LocalDensity.current
     val chromeFadePx = remember(density) {
         with(density) { TopBarGlassFadeDistance.toPx() }
@@ -1122,11 +1240,19 @@ fun LibrariesScreen(
     var chromeHeightPx by remember { mutableIntStateOf(0) }
     val chromeHeight = with(density) { chromeHeightPx.toDp() }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
+        // Phones (and a folded foldable) switch pages and libraries from a
+        // dock above the nav pill (iOS #1137); wider windows keep the chip
+        // row and the selector sheet, as iPad does.
+        val showsDock = maxWidth < LibraryDockMaxWindowWidth && selectedLibrary != null
+        val navChromeInset = LocalBottomChromeInset.current
+        CompositionLocalProvider(
+            LocalBottomChromeInset provides navChromeInset + if (showsDock) LibraryDockFootprint else 0.dp,
+        ) {
         LibraryContentViewport(
             modifier = Modifier
                 .fillMaxSize()
@@ -1191,11 +1317,17 @@ fun LibrariesScreen(
                             onDensityChanged = viewModel::selectViewDensity,
                             onApplyFilter = viewModel::applyFilterState,
                             onSetPreserve = viewModel::setPreserveFilters,
+                            gridState = browseGridState,
+                            // With the dock, Shuffle sits beside Sort and
+                            // Filter, as on iPhone.
+                            onShuffle = onShuffle?.takeIf { showsDock },
+                            shuffleEnabled = shuffleLauncher?.isStarting != true,
                         )
                     }
                     else -> {
                         CollectionsTabContent(
                             state = state,
+                            gridState = collectionsGridState,
                             topInset = topInset,
                             onCollectionClick = { collection ->
                                 state.selectedLibraryId?.let { libraryId ->
@@ -1208,11 +1340,14 @@ fun LibrariesScreen(
                 }
             }
         }
+        }
 
         LibrariesFloatingChrome(
             scrimProgress = chromeScrimProgress,
             hazeState = chromeHaze,
             selectedLibrary = selectedLibrary,
+            showsDock = showsDock,
+            headerCount = state.headerCount,
             canSwitch = state.libraries.size > 1,
             activeProfile = activeProfile,
             remoteControl = remoteControl,
@@ -1232,6 +1367,21 @@ fun LibrariesScreen(
             shuffleEnabled = shuffleLauncher?.isStarting != true,
             modifier = Modifier.onSizeChanged { chromeHeightPx = it.height },
         )
+
+        if (showsDock) {
+            LibraryDock(
+                library = selectedLibrary,
+                libraries = state.libraries,
+                tabs = state.dockTabs,
+                selectedTab = state.selectedTab,
+                onSelect = viewModel::selectTab,
+                onReselect = scrollPageToTop,
+                onPickLibrary = viewModel::selectLibrary,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = navChromeInset + LibraryDockBottomGap),
+            )
+        }
     }
 }
 
@@ -1350,6 +1500,9 @@ private fun BrowseTabContent(
     onDensityChanged: (CatalogViewDensity) -> Unit,
     onApplyFilter: (CatalogFilterState) -> Unit,
     onSetPreserve: (Boolean) -> Unit,
+    gridState: LazyGridState,
+    onShuffle: (() -> Unit)? = null,
+    shuffleEnabled: Boolean = true,
 ) {
     var showFilterSheet by remember { mutableStateOf(false) }
     val isCustomised = !state.isBrowseSortDefault ||
@@ -1383,6 +1536,8 @@ private fun BrowseTabContent(
                 onSelectSort = { id -> onSortChanged(CatalogSortField.valueOf(id), null) },
                 filterCount = state.filterState.activeFacetCount,
                 onOpenFilters = { showFilterSheet = true },
+                onShuffle = onShuffle,
+                shuffleEnabled = shuffleEnabled,
                 showReset = isCustomised,
                 onReset = {
                     onSortChanged(DefaultLibraryBrowseSort, DefaultLibraryBrowseOrder)
@@ -1486,6 +1641,7 @@ private fun BrowseTabContent(
                     bottomContentInset = LocalBottomChromeInset.current,
                     topContentInset = topInset,
                     header = controlsHeader,
+                    gridState = gridState,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -1544,6 +1700,7 @@ private fun LibraryActiveFilterChip(
 @Composable
 private fun CollectionsTabContent(
     state: LibrariesUiState,
+    gridState: LazyGridState,
     topInset: Dp,
     onCollectionClick: (LibraryCollection) -> Unit,
     onRetry: () -> Unit,
@@ -1574,7 +1731,6 @@ private fun CollectionsTabContent(
             // iOS `LibraryCollectionsView`: adaptive poster grid with shared
             // column/row spacing and 16pt padding insets. Follows the Library
             // grid's view density so both tabs show the same column count.
-            val gridState = rememberLazyGridState()
             DeferImagePresentationWhileScrolling(gridState) {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(
@@ -1673,6 +1829,9 @@ private fun LibrariesFloatingChrome(
     scrimProgress: Float,
     hazeState: HazeState,
     selectedLibrary: UserLibrary?,
+    /** The dock switches pages and libraries, so the header only names the library and its size. */
+    showsDock: Boolean,
+    headerCount: Int?,
     canSwitch: Boolean,
     activeProfile: Profile?,
     remoteControl: TopBarRemoteControl,
@@ -1721,12 +1880,22 @@ private fun LibrariesFloatingChrome(
                 .padding(horizontal = TopBarEdgeMargin),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            LibrarySelectorButton(
-                library = selectedLibrary,
-                canSwitch = canSwitch,
-                onClick = onLibrarySelectorClick,
-                modifier = Modifier.weight(1f),
-            )
+            if (showsDock) {
+                LibraryHeaderTitle(
+                    library = selectedLibrary,
+                    count = headerCount,
+                    mediaScope = mediaScope,
+                    kindLabel = selectedLibrary?.typeLabel() ?: stringResource(CommonR.string.library_chooseLibrary),
+                    modifier = Modifier.weight(1f).padding(vertical = 2.dp),
+                )
+            } else {
+                LibrarySelectorButton(
+                    library = selectedLibrary,
+                    canSwitch = canSwitch,
+                    onClick = onLibrarySelectorClick,
+                    modifier = Modifier.weight(1f),
+                )
+            }
 
             TabTopBarActions(
                 activeProfile = activeProfile,
@@ -1741,6 +1910,20 @@ private fun LibrariesFloatingChrome(
             )
         }
 
+        if (showsDock) {
+            // No chip row under the header: the first row sits close below
+            // the library's name, or below a mixed library's Movies/Series
+            // switch, as on iPhone.
+            if (mediaScope != null) {
+                Spacer(modifier = Modifier.height(TabHeaderPillGap))
+                LibraryScopeSwitch(
+                    mediaScope = mediaScope,
+                    onSelect = onMediaScopeSelected,
+                    modifier = Modifier.padding(horizontal = TopBarEdgeMargin),
+                )
+            }
+            Spacer(modifier = Modifier.height(LibraryDockHeaderContentGap))
+        } else {
         Spacer(modifier = Modifier.height(TabHeaderPillGap))
 
         if (mediaScope != null) {
@@ -1766,6 +1949,7 @@ private fun LibrariesFloatingChrome(
         }
 
             Spacer(modifier = Modifier.height(TabContentGap))
+        }
         }
     }
 }

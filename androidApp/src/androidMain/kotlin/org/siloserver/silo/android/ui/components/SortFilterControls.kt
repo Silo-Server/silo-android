@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -80,6 +81,9 @@ fun SortFilterControlsRow(
     showReset: Boolean,
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Shuffles the whole list; shown after Filter when given (phone library Browse, as on iPhone). */
+    onShuffle: (() -> Unit)? = null,
+    shuffleEnabled: Boolean = true,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     var sortMenuOpen by remember { mutableStateOf(false) }
@@ -145,6 +149,16 @@ fun SortFilterControlsRow(
                 onClick = onOpenFilters,
             )
 
+            if (onShuffle != null) {
+                ControlPill(
+                    icon = Icons.Filled.Shuffle,
+                    label = stringResource(CommonR.string.library_shufflePill),
+                    active = false,
+                    enabled = shuffleEnabled,
+                    onClick = onShuffle,
+                )
+            }
+
             // Reset appears only once something is customised — one tap back to
             // the defaults.
             if (showReset) {
@@ -181,9 +195,11 @@ private fun ControlPill(
     active: Boolean,
     onClick: () -> Unit,
     trailingChevron: Boolean = false,
+    enabled: Boolean = true,
 ) {
     OutlinedButton(
         onClick = onClick,
+        enabled = enabled,
         shape = CircleShape,
         contentPadding = PaddingValues(horizontal = 12.dp),
         border = BorderStroke(1.dp, SiloOutline),
