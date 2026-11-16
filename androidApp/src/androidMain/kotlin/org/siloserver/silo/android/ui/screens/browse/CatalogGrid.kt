@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.browse
 
+import org.siloserver.silo.android.ui.components.sharedArtworkAspectRatio
 import org.siloserver.silo.viewmodel.DetailSeeds
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
@@ -94,6 +95,9 @@ fun CatalogGrid(
     // Feeds the shared header's glass when this grid fills For You.
     ReportTabHeaderScrim(gridState)
     val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
+    // Titles not read yet take the shape the loaded ones have: square in an
+    // audiobook library, so rows keep their height as covers fill in.
+    val placeholderAspectRatio = remember(uniqueItems) { sharedArtworkAspectRatio(uniqueItems.map { it.type }) }
     // The session density picks the base cell; the server-driven poster-size
     // preference multiplies it, shifting the adaptive column count.
     val cardWidth = viewDensity.minCardWidth * LocalCardPresentation.current.posterSize.posterScale
@@ -197,7 +201,7 @@ fun CatalogGrid(
                     if (item != null) {
                         CatalogGridCard(item, cardWidth, cardSubtitle, onItemClick, reserveTextLines = true)
                     } else {
-                        MediaCardPlaceholder(width = cardWidth)
+                        MediaCardPlaceholder(width = cardWidth, artworkAspectRatio = placeholderAspectRatio)
                     }
                 }
             } else {

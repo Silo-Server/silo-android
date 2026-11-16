@@ -374,7 +374,8 @@ private fun SingleRow(
             contentDescription = title,
             modifier = Modifier
                 .width(56.dp)
-                .aspectRatio(2f / 3f)
+                // Audiobook covers are square, as on every other card.
+                .aspectRatio(if (item.mediaType == DownloadMediaType.Audiobook) 1f else 2f / 3f)
                 .clip(MaterialTheme.shapes.small),
         )
         Spacer(modifier = Modifier.width(12.dp))
