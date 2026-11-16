@@ -3,7 +3,6 @@ package org.siloserver.silo.android.ui.screens.personal
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 
-import androidx.annotation.StringRes
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -68,32 +67,33 @@ import org.siloserver.silo.viewmodel.WatchlistViewModel
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.personal.PersonalMediaFilter
+import org.siloserver.silo.common.personal.rememberPersonalMediaFilterStore
 import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.currentNumberLocale
 
-private enum class PersonalMediaType(
-    @StringRes val label: Int,
-    @StringRes val emptyTitle: Int,
-    @StringRes val emptySubtitle: Int,
-) {
-    Movies(CommonR.string.personal_filter_movies, CommonR.string.personal_movies_empty, CommonR.string.personal_movies_emptyBody),
-    TvShows(CommonR.string.personal_filter_tvShows, CommonR.string.personal_tvShows_empty, CommonR.string.personal_tvShows_emptyBody),
-}
+/** Empty-state copy for a Movies or TV Shows view that has nothing to show. */
+private val PersonalMediaFilter.emptyText: Pair<Int, Int>?
+    get() = when (this) {
+        PersonalMediaFilter.All -> null
+        PersonalMediaFilter.Movies -> CommonR.string.personal_movies_empty to CommonR.string.personal_movies_emptyBody
+        PersonalMediaFilter.TvShows -> CommonR.string.personal_tvShows_empty to CommonR.string.personal_tvShows_emptyBody
+    }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PersonalMediaTypeSelector(
-    selected: PersonalMediaType,
-    onSelected: (PersonalMediaType) -> Unit,
+private fun PersonalMediaFilterSelector(
+    selected: PersonalMediaFilter,
+    onSelected: (PersonalMediaFilter) -> Unit,
 ) {
     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-        PersonalMediaType.entries.forEachIndexed { index, type ->
+        PersonalMediaFilter.entries.forEachIndexed { index, filter ->
             SegmentedButton(
-                selected = selected == type,
-                onClick = { onSelected(type) },
-                shape = SegmentedButtonDefaults.itemShape(index, PersonalMediaType.entries.size),
-                label = { androidx.compose.material3.Text(stringResource(type.label)) },
+                selected = selected == filter,
+                onClick = { onSelected(filter) },
+                shape = SegmentedButtonDefaults.itemShape(index, PersonalMediaFilter.entries.size),
+                label = { androidx.compose.material3.Text(stringResource(filter.label)) },
             )
         }
     }
@@ -110,7 +110,8 @@ fun FavoritesGridContent(
     viewModel: FavoritesViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    var mediaType by remember { mutableStateOf(PersonalMediaType.Movies) }
+    val filterStore = rememberPersonalMediaFilterStore()
+    val mediaFilter by filterStore.filter.collectAsState()
     if (query != null) {
         LaunchedEffect(query) { viewModel.applyQuery(query) }
     }
@@ -121,11 +122,11 @@ fun FavoritesGridContent(
         contentPadding = contentPadding,
         header = { listState ->
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                PersonalMediaTypeSelector(mediaType, onSelected = { mediaType = it })
+                PersonalMediaFilterSelector(mediaFilter, onSelected = filterStore::select)
                 header?.invoke(listState)
             }
         },
-        mediaType = mediaType,
+        mediaFilter = mediaFilter,
         emptyTitle = stringResource(CommonR.string.personal_favorites_empty),
         emptySubtitle = stringResource(CommonR.string.personal_favorites_emptyTapHint),
         emptyIcon = Icons.Outlined.FavoriteBorder,
@@ -147,7 +148,8 @@ fun WatchlistGridContent(
     viewModel: WatchlistViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    var mediaType by remember { mutableStateOf(PersonalMediaType.Movies) }
+    val filterStore = rememberPersonalMediaFilterStore()
+    val mediaFilter by filterStore.filter.collectAsState()
     if (query != null) {
         LaunchedEffect(query) { viewModel.applyQuery(query) }
     }
@@ -158,11 +160,11 @@ fun WatchlistGridContent(
         contentPadding = contentPadding,
         header = { listState ->
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                PersonalMediaTypeSelector(mediaType, onSelected = { mediaType = it })
+                PersonalMediaFilterSelector(mediaFilter, onSelected = filterStore::select)
                 header?.invoke(listState)
             }
         },
-        mediaType = mediaType,
+        mediaFilter = mediaFilter,
         emptyTitle = stringResource(CommonR.string.personal_watchlist_empty),
         emptySubtitle = stringResource(CommonR.string.personal_watchlist_emptyTapHint),
         emptyIcon = Icons.Outlined.BookmarkBorder,
@@ -216,18 +218,13 @@ private fun PersonalMediaGridContent(
     // empty / error views so the controls stay reachable when the list has
     // nothing to show. Receives the state so it can show the item count.
     header: (@Composable (PersonalListUiState) -> Unit)? = null,
-    mediaType: PersonalMediaType? = null,
+    // Null for History, which has no media switch.
+    mediaFilter: PersonalMediaFilter? = null,
 ) {
     val layoutDirection = LocalLayoutDirection.current
-    val visibleItems = remember(state.items, mediaType) {
-        when (mediaType) {
-            PersonalMediaType.Movies -> state.items.filter { it.type.equals("movie", ignoreCase = true) }
-            PersonalMediaType.TvShows -> state.items.filter {
-                it.type.equals("series", ignoreCase = true) || it.type.equals("show", ignoreCase = true)
-            }
-            null -> state.items
-        }
-    }
+    val visibleItems = remember(state.items, mediaFilter) { mediaFilter?.apply(state.items) ?: state.items }
+    // The header's count describes what is showing, not the whole list.
+    val headerState = mediaFilter?.let { state.copy(total = it.shownTotal(state, visibleItems.size)) } ?: state
     LaunchedEffect(visibleItems.isEmpty(), state.hasMore, state.isLoadingMore, state.isLoading) {
         if (visibleItems.isEmpty() && state.hasMore && !state.isLoadingMore && !state.isLoading) {
             onLoadMore()
@@ -238,7 +235,7 @@ private fun PersonalMediaGridContent(
             // Poster-grid skeleton (not a spinner) so the list keeps its shape
             // while it loads; the header's controls stay reachable above it.
             Column(modifier = modifier.padding(contentPadding)) {
-                header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
+                header?.let { Box(modifier = Modifier.padding(16.dp)) { it(headerState) } }
                 PosterGridSkeleton(
                     progress = rememberShimmerProgress(),
                     modifier = Modifier.weight(1f),
@@ -247,7 +244,7 @@ private fun PersonalMediaGridContent(
         }
         state.error != null -> {
             Column(modifier = modifier.padding(contentPadding)) {
-                header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
+                header?.let { Box(modifier = Modifier.padding(16.dp)) { it(headerState) } }
                 ErrorView(
                     message = state.error?.text() ?: stringResource(CommonR.string.catalog_error_unknown),
                     onRetry = onRetry,
@@ -257,20 +254,20 @@ private fun PersonalMediaGridContent(
         }
         visibleItems.isEmpty() -> {
             Column(modifier = modifier.padding(contentPadding)) {
-                header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
+                header?.let { Box(modifier = Modifier.padding(16.dp)) { it(headerState) } }
                 // A narrowed query with no hits is not an empty list — say so,
                 // and keep the header's controls reachable to widen it (TV parity).
                 val filtered = !state.query.isDefault
-                val selectedTypeEmpty = mediaType != null && state.items.isNotEmpty()
+                val typeEmpty = mediaFilter?.emptyText?.takeIf { state.items.isNotEmpty() }
                 EmptyStateView(
                     title = when {
                         filtered -> stringResource(CommonR.string.personal_noMatches)
-                        selectedTypeEmpty -> mediaType?.let { stringResource(it.emptyTitle) } ?: emptyTitle
+                        typeEmpty != null -> stringResource(typeEmpty.first)
                         else -> emptyTitle
                     },
                     subtitle = when {
                         filtered -> stringResource(CommonR.string.personal_noMatchesBody)
-                        selectedTypeEmpty -> mediaType?.let { stringResource(it.emptySubtitle) } ?: emptySubtitle
+                        typeEmpty != null -> stringResource(typeEmpty.second)
                         else -> emptySubtitle
                     },
                     icon = emptyIcon,
@@ -296,7 +293,7 @@ private fun PersonalMediaGridContent(
                     onLoadMore = onLoadMore,
                     topContentInset = contentPadding.calculateTopPadding(),
                     bottomContentInset = contentPadding.calculateBottomPadding(),
-                    header = header?.let { content -> { content(state) } },
+                    header = header?.let { content -> { content(headerState) } },
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(
