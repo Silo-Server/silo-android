@@ -614,7 +614,7 @@ internal fun List<ResolvedSection>.removingFromProgressRows(isRemoved: (SectionI
         if (!section.isProgressRow()) return@map section
         val kept = section.items.filterNot(isRemoved)
         section.copy(items = kept, totalCount = if (section.showsWholeList) kept.size else section.totalCount)
-    }.filter { it.items.isNotEmpty() }
+    }.filter { it.hasCards }
 
 private fun List<ResolvedSection>.duplicateSectionKeyCount(): Int =
     size - distinctBy(ResolvedSection::id).size

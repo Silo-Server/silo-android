@@ -30,6 +30,7 @@ import androidx.tv.material3.Text
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.tv.data.preferences.TvHomeSectionPreferences
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
@@ -82,12 +83,22 @@ fun TvHomeScreen(
     firstRowContainerFocusRequester: FocusRequester? = null,
     shouldRefreshOnResume: () -> Boolean = { true },
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
+    /** Opens a card of a row of collections. */
+    onCollectionClick: ((SectionCollectionCard) -> Unit)? = null,
+    /**
+     * The libraries TV shows this profile, whose server collections Home's
+     * rows may show; null until they are known, which shows none. See
+     * [withTvShownCollections].
+     */
+    homeCollectionLibraryIds: Set<Int>? = null,
     viewModel: HomeViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
     val homeSectionPreferences: TvHomeSectionPreferences = koinInject()
     val homeSectionPreferenceState by homeSectionPreferences.state.collectAsState()
-    val normalizedSections = remember(state.sections) { state.sections.normalizeTvHomeSections() }
+    val normalizedSections = remember(state.sections, homeCollectionLibraryIds) {
+        state.sections.normalizeTvHomeSections().withTvShownCollections(homeCollectionLibraryIds)
+    }
     val visibleSections = remember(normalizedSections, homeSectionPreferenceState.layout) {
         TvHomeSectionPreferences.arrange(
             sections = normalizedSections,
@@ -158,6 +169,7 @@ fun TvHomeScreen(
                 firstRowFocusRequester = firstRowFocusRequester,
                 firstRowContainerFocusRequester = firstRowContainerFocusRequester,
                 onContentUpFallbackChanged = onContentUpFallbackChanged,
+                onCollectionClick = onCollectionClick,
                 onSetWatched = viewModel::setWatched,
                 onMarqueeTranslated = viewModel::refreshFromRealtime,
                 onToggleFavorite = viewModel::toggleFavorite,
@@ -252,6 +264,7 @@ private fun TvHomeContent(
     firstRowFocusRequester: FocusRequester?,
     firstRowContainerFocusRequester: FocusRequester?,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)?,
+    onCollectionClick: ((SectionCollectionCard) -> Unit)? = null,
     onSetWatched: (String, Boolean) -> Unit = { _, _ -> },
     onToggleFavorite: (String, Boolean) -> Unit = { _, _ -> },
     onToggleWatchlist: (String, Boolean) -> Unit = { _, _ -> },
@@ -263,6 +276,7 @@ private fun TvHomeContent(
     val playText = stringResource(CommonR.string.cardMenu_play)
     TvSkylineSectionFeed(
         onMarqueeTranslated = onMarqueeTranslated,
+        onCollectionClick = onCollectionClick,
         surfaceKey = "home",
         // tvOS Home drops the foreground marquee + row band by 56pt while
         // keeping the ambient art and top navigation fixed (28dp at TV scale).

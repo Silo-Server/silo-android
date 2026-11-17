@@ -4,6 +4,7 @@ import org.siloserver.silo.viewmodel.DetailSeeds
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.SectionCollectionCard
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -31,7 +32,6 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Headphones
-import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -74,10 +74,10 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.AudiobookGroup
-import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.tv.ui.components.TvAlphabetRail
 import org.siloserver.silo.tv.ui.components.TvCardWidth
 import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
+import org.siloserver.silo.tv.ui.components.TvCollectionCard
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvFilterChip
 import org.siloserver.silo.tv.ui.components.TvMediaCard
@@ -89,10 +89,7 @@ import org.siloserver.silo.tv.ui.theme.rememberTvGridBringIntoViewSpec
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 import org.siloserver.silo.tv.ui.theme.tvPresetGridColumns
 import org.siloserver.silo.tv.ui.components.TvSectionHeader
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.offset
-import androidx.compose.ui.unit.sp
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -180,6 +177,9 @@ fun TvLibraryDetailScreen(
                 focusRequest = sectionRequestNonce,
                 onContentUpFallbackChanged = onContentUpFallbackChanged,
                 onExploreSection = onExploreSection,
+                onCollectionClick = { card ->
+                    onCollectionClick(card.id, card.title, card.isUserCollection)
+                },
             )
             // Browse is the tvOS `TVLibraryGridView` embed: Sort/Filter
             // control row over the grid, with the A–Z rail always on.
@@ -301,9 +301,10 @@ private fun RecommendedTab(
     focusRequest: Int,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)?,
     onExploreSection: ((ResolvedSection) -> Unit)?,
+    onCollectionClick: (SectionCollectionCard) -> Unit,
 ) {
     val rows = remember(state.sections) {
-        state.sections.filter { !it.featured && it.items.isNotEmpty() }
+        state.sections.filter { (!it.featured || it.isCollectionRow) && it.hasCards }
     }
 
     when {
@@ -339,6 +340,10 @@ private fun RecommendedTab(
                     onInitialContentFocus = onInitialContentFocus,
                     onContentUpFallbackChanged = onContentUpFallbackChanged,
                     onExploreAllForSection = onExploreSection,
+                    onCollectionClick = onCollectionClick,
+                    // As the Collections grid: a Movies- or Series-scoped page
+                    // would show the whole collection's count.
+                    showCollectionCounts = state.mediaScope == null,
                 )
                 state.recommendedError?.let { message ->
                     Row(
@@ -1183,82 +1188,6 @@ private fun CollectionsGroupHeader(name: String) {
     )
 }
 
-// ============================================================================
-// Collection card (renders inside the Collections grid)
-// ============================================================================
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun TvCollectionCard(
-    collection: LibraryCollection,
-    onClick: () -> Unit,
-    focusRequester: FocusRequester? = null,
-    modifier: Modifier = Modifier,
-) {
-    // Same focus treatment (lift + white outline + shadow) and caption metrics
-    // as `TvMediaCard`, so collection posters sit alongside Browse posters
-    // without reading as a different card family.
-    val interactionSource = remember { MutableInteractionSource() }
-    val isFocused by interactionSource.collectIsFocusedAsState()
-    val cardFocus = siloCardDefaults(shape = TvCollectionCardShape)
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Card(
-            onClick = onClick,
-            interactionSource = interactionSource,
-            shape = CardDefaults.shape(shape = TvCollectionCardShape),
-            scale = cardFocus.scale,
-            border = cardFocus.border,
-            glow = cardFocus.glow,
-            modifier = modifier
-                .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
-                .fillMaxWidth()
-                .aspectRatio(2f / 3f),
-        ) {
-            if (!collection.posterUrl.isNullOrBlank()) {
-                ThumbhashImage(
-                    url = collection.posterUrl,
-                    thumbhash = collection.posterThumbhash,
-                    contentDescription = collection.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(SubtleSurface),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.VideoLibrary,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.8f),
-                    )
-                }
-            }
-        }
-
-        // Title-only caption, start-aligned like every other poster caption in
-        // the app. The item count was dropped: it doubled the caption height
-        // and made the rows read differently from Browse.
-        Spacer(modifier = Modifier.height(11.dp))
-
-        Text(
-            text = collection.name,
-            style = MaterialTheme.typography.titleSmall.copy(
-                fontSize = 15.5.sp,
-                lineHeight = 18.5.sp,
-            ),
-            color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
-
-private val TvCollectionCardShape = RoundedCornerShape(8.dp)
 private val CollectionsGroupHeaderNudge = 10.dp
 
 @Composable

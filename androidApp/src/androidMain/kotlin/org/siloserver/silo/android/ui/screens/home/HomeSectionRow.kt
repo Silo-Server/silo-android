@@ -4,7 +4,15 @@ import org.siloserver.silo.android.ui.components.areAllAudiobooks
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import org.koin.compose.koinInject
+import org.siloserver.silo.android.ui.components.CollectionPosterRow
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.model.section.SectionCollectionCard
+import org.siloserver.silo.network.ServerRegistry
 import androidx.compose.ui.Modifier
 import org.siloserver.silo.android.ui.components.CardStyle
 import org.siloserver.silo.android.ui.components.MediaCardActions
@@ -29,6 +37,10 @@ import org.siloserver.silo.viewmodel.HomeDismissal
  * @param onItemClick Callback with content ID when a card is tapped.
  * @param onExploreAllClick Opens the row's full page. Null keeps every card
  *  and hides "Explore all".
+ * @param onCollectionClick Opens a card of a row of collections
+ *  ([ResolvedSection.isCollectionRow]). Such a row shows nothing without it.
+ * @param activeProfileId The viewing profile, which decides whether a personal
+ *  collection's card names the profile that made it.
  * @param modifier Compose modifier.
  */
 @Composable
@@ -43,8 +55,18 @@ fun HomeSectionRow(
     /** Removes a Continue Watching or Next Up card; see [HomeDismissal]. */
     onRemoveFromHome: ((SectionItem) -> Unit)? = null,
     onCenteredContinueWatchingItemChanged: ((SectionItem?) -> Unit)? = null,
+    onCollectionClick: ((SectionCollectionCard) -> Unit)? = null,
+    activeProfileId: String? = null,
+    /** Off on a Movies- or Series-scoped library page; see [CollectionPosterRow]. */
+    showCollectionCounts: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
+    if (section.isCollectionRow) {
+        if (section.collections.isNotEmpty() && onCollectionClick != null) {
+            HomeCollectionRow(section, onCollectionClick, activeProfileId, showCollectionCounts, modifier)
+        }
+        return
+    }
     if (section.items.isEmpty()) return
     // Rows with a full page (Home and library rows) cap their cards; the
     // page holds the rest. For You rows have no page, so they show all.
@@ -86,5 +108,42 @@ fun HomeSectionRow(
             )
         },
         onCenteredItemChanged = if (isContinueWatching) onCenteredContinueWatchingItemChanged else null,
+    )
+}
+
+/**
+ * A row of collections. A personal collection another profile of the account
+ * made reads "by Name" (web `CollectionPosterCard`); the names come from the
+ * account's cached profile list, and an unknown name shows the item count.
+ */
+@Composable
+private fun HomeCollectionRow(
+    section: ResolvedSection,
+    onCollectionClick: (SectionCollectionCard) -> Unit,
+    activeProfileId: String?,
+    showCounts: Boolean,
+    modifier: Modifier,
+) {
+    val serverRegistry: ServerRegistry = koinInject()
+    val activeAccount by serverRegistry.activeAccount.collectAsState()
+    val activeEntry by serverRegistry.activeEntry.collectAsState()
+    val viewerId = activeEntry?.profileId ?: activeProfileId
+    val profileNames = remember(activeAccount) {
+        activeAccount?.cachedProfiles.orEmpty()
+            .filter { it.name.isNotBlank() }
+            .associate { it.id to it.name }
+    }
+    CollectionPosterRow(
+        title = sectionTitle(section),
+        cards = section.collections,
+        onCardClick = onCollectionClick,
+        byline = { card ->
+            val ownerName = card.creatorProfileId
+                ?.takeIf { card.isUserCollection && viewerId != null && it != viewerId }
+                ?.let { profileNames[it] }
+            ownerName?.let { stringResourceWithNames(CommonR.string.collections_posterCard_byOwner, it) }
+        },
+        modifier = modifier,
+        showCounts = showCounts,
     )
 }

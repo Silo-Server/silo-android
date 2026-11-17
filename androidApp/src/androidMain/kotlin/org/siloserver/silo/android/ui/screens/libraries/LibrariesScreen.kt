@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.libraries
 
 import org.siloserver.silo.android.ui.components.PosterArtworkAspectRatio
+import org.siloserver.silo.android.ui.components.CollectionPosterCard
 import org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.UiText
@@ -174,6 +175,7 @@ import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
@@ -800,7 +802,7 @@ class LibrariesViewModel(
                         if (isRecommendedRequestCurrent(requestGeneration, libraryId, it)) {
                             it.copy(
                                 isLoadingSections = false,
-                                sections = scoped.map { it.section }.filter { it.items.isNotEmpty() },
+                                sections = scoped.map { it.section }.filter { it.hasCards },
                                 sectionsError = if (scoped.any { it.incomplete }) {
                                     UiText.Res(CommonR.string.library_error_someShelves)
                                 } else {
@@ -1137,6 +1139,8 @@ class LibrariesViewModel(
 fun LibrariesScreen(
     onItemClick: (String, Int?) -> Unit,
     onCollectionClick: (LibraryCollection, Int, String?) -> Unit,
+    /** Opens a personal collection by id, from a Recommended row of collections. */
+    onPersonalCollectionClick: ((String) -> Unit)? = null,
     /** Opens a Recommended row's full page: the row, its library, and the Movies/Series scope. */
     onExploreSection: ((ResolvedSection, Int, String?) -> Unit)? = null,
     viewModel: LibrariesViewModel,
@@ -1359,6 +1363,21 @@ fun LibrariesScreen(
                             onExploreSection = state.selectedLibraryId?.let { libraryId ->
                                 onExploreSection?.let { open -> { section -> open(section, libraryId, state.mediaScope) } }
                             },
+                            // A server collection opens in this library and scope,
+                            // as the Collections tab opens it. A personal one opens
+                            // as the Collections screen does, except in a Movies- or
+                            // Series-scoped view, where it keeps that scope (as on TV).
+                            onCollectionClick = { card ->
+                                val libraryId = state.selectedLibraryId
+                                when {
+                                    card.isUserCollection && state.mediaScope == null ->
+                                        onPersonalCollectionClick?.invoke(card.id)
+                                    libraryId != null ->
+                                        onCollectionClick(card.toLibraryCollection(), libraryId, state.mediaScope)
+                                    card.isUserCollection -> onPersonalCollectionClick?.invoke(card.id)
+                                }
+                            },
+                            activeProfileId = activeProfile?.id,
                         )
                     }
                     state.selectedTab == LibrariesSubtab.Browse -> {
@@ -1463,6 +1482,8 @@ private fun RecommendedTabContent(
     onItemClick: (String) -> Unit,
     onRetry: () -> Unit,
     onExploreSection: ((ResolvedSection) -> Unit)? = null,
+    onCollectionClick: ((SectionCollectionCard) -> Unit)? = null,
+    activeProfileId: String? = null,
 ) {
     val diagnosticsListSnapshot = remember(state.sections) {
         DiagnosticsListSnapshot.fromKeys(
@@ -1532,6 +1553,9 @@ private fun RecommendedTabContent(
                         section = section,
                         onItemClick = onItemClick,
                         onExploreAllClick = onExploreSection?.let { open -> { open(section) } },
+                        onCollectionClick = onCollectionClick,
+                        activeProfileId = activeProfileId,
+                        showCollectionCounts = state.mediaScope == null,
                     )
                 }
 
@@ -1812,7 +1836,7 @@ private fun CollectionsTabContent(
                     key = { it.id },
                     contentType = { "library-collection" },
                 ) { collection ->
-                    InlineLibraryCollectionCard(
+                    CollectionPosterCard(
                         collection = collection,
                         showItemCount = state.mediaScope == null,
                         onClick = { onCollectionClick(collection) },
@@ -1821,65 +1845,6 @@ private fun CollectionsTabContent(
             }
             }
         }
-    }
-}
-
-@Composable
-private fun InlineLibraryCollectionCard(
-    collection: LibraryCollection,
-    showItemCount: Boolean,
-    onClick: () -> Unit,
-) {
-    // iOS `LibraryCollectionCard`: VStack(spacing: 6) of a 2:3.3 poster
-    // (smallCornerRadius = 6) carrying a bottom-trailing count badge, a
-    // siloCaption (12) name (2 lines), and a siloSmall (11) secondary
-    // type label; the count badge rides the artwork.
-    Column(
-        modifier = Modifier.clickable(onClick = onClick),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(6.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f))
-                .aspectRatio(2f / 3.3f),
-        ) {
-            ThumbhashImage(
-                url = collection.posterUrl,
-                thumbhash = collection.posterThumbhash,
-                contentDescription = collection.name,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-            if (showItemCount) Text(
-                text = collection.itemCount?.takeIf { it > 0 }?.let { LocaleFormat.groupedCount(it, currentNumberLocale()) } ?: stringResource(CommonR.string.collections_type_smart),
-                fontSize = 12.sp,
-                color = Color.White,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(Color.Black.copy(alpha = 0.65f))
-                    .padding(horizontal = 8.dp, vertical = 5.dp),
-            )
-        }
-        Text(
-            text = collection.name,
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = collection.itemCount?.takeIf { showItemCount }
-                ?.let { pluralStringResource(CommonR.plurals.collections_itemCount, it, it, LocaleFormat.groupedCount(it)) }
-                ?: stringResource(CommonR.string.collections_collection),
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 
