@@ -22,7 +22,11 @@ internal fun decodeSectionV2(row: JsonObject): ResolvedSection {
     require(row["items"] is JsonArray) { "Missing section items." }
     val section = SiloJson.decodeFromJsonElement<ResolvedSection>(row)
     require(section.id.isNotBlank() && section.items.all { it.contentId.isNotBlank() }) { "Blank section identity." }
-    return section
+    if (section.collections.isEmpty()) return section
+    // A card this client can't open is left out, as the server leaves out one
+    // the viewer can't see; the rest of the row still shows.
+    val cards = section.collections.filter { it.isOpenable }.distinctBy { it.rowKey }
+    return if (cards.size == section.collections.size) section else section.copy(collections = cards)
 }
 
 internal fun decodeSectionsV2(body: JsonObject): SectionsResponse {

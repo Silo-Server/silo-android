@@ -1,6 +1,8 @@
 package org.siloserver.silo.tv.ui.focus
 
+import org.siloserver.silo.model.section.COLLECTION_POSTERS_SECTION_TYPE
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.model.section.SectionItem
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -209,6 +211,31 @@ class TvReturnAdaptersTest {
                 flatTvReturnSections(listOf("a", "b"), hasMore = true),
                 treatAbsenceAsFinal = true,
             ),
+        )
+    }
+
+    @Test
+    fun `a row of collections returns to its cards by source and id`() {
+        // A server and a personal collection can share an id, and the row has
+        // no items, so the cards' row keys are its only identity, and its
+        // cards make it complete.
+        val row = ResolvedSection(
+            id = "collections",
+            sectionType = COLLECTION_POSTERS_SECTION_TYPE,
+            title = "Collections",
+            totalCount = 2,
+            collections = listOf(
+                SectionCollectionCard(id = "7", source = "library", title = "Bond", libraryId = "1"),
+                SectionCollectionCard(id = "7", source = "user", title = "Mine"),
+            ),
+        )
+        val sections = listOf(row).toTvReturnSections()
+
+        assertEquals(listOf(TvReturnSection("collections", listOf("library:7", "user:7"))), sections)
+        assertTrue(sections.single().isComplete)
+        assertEquals(
+            TvReturnResolution.Exact(0, 1, "collections", "user:7"),
+            resolveTvReturnTarget(TvReturnTarget("collections", "user:7", 0, 1), sections),
         )
     }
 }

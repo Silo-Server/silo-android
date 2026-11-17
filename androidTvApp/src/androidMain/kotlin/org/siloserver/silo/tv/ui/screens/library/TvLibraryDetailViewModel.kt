@@ -648,7 +648,8 @@ class TvLibraryDetailViewModel(
             // measured common case has every section populated and makes zero
             // extra calls.
             val sections = layout.sections
-            val unresolved = sections.filter { it.items.isEmpty() && it.totalCount > 0 }
+            // A row of collections arrives with its cards and has no items to fetch.
+            val unresolved = sections.filter { !it.isCollectionRow && it.items.isEmpty() && it.totalCount > 0 }
             val resolved = if (unresolved.isEmpty()) {
                 sections
             } else {

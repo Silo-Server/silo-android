@@ -12,6 +12,27 @@ internal fun List<ResolvedSection>.normalizeTvHomeSections(): List<ResolvedSecti
         if (section.isTvProgressRow()) section.splitAudioProgress() else listOf(section)
     }
 
+/**
+ * Keeps the server collection cards whose library is one TV shows this
+ * profile ([shownLibraryIds]; never an ebook library), and drops a row of
+ * collections left with none. Null [shownLibraryIds] means the libraries are
+ * not known yet, and every card stays. Personal collections always stay.
+ */
+internal fun List<ResolvedSection>.withTvShownCollections(shownLibraryIds: Set<Int>?): List<ResolvedSection> {
+    if (shownLibraryIds == null) return this
+    return mapNotNull { section ->
+        if (!section.isCollectionRow) return@mapNotNull section
+        val kept = section.collections.filter { card ->
+            card.isUserCollection || card.libraryIdInt in shownLibraryIds
+        }
+        when {
+            kept.isEmpty() -> null
+            kept.size == section.collections.size -> section
+            else -> section.copy(collections = kept, totalCount = kept.size)
+        }
+    }
+}
+
 internal fun ResolvedSection.isTvAudioProgressSection(): Boolean =
     isTvProgressRow() && items.isNotEmpty() && items.all { isAudiobookMediaType(it.type) }
 
