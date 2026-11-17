@@ -10,9 +10,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.*
 import org.siloserver.silo.model.section.SectionsResponse
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.model.section.HomeSectionItemsResponse
 import org.siloserver.silo.model.section.HomeLayoutRow
 import org.siloserver.silo.network.*
@@ -20,13 +22,25 @@ import org.siloserver.silo.network.*
 /** One v2 section row: `items` is required on the wire even though the domain model defaults it. */
 internal fun decodeSectionV2(row: JsonObject): ResolvedSection {
     require(row["items"] is JsonArray) { "Missing section items." }
-    val section = SiloJson.decodeFromJsonElement<ResolvedSection>(row)
+    val cardElements = row["collections"] as? JsonArray
+    val section = SiloJson.decodeFromJsonElement<ResolvedSection>(
+        if (cardElements == null) row else JsonObject(row - "collections"),
+    )
     require(section.id.isNotBlank() && section.items.all { it.contentId.isNotBlank() }) { "Blank section identity." }
-    if (section.collections.isEmpty()) return section
-    // A card this client can't open is left out, as the server leaves out one
-    // the viewer can't see; the rest of the row still shows.
-    val cards = section.collections.filter { it.isOpenable }.distinctBy { it.rowKey }
-    return if (cards.size == section.collections.size) section else section.copy(collections = cards)
+    if (cardElements.isNullOrEmpty()) return section
+    // Each card decodes on its own. A card this client can't read or open is
+    // left out, as the server leaves out one the viewer can't see; the rest of
+    // the row, and of Home, still shows.
+    val cards = cardElements.mapNotNull { element ->
+        try {
+            SiloJson.decodeFromJsonElement<SectionCollectionCard>(element).takeIf { it.isOpenable }
+        } catch (_: SerializationException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    }.distinctBy { it.rowKey }
+    return section.copy(collections = cards)
 }
 
 internal fun decodeSectionsV2(body: JsonObject): SectionsResponse {

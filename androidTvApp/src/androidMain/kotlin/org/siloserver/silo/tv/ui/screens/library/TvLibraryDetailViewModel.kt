@@ -669,7 +669,9 @@ class TvLibraryDetailViewModel(
 
             // Independent shelves can overlap, but keep each cursor chain sequential.
             val refillPermits = Semaphore(3)
-            val scoped = resolved.filterNot { it.featured }.map { section ->
+            // A row of collections is never a hero, so a featured flag on one
+            // is ignored rather than hiding the row.
+            val scoped = resolved.filterNot { it.featured && !it.isCollectionRow }.map { section ->
                 async {
                     refillPermits.withPermit {
                         scopeTvLibrarySection(section, mediaScope) { cursor ->

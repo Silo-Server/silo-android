@@ -29,6 +29,8 @@ class CollectionRowTest {
                     {"id":"no-library","source":"library","title":"Orphan","poster_url":"","poster_is_collage":false,"item_count":1},
                     {"id":"future","source":"smart","title":"Unknown","poster_url":"","poster_is_collage":false,"item_count":1},
                     {"source":"user","title":null,"poster_url":"","poster_is_collage":false,"item_count":1},
+                    {"id":"bad-count","source":"user","title":"Bad count","poster_url":"","poster_is_collage":false,"item_count":"many"},
+                    "not a card",
                     {"id":"01J9","source":"library","title":"Marvel again","poster_url":"","poster_is_collage":false,"item_count":1,"library_id":"2"}
                   ]}]}
                 """.trimIndent(),

@@ -304,7 +304,7 @@ private fun RecommendedTab(
     onCollectionClick: (SectionCollectionCard) -> Unit,
 ) {
     val rows = remember(state.sections) {
-        state.sections.filter { !it.featured && it.hasCards }
+        state.sections.filter { (!it.featured || it.isCollectionRow) && it.hasCards }
     }
 
     when {

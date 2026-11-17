@@ -583,7 +583,7 @@ fun TvMainShell(
     // to the card it was opened from.
     // The libraries whose server collections Home may show: the ones TV
     // shows this profile (never ebooks), once a load has said which. Null
-    // until then, so a slow or offline load does not empty Home's rows.
+    // until then, and Home holds server collections back meanwhile.
     val homeCollectionLibraryIds = remember(librariesKnown, libraries) {
         if (librariesKnown) libraries.mapTo(mutableSetOf()) { it.id } else null
     }

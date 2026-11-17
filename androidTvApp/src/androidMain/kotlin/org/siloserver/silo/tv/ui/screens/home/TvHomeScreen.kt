@@ -87,7 +87,8 @@ fun TvHomeScreen(
     onCollectionClick: ((SectionCollectionCard) -> Unit)? = null,
     /**
      * The libraries TV shows this profile, whose server collections Home's
-     * rows may show; null until they are known. See [withTvShownCollections].
+     * rows may show; null until they are known, which shows none. See
+     * [withTvShownCollections].
      */
     homeCollectionLibraryIds: Set<Int>? = null,
     viewModel: HomeViewModel = koinViewModel(),

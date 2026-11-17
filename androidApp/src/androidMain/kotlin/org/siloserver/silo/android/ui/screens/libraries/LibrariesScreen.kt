@@ -1364,15 +1364,17 @@ fun LibrariesScreen(
                                 onExploreSection?.let { open -> { section -> open(section, libraryId, state.mediaScope) } }
                             },
                             // A server collection opens in this library and scope,
-                            // as the Collections tab opens it; a personal one opens
-                            // as the Collections screen does.
+                            // as the Collections tab opens it. A personal one opens
+                            // as the Collections screen does, except in a Movies- or
+                            // Series-scoped view, where it keeps that scope (as on TV).
                             onCollectionClick = { card ->
-                                if (card.isUserCollection) {
-                                    onPersonalCollectionClick?.invoke(card.id)
-                                } else {
-                                    state.selectedLibraryId?.let { libraryId ->
+                                val libraryId = state.selectedLibraryId
+                                when {
+                                    card.isUserCollection && state.mediaScope == null ->
+                                        onPersonalCollectionClick?.invoke(card.id)
+                                    libraryId != null ->
                                         onCollectionClick(card.toLibraryCollection(), libraryId, state.mediaScope)
-                                    }
+                                    card.isUserCollection -> onPersonalCollectionClick?.invoke(card.id)
                                 }
                             },
                             activeProfileId = activeProfile?.id,
