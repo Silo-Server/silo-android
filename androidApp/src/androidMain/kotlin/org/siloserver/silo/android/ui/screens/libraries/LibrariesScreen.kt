@@ -65,12 +65,16 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -111,7 +115,14 @@ import org.siloserver.silo.android.ui.components.TopBarRowTopInset
 import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
+import org.siloserver.silo.android.ui.navigation.LocalBottomChromeHeight
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
+import org.siloserver.silo.android.ui.navigation.LocalBottomNavPageMovedItself
+import org.siloserver.silo.android.ui.navigation.LocalBottomNavScrolledToTop
+import org.siloserver.silo.android.ui.navigation.ReportBottomNavPageTop
+import org.siloserver.silo.android.ui.navigation.LocalPageDockHost
+import org.siloserver.silo.android.ui.navigation.OfferPageDock
+import org.siloserver.silo.android.ui.navigation.rememberNonShrinking
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.MediaRowsSkeleton
 import org.siloserver.silo.android.ui.components.PosterGridSkeleton
@@ -1205,13 +1216,24 @@ fun LibrariesScreen(
         browseGridState.requestScrollToItem(0)
     }
     val pageScope = rememberCoroutineScope()
+    // The browse grid reports its own top (CatalogGrid).
+    ReportBottomNavPageTop(recommendedListState)
+    ReportBottomNavPageTop(collectionsGridState)
+    val bottomNavScrolledToTop = LocalBottomNavScrolledToTop.current
+    val bottomNavPageMovedItself = LocalBottomNavPageMovedItself.current
+    val latestSelectedTab by rememberUpdatedState(state.selectedTab)
     val scrollPageToTop: (LibrariesSubtab) -> Unit = { tab ->
+        bottomNavPageMovedItself()
         pageScope.launch {
             when (tab) {
                 LibrariesSubtab.Recommended -> recommendedListState.animateScrollToItem(0)
                 LibrariesSubtab.Browse -> browseGridState.animateScrollToItem(0)
                 LibrariesSubtab.Collections -> collectionsGridState.animateScrollToItem(0)
             }
+            // Arriving at the top expands a minimized tab bar, as a user
+            // scroll would. An interrupted scroll never gets here, and a
+            // page left mid-scroll no longer speaks for the tab.
+            if (latestSelectedTab == tab) bottomNavScrolledToTop()
         }
     }
     val density = LocalDensity.current
@@ -1249,9 +1271,46 @@ fun LibrariesScreen(
         // dock above the nav pill (iOS #1137); wider windows keep the chip
         // row and the selector sheet, as iPad does.
         val showsDock = maxWidth < LibraryDockMaxWindowWidth && selectedLibrary != null
+        // The dock lives in the tab bar's accessory slot (iOS 26.1), resting
+        // above the expanded bar and moving inline beside the minimized
+        // control, so the bar's measured height (and with it the inset below)
+        // already includes it. While Remote Control or the audiobook holds the
+        // slot, the dock floats in the page instead, riding the chrome's live
+        // edge, and the page adds its footprint to the inset.
+        val dockHost = LocalPageDockHost.current
+        val dockFloats = showsDock && (dockHost == null || dockHost.nowPlayingHoldsSlot)
+        if (showsDock && dockHost != null) {
+            OfferPageDock(dockHost) { inline ->
+                LibraryDockContent(
+                    style = if (inline) LibraryDockStyle.Inline else LibraryDockStyle.Accessory,
+                    library = selectedLibrary,
+                    libraries = state.libraries,
+                    tabs = state.dockTabs,
+                    selectedTab = state.selectedTab,
+                    onSelect = viewModel::selectTab,
+                    onReselect = scrollPageToTop,
+                    onPickLibrary = viewModel::selectLibrary,
+                    modifier = if (inline) Modifier.fillMaxSize() else Modifier,
+                )
+            }
+        }
         val navChromeInset = LocalBottomChromeInset.current
+        // Read at placement only: it changes every frame while the bar moves.
+        val navChromeHeight = LocalBottomChromeHeight.current
+        // Never shrinks while the page is up, so a list resting at its end
+        // stays put when the dock moves from floating into the tab bar (an
+        // audiobook ending), as the shell's inset does for the bar itself. A
+        // new window size starts over, as the shell's does.
+        val configuration = LocalConfiguration.current
+        val pageBottomInset by rememberNonShrinking(
+            showsDock,
+            configuration.screenWidthDp,
+            configuration.screenHeightDp,
+        ) {
+            navChromeInset + if (dockFloats) LibraryDockFootprint else 0.dp
+        }
         CompositionLocalProvider(
-            LocalBottomChromeInset provides navChromeInset + if (showsDock) LibraryDockFootprint else 0.dp,
+            LocalBottomChromeInset provides pageBottomInset,
         ) {
         LibraryContentViewport(
             modifier = Modifier
@@ -1368,7 +1427,7 @@ fun LibrariesScreen(
             modifier = Modifier.onSizeChanged { chromeHeightPx = it.height },
         )
 
-        if (showsDock) {
+        if (dockFloats) {
             LibraryDock(
                 library = selectedLibrary,
                 libraries = state.libraries,
@@ -1379,7 +1438,7 @@ fun LibrariesScreen(
                 onPickLibrary = viewModel::selectLibrary,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = navChromeInset + LibraryDockBottomGap),
+                    .offset { IntOffset(0, -(navChromeHeight() + LibraryDockBottomGap).roundToPx()) },
             )
         }
     }

@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
@@ -21,7 +20,6 @@ import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
@@ -66,16 +64,14 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
  *
  * Placement follows [org.siloserver.silo.android.ui.screens.cast.SiloCastMiniBar],
  * which shares the nav bar's accessory slot: a card above the tabs, or with
- * [inline], the compact capsule beside the minimized Home control.
- * [barModifier] applies to the visible card so the nav bar can animate it
- * between the two placements.
+ * [inline], the compact capsule beside the minimized tab control. The tab bar
+ * draws the card and moves it between the two; this draws what goes inside.
  */
 @Composable
 fun AudiobookMiniPlayer(
     player: AudiobookPlayerViewModel,
     onOpen: () -> Unit,
     inline: Boolean = false,
-    barModifier: Modifier = Modifier,
 ) {
     // The state ticks four times a second with the playhead. Only the
     // progress line reads the position each tick (at draw time); everything
@@ -96,62 +92,49 @@ fun AudiobookMiniPlayer(
     val openLabel = stringResource(CommonR.string.audiobook_miniPlayer_openAction)
     val nowPlaying = stringResourceWithNames(CommonR.string.audiobook_miniPlayer_nowPlaying, title)
 
-    Surface(
-        modifier = if (inline) {
-            Modifier.fillMaxSize()
-        } else {
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-        }.then(barModifier),
-        tonalElevation = 8.dp,
-        shadowElevation = 8.dp,
-        shape = if (inline) CircleShape else RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    // The tab bar draws and moves the card; this fills it.
+    Box(
+        modifier = Modifier
+            .then(if (inline) Modifier.fillMaxSize() else Modifier.fillMaxWidth())
+            .clickable(onClickLabel = openLabel, role = Role.Button, onClick = onOpen)
+            .semantics { contentDescription = nowPlaying },
     ) {
-        Box(
-            modifier = Modifier
-                .then(if (inline) Modifier.fillMaxSize() else Modifier)
-                .clickable(onClickLabel = openLabel, role = Role.Button, onClick = onOpen)
-                .semantics { contentDescription = nowPlaying },
+        Row(
+            modifier = if (inline) {
+                Modifier.fillMaxSize().padding(start = 12.dp, end = 4.dp)
+            } else {
+                Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+            },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(if (inline) 10.dp else 12.dp),
         ) {
-            Row(
-                modifier = if (inline) {
-                    Modifier.fillMaxSize().padding(start = 12.dp, end = 4.dp)
-                } else {
-                    Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(if (inline) 10.dp else 12.dp),
-            ) {
-                MiniPlayerCover(
-                    coverUrl = coverUrl,
-                    thumbhash = coverThumbhash,
-                    size = if (inline) 36.dp else 46.dp,
-                )
-                MiniPlayerText(
-                    title = title,
-                    player = player,
-                    uiState = uiState,
-                    showSubtitle = !inline,
-                    // The bar's own label names the book; reading the
-                    // visible lines too would say the title twice.
-                    modifier = Modifier.weight(1f).clearAndSetSemantics {},
-                )
-                MiniPlayerPlayPause(player = player, uiState = uiState)
-            }
-            MiniPlayerProgressLine(
-                uiState = uiState,
-                color = tint,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    // Inset so the line stays inside the rounded ends.
-                    .padding(horizontal = if (inline) 24.dp else 16.dp)
-                    .padding(bottom = if (inline) 5.dp else 0.dp)
-                    .height(2.dp),
+            MiniPlayerCover(
+                coverUrl = coverUrl,
+                thumbhash = coverThumbhash,
+                size = if (inline) 36.dp else 46.dp,
             )
+            MiniPlayerText(
+                title = title,
+                player = player,
+                uiState = uiState,
+                showSubtitle = !inline,
+                // The bar's own label names the book; reading the
+                // visible lines too would say the title twice.
+                modifier = Modifier.weight(1f).clearAndSetSemantics {},
+            )
+            MiniPlayerPlayPause(player = player, uiState = uiState)
         }
+        MiniPlayerProgressLine(
+            uiState = uiState,
+            color = tint,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                // Inset so the line stays inside the rounded ends.
+                .padding(horizontal = if (inline) 24.dp else 16.dp)
+                .padding(bottom = if (inline) 5.dp else 0.dp)
+                .height(2.dp),
+        )
     }
 }
 

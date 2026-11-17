@@ -79,6 +79,8 @@ import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import org.siloserver.silo.android.ui.navigation.LocalBottomNavPageMovedItself
+import org.siloserver.silo.android.ui.navigation.ReportBottomNavPageTop
 import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
@@ -140,6 +142,8 @@ fun CalendarScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
+    ReportBottomNavPageTop(listState)
+    val bottomNavPageMovedItself = LocalBottomNavPageMovedItself.current
     val density = LocalDensity.current
     val locale = currentFormatLocale()
 
@@ -160,6 +164,7 @@ fun CalendarScreen(
         if (index >= 0 && state.hasAnyItems) {
             // Item 0 is the filter bar; the top content padding keeps the
             // shelf below the card.
+            bottomNavPageMovedItself()
             listState.animateScrollToItem(index + 1)
             scrollTarget = null
         }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -23,6 +24,9 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.AutoAwesomeMotion
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material3.Icon
@@ -82,12 +86,32 @@ internal val LibraryDockHeaderContentGap = 12.dp
 
 private val DockHeight = 48.dp
 private val DockHorizontalMargin = 20.dp
-private val DockInset = 5.dp
-private val LeadingButtonWidth = 52.dp
 private const val SelectionMillis = 220
-private const val LabelMaxSp = 15f
 private const val LabelMinSp = 10f
 private val SegmentLabelPadding = 8.dp
+
+/**
+ * Where the dock is drawn (iOS `PageDockStyle`). Floating in the page it draws
+ * its own capsule; in the tab bar's accessory slot the bar draws the one
+ * capsule and moves it, and the dock draws only its contents.
+ */
+internal enum class LibraryDockStyle(
+    val leadingButtonWidth: Dp,
+    val inset: Dp,
+    val labelMaxSp: Float,
+    val iconSize: Dp,
+    val segmentPadding: Dp,
+) {
+    /** Floating just above the tab bar, while a now-playing bar holds its slot. */
+    Floating(52.dp, 5.dp, 15f, 20.dp, SegmentLabelPadding),
+
+    /** In the slot above the expanded tab bar. */
+    Accessory(52.dp, 5.dp, 15f, 20.dp, SegmentLabelPadding),
+
+    /** In the slot beside the minimized tab control: smaller and tighter, the
+     *  segments sharing what is left of the row. */
+    Inline(40.dp, 6.dp, 13f, 18.dp, 6.dp),
+}
 
 /** Height the dock takes above the nav pill, for the pages' bottom room. */
 internal val LibraryDockFootprint: Dp = DockHeight + LibraryDockBottomGap
@@ -188,11 +212,10 @@ internal fun LibraryScopeSwitch(
 }
 
 /**
- * The phone Libraries dock, floating just above the nav pill (iOS #1137): a
- * library button that opens a menu of the profile's libraries, then a
- * switcher between the library's pages. Tapping the page on screen asks for
- * [onReselect] (scroll to top); a drag across the switcher selects the page
- * it ends over.
+ * The phone Libraries dock floating in the page just above the tab bar (iOS
+ * #1137), drawing its own capsule. It floats only while a now-playing bar
+ * holds the tab bar's accessory slot; otherwise the slot shows
+ * [LibraryDockContent] and the tab bar draws the capsule.
  */
 @Composable
 internal fun LibraryDock(
@@ -205,7 +228,7 @@ internal fun LibraryDock(
     onPickLibrary: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = DockHorizontalMargin)
@@ -213,14 +236,57 @@ internal fun LibraryDock(
             .shadow(elevation = 16.dp, shape = CircleShape, clip = false)
             .clip(CircleShape)
             .background(SiloNavPillSurface)
-            .border(1.dp, SiloNavPillBorder, CircleShape)
-            .padding(DockInset),
+            .border(1.dp, SiloNavPillBorder, CircleShape),
+    ) {
+        LibraryDockContent(
+            style = LibraryDockStyle.Floating,
+            library = library,
+            libraries = libraries,
+            tabs = tabs,
+            selectedTab = selectedTab,
+            onSelect = onSelect,
+            onReselect = onReselect,
+            onPickLibrary = onPickLibrary,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+/**
+ * The dock's contents without a capsule: a library button that opens a menu
+ * of the profile's libraries, then a switcher between the library's pages.
+ * Tapping the page on screen asks for [onReselect] (scroll to top); a drag
+ * across the switcher selects the page it ends over. Above the expanded tab
+ * bar it is [DockHeight] tall; inline it fills the row the bar gives it.
+ */
+@Composable
+internal fun LibraryDockContent(
+    style: LibraryDockStyle,
+    library: UserLibrary?,
+    libraries: List<UserLibrary>,
+    tabs: List<LibrariesSubtab>,
+    selectedTab: LibrariesSubtab,
+    onSelect: (LibrariesSubtab) -> Unit,
+    onReselect: (LibrariesSubtab) -> Unit,
+    onPickLibrary: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .then(
+                when (style) {
+                    LibraryDockStyle.Accessory -> Modifier.fillMaxWidth().height(DockHeight)
+                    else -> Modifier
+                },
+            )
+            .padding(style.inset),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         LibraryDockButton(
             library = library,
             libraries = libraries,
             onPickLibrary = onPickLibrary,
+            width = style.leadingButtonWidth,
         )
         Box(
             modifier = Modifier
@@ -230,6 +296,7 @@ internal fun LibraryDock(
                 .background(Color.White.copy(alpha = 0.18f)),
         )
         LibraryDockSegments(
+            style = style,
             tabs = tabs,
             selectedTab = selectedTab,
             onSelect = onSelect,
@@ -244,6 +311,7 @@ private fun LibraryDockButton(
     library: UserLibrary?,
     libraries: List<UserLibrary>,
     onPickLibrary: (Int) -> Unit,
+    width: Dp,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val canSwitch = libraries.size > 1 && library != null
@@ -251,7 +319,7 @@ private fun LibraryDockButton(
     Box {
         Box(
             modifier = Modifier
-                .width(LeadingButtonWidth)
+                .width(width)
                 .fillMaxHeight()
                 .clip(CircleShape)
                 .clickable(enabled = canSwitch, onClickLabel = switchHint) { menuOpen = true }
@@ -312,6 +380,7 @@ private fun LibraryDockButton(
 
 @Composable
 private fun LibraryDockSegments(
+    style: LibraryDockStyle,
     tabs: List<LibrariesSubtab>,
     selectedTab: LibrariesSubtab,
     onSelect: (LibrariesSubtab) -> Unit,
@@ -329,40 +398,31 @@ private fun LibraryDockSegments(
     val labels = tabs.map { stringResource(it.dockLabelRes) }
     val measurer = rememberTextMeasurer()
     val baseStyle = LocalTextStyle.current.merge(TextStyle(fontWeight = FontWeight.SemiBold))
+    val selectedIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
 
     BoxWithConstraints(
         modifier = modifier.semantics { contentDescription = sectionsLabel },
     ) {
         val density = LocalDensity.current
         val totalPx = constraints.maxWidth.toFloat()
-        val minPadPx = with(density) { (SegmentLabelPadding * 2).toPx() }
-        // One label size for every segment: the largest that fits them all
-        // (smaller only on a narrow phone or with a long translation).
-        val layout = remember(labels, totalPx, baseStyle, density) {
-            fun widths(size: Float) = labels.map {
-                measurer.measure(it, baseStyle.copy(fontSize = size.sp), maxLines = 1).size.width.toFloat()
-            }
-            var size = LabelMaxSp
-            var measured = widths(size)
-            while (size > LabelMinSp && measured.sum() + minPadPx * labels.size > totalPx) {
-                size -= 0.5f
-                measured = widths(size)
-            }
-            val labelsPx = measured.sum()
-            val widths = if (labelsPx <= totalPx) {
-                // Each segment is its label plus an equal share of the room
-                // left over, as on iPhone.
-                val share = (totalPx - labelsPx) / labels.size.coerceAtLeast(1)
-                measured.map { it + share }
-            } else {
-                // Even the smallest labels overflow (large text, a long
-                // translation): split the width in proportion so every
-                // segment stays on screen and tappable, and labels ellipsize.
-                measured.map { it / labelsPx * totalPx }
-            }
-            size to widths
+        val padPx = with(density) { (style.segmentPadding * 2).toPx() }
+        val iconPx = with(density) { style.iconSize.toPx() }
+        val layout = remember(labels, totalPx, baseStyle, density, style, selectedIndex) {
+            dockSegmentLayout(
+                labelWidths = { size ->
+                    labels.map {
+                        measurer.measure(it, baseStyle.copy(fontSize = size.sp), maxLines = 1).size.width.toFloat()
+                    }
+                },
+                selectedIndex = selectedIndex,
+                totalPx = totalPx,
+                iconPx = iconPx,
+                padPx = padPx,
+                maxSp = style.labelMaxSp,
+                minSp = LabelMinSp,
+            )
         }
-        val (labelSp, segmentPx) = layout
+        val segmentPx = layout.widths
         val starts = segmentPx.runningFold(0f) { acc, w -> acc + w }
         // Pointer x runs left to right, while a right-to-left Row lays the
         // first segment out on the right; measure from the start edge.
@@ -372,7 +432,6 @@ private fun LibraryDockSegments(
             return starts.indexOfLast { it <= fromStart }.coerceIn(0, (tabs.size - 1).coerceAtLeast(0))
         }
 
-        val selectedIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
         val shownIndex = dragIndex ?: selectedIndex
         val fillOffset by animateDpAsState(
             targetValue = with(density) { (starts.getOrElse(shownIndex) { 0f }).toDp() },
@@ -440,18 +499,88 @@ private fun LibraryDockSegments(
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text = labels[index],
-                        style = baseStyle.copy(color = tint, fontSize = labelSp.sp),
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    if (layout.showsLabel.getOrElse(index) { true }) {
+                        Text(
+                            text = labels[index],
+                            style = baseStyle.copy(color = tint, fontSize = layout.labelSp.sp),
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    } else {
+                        // Too narrow for every label: the page's icon, named
+                        // for TalkBack as its label would be.
+                        Icon(
+                            imageVector = tab.dockIcon,
+                            contentDescription = labels[index],
+                            tint = tint,
+                            modifier = Modifier.size(style.iconSize),
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+/** How the switcher shares its width: one label size, which segments show a label, and each segment's width. */
+internal data class DockSegmentLayout(
+    val labelSp: Float,
+    val showsLabel: List<Boolean>,
+    val widths: List<Float>,
+)
+
+/**
+ * Lays the page switcher out in [totalPx] (iOS `PageDockSegments`): every
+ * label, at the largest size from [maxSp] down to [minSp] that fits them all;
+ * failing that, the selected page's label with the others as icons; failing
+ * that, icons only. Each segment gets its content's width plus an equal share
+ * of what is left, so the segments fill the switcher; if even icons overflow,
+ * the width is split in proportion so every segment stays tappable.
+ */
+internal fun dockSegmentLayout(
+    labelWidths: (sizeSp: Float) -> List<Float>,
+    selectedIndex: Int,
+    totalPx: Float,
+    iconPx: Float,
+    padPx: Float,
+    maxSp: Float,
+    minSp: Float,
+): DockSegmentLayout {
+    fun fits(contents: List<Float>) = contents.sum() + padPx * contents.size <= totalPx
+    fun share(contents: List<Float>): List<Float> {
+        val used = contents.sum()
+        return if (used <= totalPx) {
+            val extra = (totalPx - used) / contents.size.coerceAtLeast(1)
+            contents.map { it + extra }
+        } else {
+            contents.map { it / used * totalPx }
+        }
+    }
+
+    var size = maxSp
+    var measured = labelWidths(size)
+    while (size > minSp && !fits(measured)) {
+        size -= 0.5f
+        measured = labelWidths(size)
+    }
+    if (fits(measured)) return DockSegmentLayout(size, measured.map { true }, share(measured))
+
+    val mixed = measured.mapIndexed { index, width -> if (index == selectedIndex) width else iconPx }
+    if (fits(mixed)) {
+        return DockSegmentLayout(size, measured.indices.map { it == selectedIndex }, share(mixed))
+    }
+    val icons = measured.map { iconPx }
+    return DockSegmentLayout(size, measured.map { false }, share(icons))
+}
+
+/** The page's glyph when its label cannot fit (iOS `dockIcon`). */
+private val LibrariesSubtab.dockIcon: ImageVector
+    get() = when (this) {
+        LibrariesSubtab.Recommended -> Icons.Filled.AutoAwesome
+        LibrariesSubtab.Browse -> Icons.Filled.Apps
+        LibrariesSubtab.Collections -> Icons.Filled.AutoAwesomeMotion
+    }
 
 /** The dock's name for a page; the Library page reads as Browse there (iOS parity). */
 private val LibrariesSubtab.dockLabelRes: Int
