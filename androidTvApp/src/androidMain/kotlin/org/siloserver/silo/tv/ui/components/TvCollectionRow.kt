@@ -182,19 +182,23 @@ internal fun TvCollectionRow(
                     key = { _, card -> card.rowKey },
                     contentType = { _, _ -> "collection" },
                 ) { index, card ->
-                    val ownerName = owners.ownerName(card)
-                    val subtitle = if (ownerName != null) {
-                        stringResourceWithNames(CommonR.string.collections_posterCard_byOwner, ownerName)
-                    } else if (!showCounts) {
-                        null
-                    } else {
+                    // The card's one caption line: the count, then "by Name" for
+                    // another profile's shared collection. Count first, so a long
+                    // name cannot push it out of the line.
+                    val countLine = if (showCounts) {
                         pluralStringResource(
                             CommonR.plurals.collections_itemCount,
                             card.itemCount,
                             card.itemCount,
                             LocaleFormat.groupedCount(card.itemCount),
                         )
+                    } else {
+                        null
                     }
+                    val ownerLine = owners.ownerName(card)?.let { name ->
+                        stringResourceWithNames(CommonR.string.collections_posterCard_byOwner, name)
+                    }
+                    val subtitle = listOfNotNull(countLine, ownerLine).joinToString(" · ").ifEmpty { null }
                     TvCollectionCard(
                         collection = card.toLibraryCollection(),
                         subtitle = subtitle,

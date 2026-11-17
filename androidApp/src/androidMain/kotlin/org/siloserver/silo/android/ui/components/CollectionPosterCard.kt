@@ -61,6 +61,11 @@ internal fun CollectionPosterCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     secondaryText: String? = null,
+    /**
+     * The count is exact, as on a row of collections, so 0 is an empty
+     * collection and the badge reads 0, not the grid's uncounted "Smart".
+     */
+    exactCount: Boolean = false,
 ) {
     // iOS `LibraryCollectionCard`: VStack(spacing: 6) of a 2:3.3 poster
     // (smallCornerRadius = 6) carrying a bottom-trailing count badge, a
@@ -94,7 +99,7 @@ internal fun CollectionPosterCard(
                 )
             }
             if (showItemCount) Text(
-                text = collection.itemCount?.takeIf { it > 0 }?.let { LocaleFormat.groupedCount(it, currentNumberLocale()) } ?: stringResource(CommonR.string.collections_type_smart),
+                text = collection.itemCount?.takeIf { it > 0 || exactCount }?.let { LocaleFormat.groupedCount(it, currentNumberLocale()) } ?: stringResource(CommonR.string.collections_type_smart),
                 fontSize = 12.sp,
                 color = Color.White,
                 modifier = Modifier
@@ -167,21 +172,15 @@ internal fun CollectionPosterRow(
                         contentType = { "collection-poster" },
                     ) { card ->
                         val collection = remember(card) { card.toLibraryCollection() }
-                        // The server counts every card's titles, so 0 is an
-                        // empty collection, never the grid's uncounted "Smart":
-                        // it reads "0 items" with no badge.
-                        val isEmpty = card.itemCount == 0
-                        val emptyCountLine = if (showCounts && isEmpty) {
-                            pluralStringResource(CommonR.plurals.collections_itemCount, 0, 0, LocaleFormat.groupedCount(0))
-                        } else {
-                            null
-                        }
                         CompositionLocalProvider(LocalViewConfiguration provides baseViewConfiguration) {
+                            // As on the web: the count rides the poster, and a
+                            // byline replaces only the line under the name.
                             CollectionPosterCard(
                                 collection = collection,
-                                showItemCount = showCounts && !isEmpty,
+                                showItemCount = showCounts,
                                 onClick = { onCardClick(card) },
-                                secondaryText = byline(card) ?: emptyCountLine,
+                                secondaryText = byline(card),
+                                exactCount = true,
                                 modifier = Modifier.width(cardWidth).animateItem(),
                             )
                         }
