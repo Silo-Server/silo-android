@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.network.ServerRegistry
@@ -89,8 +90,8 @@ internal fun isTvCollectionMarqueeId(contentId: String?): Boolean =
     contentId?.startsWith(TvCollectionMarqueeIdPrefix) == true
 
 /**
- * What the Skyline marquee previews for a focused collection card: its title
- * and poster, nothing else.
+ * What the Skyline marquee previews for a focused collection card: its title,
+ * and its backdrop as the hero (the poster when it has none), nothing else.
  */
 internal fun SectionCollectionCard.tvMarqueeItem(): SectionItem = SectionItem(
     contentId = TvCollectionMarqueeIdPrefix + rowKey,
@@ -98,7 +99,16 @@ internal fun SectionCollectionCard.tvMarqueeItem(): SectionItem = SectionItem(
     title = title,
     posterUrl = posterUrl?.takeIf { it.isNotBlank() },
     posterThumbhash = posterThumbhash?.takeIf { it.isNotBlank() },
+    backdropUrl = backdropUrl?.takeIf { it.isNotBlank() },
+    backdropThumbhash = backdropThumbhash?.takeIf { it.isNotBlank() },
 )
+
+/**
+ * What the marquee previews for each card of this row, in order: the cards'
+ * stand-ins on a row of collections ([tvMarqueeItem]), the items otherwise.
+ */
+internal fun ResolvedSection.tvMarqueeItems(): List<SectionItem> =
+    if (isCollectionRow) collections.map { it.tvMarqueeItem() } else items
 
 /**
  * A Skyline row of collection cards (`collection_posters`). Honors the part of
@@ -182,9 +192,10 @@ internal fun TvCollectionRow(
                     key = { _, card -> card.rowKey },
                     contentType = { _, _ -> "collection" },
                 ) { index, card ->
-                    // The card's one caption line: the count, then "by Name" for
-                    // another profile's shared collection. Count first, so a long
-                    // name cannot push it out of the line.
+                    // The card's one caption line: "by Name" for another
+                    // profile's shared collection, else the count. Both do not
+                    // fit one poster-wide line ("3 items · by Alex" already
+                    // truncates the name), and the owner says more.
                     val countLine = if (showCounts) {
                         pluralStringResource(
                             CommonR.plurals.collections_itemCount,
@@ -198,7 +209,7 @@ internal fun TvCollectionRow(
                     val ownerLine = owners.ownerName(card)?.let { name ->
                         stringResourceWithNames(CommonR.string.collections_posterCard_byOwner, name)
                     }
-                    val subtitle = listOfNotNull(countLine, ownerLine).joinToString(" · ").ifEmpty { null }
+                    val subtitle = ownerLine ?: countLine
                     TvCollectionCard(
                         collection = card.toLibraryCollection(),
                         subtitle = subtitle,

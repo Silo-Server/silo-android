@@ -255,12 +255,7 @@ fun TvSkylineSectionFeed(
     SideEffect { marquee.refreshSources(rows) }
     val initialMarqueeSeed = remember(rows) {
         rows.firstOrNull()?.let { section ->
-            val firstItem = if (section.isCollectionRow) {
-                section.collections.firstOrNull()?.tvMarqueeItem()
-            } else {
-                section.items.firstOrNull()
-            }
-            firstItem?.let { item ->
+            section.tvMarqueeItems().firstOrNull()?.let { item ->
                 TvSkylineMarqueeSeed(
                     item = item,
                     rowTitle = section.title,
@@ -550,8 +545,10 @@ fun TvSkylineSectionFeed(
     LaunchedEffect(rows, settledFocus, fetchDetail, prefetchLogos, heroPreload) {
         val focus = settledFocus ?: return@LaunchedEffect
         val row = rows.getOrNull(focus.rowIndex) ?: return@LaunchedEffect
+        // A row of collections warms its cards' backdrops through their
+        // stand-ins; their detail fetch is a no-op (see fetchDetail).
         val window = settledPrefetchItems(
-            items = row.items,
+            items = row.tvMarqueeItems(),
             rawFocusedContentId = focus.contentId,
             settledContentId = focus.contentId,
             radius = HeroFocusPrefetchRadius,

@@ -112,6 +112,13 @@ data class SectionCollectionCard(
     @SerialName("poster_url") val posterUrl: String? = null,
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("poster_is_collage") val posterIsCollage: Boolean = false,
+    /**
+     * Server collections with a backdrop: presigned at the size a collection
+     * page's hero uses. Absent on servers before silo-server#4415, on a
+     * collection without one, and always on a personal collection.
+     */
+    @SerialName("backdrop_url") val backdropUrl: String? = null,
+    @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
     /** The titles the viewer sees in the collection. */
     @SerialName("item_count") val itemCount: Int = 0,
     /** Server collections: a library the viewer can open that holds it. */

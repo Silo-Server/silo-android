@@ -23,7 +23,8 @@ class CollectionRowTest {
                 {"sections":[{"id":"franchises","section_type":"collection_posters","title":"Franchises",
                   "featured":false,"item_limit":20,"total_count":5,"items":[],"collections":[
                     {"id":"01J9","source":"library","title":"Marvel","poster_url":"https://s3.example.test/marvel.jpg",
-                     "poster_is_collage":false,"item_count":12,"library_id":"1"},
+                     "poster_is_collage":false,"item_count":12,"library_id":"1",
+                     "backdrop_url":"https://s3.example.test/marvel-1280.jpg","backdrop_thumbhash":"bd-hash"},
                     {"id":"c-ghibli","source":"user","title":"Ghibli nights","poster_url":"https://s3.example.test/collage.jpg",
                      "poster_is_collage":true,"item_count":5,"creator_profile_id":"p-owner"},
                     {"id":"no-library","source":"library","title":"Orphan","poster_url":"","poster_is_collage":false,"item_count":1},
@@ -43,6 +44,9 @@ class CollectionRowTest {
         assertEquals(listOf("library:01J9", "user:c-ghibli"), row.collections.map { it.rowKey })
         val (library, personal) = row.collections
         assertEquals(1, library.libraryIdInt)
+        assertEquals("https://s3.example.test/marvel-1280.jpg", library.backdropUrl)
+        assertEquals("bd-hash", library.backdropThumbhash)
+        assertEquals(null, personal.backdropUrl)
         assertFalse(library.posterIsCollage)
         assertTrue(personal.isUserCollection)
         assertTrue(personal.posterIsCollage)

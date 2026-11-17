@@ -411,10 +411,8 @@ class TvFocusMarqueeState internal constructor() {
     internal fun refreshSources(rows: List<ResolvedSection>) {
         fun TvMarqueeContent.refreshed(): TvMarqueeContent {
             val row = rows.firstOrNull { "${it.id}#$contentId" == id } ?: return this
-            // A collection card previews its stand-in item (tvMarqueeItem).
-            val item = row.items.firstOrNull { it.contentId == contentId }
-                ?: row.collections.firstOrNull { TvCollectionMarqueeIdPrefix + it.rowKey == contentId }?.tvMarqueeItem()
-                ?: return this
+            // A collection card previews its stand-in item (tvMarqueeItems).
+            val item = row.tvMarqueeItems().firstOrNull { it.contentId == contentId } ?: return this
             if (item == source) return this
             return TvMarqueeContent.from(item, row.title, row.id, spoilerPrefs)
         }
