@@ -24,6 +24,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,7 +48,10 @@ fun ChaptersSheet(
     currentChapterIndex: Int,
     onJumpTo: (VersionChapter) -> Unit,
     onDismiss: () -> Unit,
+    /** Tints the current chapter, as Apple's sheet uses the cover accent. */
+    accent: Color = Color.Unspecified,
 ) {
+    val currentTint = if (accent.isSpecified) accent else MaterialTheme.colorScheme.primary
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val listState = rememberLazyListState()
 
@@ -96,7 +101,7 @@ fun ChaptersSheet(
                             Icon(
                                 imageVector = Icons.Filled.GraphicEq,
                                 contentDescription = stringResource(CommonR.string.player_chapters_nowPlaying),
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = currentTint,
                                 modifier = Modifier.width(24.dp).height(16.dp),
                             )
                         } else {
@@ -113,7 +118,7 @@ fun ChaptersSheet(
                             text = audiobookChapterLabel(idx, chapter.title).text(),
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (isCurrent) MaterialTheme.colorScheme.primary
+                            color = if (isCurrent) currentTint
                             else MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,

@@ -112,6 +112,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import org.siloserver.silo.android.cast.engagedStatus
 import org.siloserver.silo.android.ui.components.SiloMenuHeader
+import org.siloserver.silo.common.audiobook.AudiobookText
 
 internal data class SeriesDetailRedirect(
     val seriesContentId: String,
@@ -572,6 +573,10 @@ fun ItemDetailScreen(
                             },
                             onFavoriteClick = { viewModel.toggleFavorite() },
                             onWatchlistClick = { viewModel.toggleWatchlist() },
+                            onToggleFinished = { viewModel.toggleWatched() },
+                            onPersonClick = onPersonClick,
+                            onItemClick = onSimilarItemClick,
+                            translation = translationSlot,
                             onDownloadClick = audiobookVersion?.let { version ->
                                 {
                                     runDownloadTap(
@@ -1209,7 +1214,10 @@ fun ItemDetailScreen(
         }
 
         DetailTopChrome(
-            title = state.detail?.title.orEmpty(),
+            // An audiobook's title without the series locator, as its hero shows it.
+            title = state.detail
+                ?.let { if (isAudiobookItemType(it.type)) AudiobookText.title(it) else it.title }
+                .orEmpty(),
             scroll = detailScroll,
             onBackClick = onBackClick,
             trailing = {

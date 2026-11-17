@@ -253,7 +253,6 @@ private fun PersonDetailContent(
                         onItemClick(item.contentId)
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    artworkAspectRatio = personWorkCardAspectRatio(item),
                     overlay = org.siloserver.silo.overlays.OverlayDataExtractor.fromBrowseItem(item),
                     actions = actions,
                 )
@@ -509,10 +508,3 @@ private fun PagingFooter(
         }
     }
 }
-
-private fun personWorkCardAspectRatio(item: BrowseItem): Float =
-    if (item.type == "audiobook") {
-        1f
-    } else {
-        2f / 3.3f
-    }

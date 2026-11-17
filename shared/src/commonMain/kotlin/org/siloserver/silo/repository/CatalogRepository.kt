@@ -98,6 +98,18 @@ class CatalogRepository(
             else -> null
         }
 
+    /**
+     * The library's exact size under [mediaType] (a mixed library's Movies or
+     * Series side), for the phone Libraries header. Null when the server
+     * could not answer or can only estimate it. Read straight from the API,
+     * like [libraryHasItems], so the one-item page never reaches the cache.
+     */
+    suspend fun libraryCount(libraryId: Int, mediaType: String? = null): Int? =
+        when (val result = catalogApi.getCatalog(libraryId = libraryId, mediaType = mediaType, limit = 1)) {
+            is ApiResult.Success -> result.data.total.takeIf { result.data.totalExact != false }
+            else -> null
+        }
+
     /** Browse the catalog with optional filters, sorting, and pagination. */
     suspend fun browse(
         source: String? = null,

@@ -24,6 +24,7 @@ import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.dp
@@ -50,11 +51,13 @@ fun AudiobookTransport(
     onTogglePlay: () -> Unit,
     onSkipForward: () -> Unit,
     onNextChapter: () -> Unit,
+    /** The cover accent that fills the play button (Apple `palette.accent`). */
+    accent: Color,
     modifier: Modifier = Modifier,
 ) {
     // iOS AudioTransportControls: HStack spacing 28, onSurface-tinted glyphs;
     // outer chapter buttons ~24dp (.title3), skip buttons ~32dp (.title), and
-    // an 82dp accent play circle with a 32dp heavy glyph.
+    // an 82dp cover-accent play circle with a heavy near-black glyph.
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val layout = resolveAudiobookTransportLayout(
             availableWidthDp = maxWidth.value,
@@ -111,11 +114,11 @@ fun AudiobookTransport(
                         .shadow(
                             elevation = 16.dp,
                             shape = CircleShape,
-                            ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                            spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                            ambientColor = accent.copy(alpha = 0.35f),
+                            spotColor = accent.copy(alpha = 0.35f),
                         )
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary)
+                        .background(accent)
                         .clickable(enabled = enabled, onClick = onTogglePlay),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -126,8 +129,8 @@ fun AudiobookTransport(
                         } else {
                             stringResource(CommonR.string.player_audio_play)
                         },
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(32.dp),
+                        tint = Color.Black.copy(alpha = 0.85f),
+                        modifier = Modifier.size(36.dp),
                     )
                 }
                 IconButton(
