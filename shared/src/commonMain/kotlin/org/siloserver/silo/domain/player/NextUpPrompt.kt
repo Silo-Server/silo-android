@@ -2,8 +2,8 @@ package org.siloserver.silo.domain.player
 
 /**
  * When the Up Next card opens before an episode ends: `playback.next_up_prompt_seconds`
- * before the end of the file, matching iOS/tvOS (`PlayerNextUpCompletionPolicy`) and the
- * web. Credits markers drive Skip Credits only; they do not move this point.
+ * before the end of the file, as on iOS/tvOS (`PlayerNextUpCompletionPolicy`). Credits
+ * markers drive Skip Credits; they do not move this point.
  */
 object NextUpPrompt {
     /**

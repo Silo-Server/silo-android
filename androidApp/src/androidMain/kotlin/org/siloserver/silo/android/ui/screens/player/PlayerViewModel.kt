@@ -702,7 +702,7 @@ class PlayerViewModel(
         val awaitingFirstFrame: Boolean
             get() = startedContentId != contentId
 
-        /** The marker occurrences the skip controls and Up Next read. */
+        /** The marker occurrences the skip controls read. */
         val markerTimeline: MarkerTimeline by lazy {
             MarkerTimeline.resolve(markerSegments, intro = intro, credits = credits, recap = recap, preview = preview)
         }
@@ -1071,7 +1071,7 @@ class PlayerViewModel(
     // same VM persists across episodes and the guard accumulates the streak.
     // The guard reads the threshold lazily so a settings change applies live.
     private val autoPlayGuard = AutoPlayGuard(threshold = { passOutThreshold.value })
-    // Once-per-episode guard for the credits/ended trigger; reset on each load.
+    // Once-per-episode guard for the before-end/ended trigger; reset on each load.
     private var autoAdvanceHandled = false
     // End point fired before the next episode resolved — remember it (and the
     // strongest videoEnded flag seen) so resolveNextEpisode can commit the card.
@@ -4822,8 +4822,8 @@ class PlayerViewModel(
 
     /**
      * Adopt the playing file's marker ranges (a `markers_updated` event or a
-     * reconcile read). The intro auto-skip observer and the credits-based F2
-     * trigger read these from UiState, so updating them takes effect
+     * reconcile read). The intro auto-skip observer and the skip controls
+     * read these from UiState, so updating them takes effect
      * immediately. Passing `null` clears a marker the server says no longer
      * applies.
      */
@@ -6156,7 +6156,7 @@ class PlayerViewModel(
                 it.copy(nextEpisode = info)
             }
             if (_uiState.value.contentId != forContentId) return@launch
-            // If the credits/end point already fired while we were still
+            // If the before-end/end point already fired while we were still
             // resolving, the card couldn't arm — commit it now with the
             // strongest video-ended flag observed.
             if (!autoAdvanceHandled) {
@@ -6196,7 +6196,7 @@ class PlayerViewModel(
         }
         if (autoAdvanceHandled) {
             if (videoEnded) {
-                // Keep Watching dismisses the credits prompt, but finishing the
+                // Keep Watching dismisses the before-end prompt, but finishing the
                 // episode must still offer Play Now without restarting its timer.
                 _uiState.update { it.copy(showUpNext = true, upNextVideoEnded = true) }
             }
@@ -6302,7 +6302,7 @@ class PlayerViewModel(
 
     /**
      * Up Next dismiss — cancel the countdown and stay on the current playback.
-     * Suppress further credits prompts; playback end still reopens the card.
+     * Suppress further before-end prompts; playback end still reopens the card.
      */
     fun dismissUpNext() {
         if (nextUpTransitionGate.isActive) return

@@ -1862,8 +1862,8 @@ class TvPlayerViewModel(
     // ---- Next-episode auto-advance (F2) ----
     private var autoAdvanceCount: Int = launchArgs.autoAdvanceCount
     private var autoAdvanceHandled = false // once-per-item guard
-    // The credits or the end of this item was reached. Unlike autoAdvanceHandled,
-    // opening Up Next by hand or Keep Watching never sets it.
+    // Playback reached the closing credits or the end of this item. Unlike
+    // autoAdvanceHandled, opening Up Next by hand or Keep Watching never sets it.
     private var reachedCreditsOrEnd = false
     // The identity generation this player was launched under.
     private val launchIdentityGeneration: Long? = identityTransitions?.generation?.value
@@ -3895,6 +3895,13 @@ class TvPlayerViewModel(
         ) {
             onApproachingEnd()
         }
+        // Playing into the closing credits counts as finishing the episode for
+        // the series page, though Up Next waits for the prompt point.
+        if (!seekWasActive && roomId == null) {
+            _uiState.value.markerTimeline.finalCreditsStart()?.let { creditsStart ->
+                if (previousPosition < creditsStart && positionSec >= creditsStart) reachedCreditsOrEnd = true
+            }
+        }
         // Forward to the lifecycle so its 10s reporter has a fresh sample.
         sessionLifecycle.reportPosition(
             positionSec = positionSec,
@@ -5240,7 +5247,7 @@ class TvPlayerViewModel(
 
     /**
      * Adopt the playing file's marker ranges (a `markers_updated` event or a
-     * reconcile read). Skip-intro and the credits-based F2 trigger read these
+     * reconcile read). Skip-intro and the skip controls read these
      * from UiState, so the update takes effect immediately; `null` clears a
      * marker the server dropped.
      */
@@ -5364,7 +5371,7 @@ class TvPlayerViewModel(
     }
 
     /**
-     * Called by the screen when the credits point is reached (primary) or the
+     * Called when playback crosses the Up Next point before the end or the
      * stream ends (fallback). Surfaces the Up-Next overlay — a 16:9 mini-player
      * beside the next-episode panel — as the end-of-playback surface (mirrors
      * tvOS PlayerNextUpScreen), replacing the old "Still watching?" dialog.
@@ -5387,8 +5394,10 @@ class TvPlayerViewModel(
         // transport gate.
         if (roomId != null) return
         // Recorded before the once-per-item guard below, which Keep Watching on
-        // a hand-opened Up Next also sets.
-        reachedCreditsOrEnd = true
+        // a hand-opened Up Next also sets. The before-end prompt can open while
+        // the story is still playing, so only the end counts here; the closing
+        // credits are recorded where playback crosses them.
+        if (videoEnded) reachedCreditsOrEnd = true
         if (shufflePlayback != null) {
             // A multi-part pick plays its later parts before the shuffle moves on.
             shuffleNextPartFileId?.let { fileId ->
