@@ -87,16 +87,4 @@ class MarkerTimelineTest {
         assertEquals(TimeRange(30.0, 90.0), twoIntros.occurrenceAt(MarkerKind.Intro, 300.0))
         assertEquals(TimeRange(600.0, 660.0), twoIntros.occurrenceAt(MarkerKind.Intro, 600.0))
     }
-
-    @Test fun upNextWaitsForTheLastCreditsRangeSoAMidCreditsScenePlays() {
-        assertEquals(3189.0, timeline.upNextCreditsStart())
-        val touching = MarkerTimeline.resolve(
-            segments = listOf(MarkerSegment("credits", 1200.0, 1250.0), MarkerSegment("credits", 1250.5, 1300.0)),
-            intro = null, credits = null, recap = null, preview = null,
-        )
-        assertEquals(1200.0, touching.upNextCreditsStart())
-        val single = MarkerTimeline.resolve(null, intro = null, credits = TimeRange(1200.0, 1260.0), recap = null, preview = null)
-        assertEquals(1200.0, single.upNextCreditsStart())
-        assertNull(MarkerTimeline.EMPTY.upNextCreditsStart())
-    }
 }

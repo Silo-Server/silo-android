@@ -94,6 +94,7 @@ import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.domain.player.MarkerKind
 import org.siloserver.silo.domain.player.MarkerTimeline
+import org.siloserver.silo.domain.player.NextUpPrompt
 import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -1036,8 +1037,7 @@ class PlayerViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, IntroSkipMode.Default)
     val autoPlayNextEnabled: StateFlow<Boolean> = playerSettingsStore.autoPlayNextFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
-    // Seconds before end to surface the Up Next card when no credits marker
-    // exists (0 = only at end). Credits marker wins when present.
+    // Seconds before the end of the file to surface Up Next (0 = only at end).
     private val nextUpPromptSeconds: StateFlow<Int> = playerSettingsStore.nextUpPromptSecondsFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 30)
 
@@ -3304,22 +3304,16 @@ class PlayerViewModel(
             )
         }
 
-        // F2: surface the Up Next card when playback CROSSES the credits point
-        // (only on the before->after transition, so resuming inside the credits
-        // doesn't instantly trigger it). Without a credits marker, fall back to
-        // crossing (duration - nextUpPromptSeconds); 0 = only at end (iOS parity).
-        if (!seekWasActive) {
-            val creditsStart = _uiState.value.markerTimeline.upNextCreditsStart()
-            if (creditsStart != null) {
-                if (previousPosition < creditsStart && positionSec >= creditsStart) onApproachingEnd()
-            } else {
-                val promptSeconds = nextUpPromptSeconds.value
-                val duration = _uiState.value.duration
-                if (promptSeconds > 0 && duration > 0) {
-                    val promptStart = duration - promptSeconds
-                    if (previousPosition < promptStart && positionSec >= promptStart) onApproachingEnd()
-                }
-            }
+        // Surface Up Next when playback crosses the chosen point before the end
+        // of the file. Only the crossing counts, so resuming or seeking past it
+        // doesn't open the card; the stream ending still does.
+        if (
+            !seekWasActive &&
+            NextUpPrompt.crossesPromptPoint(
+                previousPosition, positionSec, _uiState.value.duration, nextUpPromptSeconds.value,
+            )
+        ) {
+            onApproachingEnd()
         }
 
         // Forward to the lifecycle so its 10s reporter has a fresh sample.
@@ -6174,12 +6168,12 @@ class PlayerViewModel(
     }
 
     /**
-     * Credits reached (primary) or stream ended (fallback) — surface the Up Next
-     * card. When auto-play is on and the consecutive-auto-advance streak is
+     * The Next Up point before the end was crossed, or the stream ended —
+     * surface the Up Next card. When auto-play is on and the consecutive-auto-advance streak is
      * below the pass-out threshold, the card runs a countdown that plays the
      * next episode at zero. Once the streak hits the threshold (or auto-play is
      * off), the card shows WITHOUT a countdown so the user must explicitly
-     * choose (the pass-out gate). The credits prompt is once per episode;
+     * choose (the pass-out gate). The before-end prompt is once per episode;
      * a dismissed card reopens when playback ends.
      *
      * [videoEnded] is true on STATE_ENDED — the card reads "Playing Next"; a
@@ -6262,7 +6256,7 @@ class PlayerViewModel(
             // Two anchors (iOS parity — silo-apple's PlayerViewModel derives the
             // countdown from movieTime and only auto-plays once playback truly
             // ends):
-            //  - Card committed BEFORE the end (credits / prompt crossing): the
+            //  - Card committed BEFORE the end (before-end crossing): the
             //    countdown mirrors the remaining playback time, so it freezes on
             //    pause, grows on a backward seek, and the advance fires only when
             //    the player reports STATE_ENDED — never truncating the tail of an

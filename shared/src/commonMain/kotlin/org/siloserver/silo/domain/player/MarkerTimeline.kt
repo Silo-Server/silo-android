@@ -53,21 +53,6 @@ class MarkerTimeline private constructor(private val regions: List<Pair<MarkerKi
         return latest ?: occurrences.firstOrNull()
     }
 
-    /**
-     * Where Up Next appears: the start of the last credits range, extended
-     * back over credits ranges that run into it, so a scene between two
-     * credits ranges still plays.
-     */
-    fun upNextCreditsStart(): Double? {
-        val credits = ranges(MarkerKind.Credits)
-        var start = credits.lastOrNull()?.start ?: return null
-        for (range in credits.asReversed()) {
-            // Allow timestamp rounding between touching ranges.
-            if (range.end >= start - 1) start = minOf(start, range.start)
-        }
-        return start
-    }
-
     companion object {
         val EMPTY = MarkerTimeline(emptyList())
 
