@@ -17,6 +17,7 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.abs
 import okhttp3.internal.http2.ConnectionShutdownException
 import okhttp3.internal.http2.StreamResetException
 
@@ -39,44 +40,58 @@ internal class SiloMediaLoadErrorHandlingPolicy(
 ) : DefaultLoadErrorHandlingPolicy() {
     private val attemptBytesTracker = MediaLoadAttemptBytesTracker()
 
-    /**
-     * When this load task first failed, so the retry window can be measured
-     * rather than inferred.
-     *
-     * `mediaLoadElapsedBeforeRetryMs` reconstructs elapsed time from the retry
-     * count alone — it counts the delays *between* attempts and nothing spent
-     * inside them. With a 30s socket timeout per attempt the real elapsed time
-     * runs several times the 90s window, so a dead server kept a spinner up far
-     * longer than intended before surfacing an error.
-     */
-    private val firstErrorAtByLoadTask = ConcurrentHashMap<Long, Long>()
+    private data class RetryWindow(
+        val startedAtMs: Long,
+        val lastFailureAtMs: Long,
+        val lastSubstantialEndOffset: Long?,
+        val failures: Int,
+    )
+
+    private val windowsByLoadTask = ConcurrentHashMap<Long, RetryWindow>()
 
     override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
         val invalidResponse = loadErrorInfo.exception as? HttpDataSource.InvalidResponseCodeException
-        val cumulativeBytesLoaded = loadErrorInfo.loadEventInfo.bytesLoaded
-        val bytesLoaded = attemptBytesTracker.bytesLoadedForAttempt(
-            loadTaskId = loadErrorInfo.loadEventInfo.loadTaskId,
-            cumulativeBytesLoaded = cumulativeBytesLoaded,
-        )
-        val resumableDirectPlay = isResumableProgressiveDirectPlay(
-            loadErrorInfo.loadEventInfo.dataSpec.uri,
-        )
-        val firstErrorAt = firstErrorAtByLoadTask.computeIfAbsent(
-            loadErrorInfo.loadEventInfo.loadTaskId,
-        ) { nowMs() }
+        val event = loadErrorInfo.loadEventInfo
+        val bytesLoaded = attemptBytesTracker.bytesLoadedForAttempt(event.loadTaskId, event.bytesLoaded)
+        val resumableDirectPlay = isResumableProgressiveDirectPlay(event.dataSpec.uri)
+        val resumeOffset = event.dataSpec.position + bytesLoaded
+        val now = nowMs()
+        val window = checkNotNull(windowsByLoadTask.compute(event.loadTaskId) { _, previous ->
+            // A progressive file can stay in the same load task for an entire movie.
+            // Repeated short reads or re-reading the same part of the file is one outage.
+            val substantialRead = resumableDirectPlay && bytesLoaded >= RECOVERY_BYTES
+            val recovered = previous != null && substantialRead &&
+                now - previous.lastFailureAtMs >= RECOVERY_INTERVAL_MS &&
+                (previous.lastSubstantialEndOffset == null ||
+                    abs(resumeOffset - previous.lastSubstantialEndOffset) >= RECOVERY_BYTES)
+            val end = if (substantialRead) resumeOffset else previous?.lastSubstantialEndOffset
+            if (previous == null || recovered) {
+                RetryWindow(now, now, end, failures = 1)
+            } else {
+                previous.copy(lastFailureAtMs = now, lastSubstantialEndOffset = end, failures = previous.failures + 1)
+            }
+        })
+        // Media3 can reset its count after extraction, or carry it across a recovery.
+        val attempt = if (resumableDirectPlay) {
+            minOf(loadErrorInfo.errorCount, window.failures)
+        } else {
+            loadErrorInfo.errorCount
+        }
         val delayMs = siloMediaLoadRetryDelayMs(
             responseCode = invalidResponse?.responseCode,
             retryAfterHeaders = invalidResponse?.retryAfterHeaders().orEmpty(),
             cause = loadErrorInfo.exception,
-            errorCount = loadErrorInfo.errorCount,
+            errorCount = attempt,
             isResumableProgressiveDirectPlay = resumableDirectPlay,
             bytesLoaded = bytesLoaded,
-            observedElapsedMs = (nowMs() - firstErrorAt).coerceAtLeast(0L),
+            observedElapsedMs = (now - window.startedAtMs).coerceAtLeast(0L),
         )
         logProgressiveResumeDecision(
             loadErrorInfo = loadErrorInfo,
             resumableDirectPlay = resumableDirectPlay,
             bytesLoaded = bytesLoaded,
+            resumeOffset = resumeOffset,
+            attempt = attempt,
             delayMs = delayMs,
         )
         return delayMs
@@ -84,7 +99,7 @@ internal class SiloMediaLoadErrorHandlingPolicy(
 
     override fun onLoadTaskConcluded(loadTaskId: Long) {
         attemptBytesTracker.onLoadTaskConcluded(loadTaskId)
-        firstErrorAtByLoadTask.remove(loadTaskId)
+        windowsByLoadTask.remove(loadTaskId)
         super.onLoadTaskConcluded(loadTaskId)
     }
 
@@ -95,12 +110,12 @@ internal class SiloMediaLoadErrorHandlingPolicy(
         loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo,
         resumableDirectPlay: Boolean,
         bytesLoaded: Long,
+        resumeOffset: Long,
+        attempt: Int,
         delayMs: Long,
     ) {
         if (!resumableDirectPlay) return
         val transportFailure = loadErrorInfo.exception.findResumableTransportFailure() ?: return
-        val resumeOffset = loadErrorInfo.loadEventInfo.dataSpec.position.coerceAtLeast(0L) +
-            bytesLoaded.coerceAtLeast(0L)
         val errorDescription = buildString {
             append(transportFailure.javaClass.simpleName)
             transportFailure.message?.takeIf(String::isNotBlank)?.let {
@@ -114,7 +129,7 @@ internal class SiloMediaLoadErrorHandlingPolicy(
                 TAG,
                 "progressive direct-play retry error=$errorDescription " +
                     "bytes_loaded=$bytesLoaded resume_offset=$resumeOffset " +
-                    "attempt=${loadErrorInfo.errorCount} retry_delay_ms=$delayMs",
+                    "attempt=$attempt retry_delay_ms=$delayMs",
             )
         } else {
             SiloLog.w(
@@ -122,13 +137,15 @@ internal class SiloMediaLoadErrorHandlingPolicy(
                 TAG,
                 "progressive direct-play retry exhausted error=$errorDescription " +
                     "bytes_loaded=$bytesLoaded resume_offset=$resumeOffset " +
-                    "attempt=${loadErrorInfo.errorCount}",
+                    "attempt=$attempt",
             )
         }
     }
 
     private companion object {
         const val TAG = "MediaLoadRetry"
+        const val RECOVERY_BYTES = 512L * 1024L
+        const val RECOVERY_INTERVAL_MS = 20_000L
     }
 }
 
