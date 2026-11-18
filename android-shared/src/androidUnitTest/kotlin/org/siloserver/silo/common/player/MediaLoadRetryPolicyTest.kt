@@ -1,20 +1,90 @@
 package org.siloserver.silo.common.player
 
+import android.net.Uri
+import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.ParserException
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.HttpDataSource
+import androidx.media3.exoplayer.source.LoadEventInfo
+import androidx.media3.exoplayer.source.MediaLoadData
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import java.io.EOFException
 import java.io.IOException
 import java.net.ConnectException
 import java.net.ProtocolException
 import java.net.SocketException
 import java.net.SocketTimeoutException
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import okhttp3.internal.http2.ErrorCode
 import okhttp3.internal.http2.StreamResetException
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@OptIn(UnstableApi::class)
+@RunWith(RobolectricTestRunner::class)
 class MediaLoadRetryPolicyTest {
+    private val mediaUri = Uri.parse("https://silo.test/stream/original")
+    private var nowMs = 1_000_000L
+    private val policy = SiloMediaLoadErrorHandlingPolicy(
+        isResumableProgressiveDirectPlay = { it == mediaUri },
+        nowMs = { nowMs },
+    )
+
+    /**
+     * One connection reset of load task 1, which has loaded [cumulativeBytes]
+     * in all. The policy keeps its own count, so Media3's [errorCount] only
+     * matters where a test shows it is ignored.
+     */
+    private fun failDirectPlay(cumulativeBytes: Long, errorCount: Int = 1): Long =
+        policy.getRetryDelayMsFor(
+            loadErrorInfo(
+                uri = mediaUri,
+                loadTaskId = 1L,
+                error = HttpDataSource.HttpDataSourceException(
+                    SocketException("Connection reset"),
+                    DataSpec(mediaUri),
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+                    HttpDataSource.HttpDataSourceException.TYPE_READ,
+                ),
+                errorCount = errorCount,
+                bytesLoaded = cumulativeBytes,
+            ),
+        )
+
+    @Test
+    fun `a direct-play cut long after a resumed one gets a fresh window and count`() {
+        // #981. Media3 resets its own count only after a retry that extracted
+        // samples, so a load that rode out a long outage reports a high count
+        // when the next one starts.
+        repeat(13) {
+            assertTrue(failDirectPlay(cumulativeBytes = 4L shl 20) > 0L)
+            nowMs += 5_000L
+        }
+        nowMs += 11 * 60_000L
+
+        assertEquals(1_000L, failDirectPlay(cumulativeBytes = 900L shl 20, errorCount = 14))
+        nowMs += 1_000L
+        assertEquals(2_000L, failDirectPlay(cumulativeBytes = 900L shl 20))
+        nowMs += 2_000L
+        assertEquals(4_000L, failDirectPlay(cumulativeBytes = 900L shl 20))
+    }
+
+    @Test
+    fun `a few kilobytes between direct-play failures stay in one outage`() {
+        assertEquals(1_000L, failDirectPlay(cumulativeBytes = 4L shl 20))
+        nowMs += 45_000L
+        assertEquals(2_000L, failDirectPlay(cumulativeBytes = (4L shl 20) + 8_192L))
+        nowMs += 45_000L
+
+        assertEquals(C.TIME_UNSET, failDirectPlay(cumulativeBytes = (4L shl 20) + 16_384L))
+    }
 
     @Test
     fun `attempt progress is derived from cumulative load task bytes`() {
@@ -149,33 +219,51 @@ class MediaLoadRetryPolicyTest {
     }
 
     @Test
-    fun `stream reset retries only for resumable direct play after byte progress`() {
-        val reset = StreamResetException(ErrorCode.INTERNAL_ERROR)
-
-        assertEquals(
-            1_000L,
-            siloMediaLoadRetryDelayMs(
-                cause = reset,
-                errorCount = 1,
-                isResumableProgressiveDirectPlay = true,
-                bytesLoaded = 32_768L,
-            ),
+    fun `mid-body transport failures retry only for resumable direct play after byte progress`() {
+        val failures = listOf(
+            StreamResetException(ErrorCode.INTERNAL_ERROR),
+            // How Android 10 reports a peer that reset a TLS connection under a read (#981).
+            SSLException("Read error: ssl=0x7a: I/O error during system call, Connection reset by peer"),
         )
+        for (failure in failures) {
+            assertEquals(
+                1_000L,
+                siloMediaLoadRetryDelayMs(
+                    cause = failure,
+                    errorCount = 1,
+                    isResumableProgressiveDirectPlay = true,
+                    bytesLoaded = 32_768L,
+                ),
+                "$failure",
+            )
+            assertEquals(
+                C.TIME_UNSET,
+                siloMediaLoadRetryDelayMs(
+                    cause = failure,
+                    errorCount = 1,
+                    isResumableProgressiveDirectPlay = true,
+                    bytesLoaded = 0L,
+                ),
+                "$failure",
+            )
+            assertEquals(
+                C.TIME_UNSET,
+                siloMediaLoadRetryDelayMs(
+                    cause = failure,
+                    errorCount = 1,
+                    isResumableProgressiveDirectPlay = false,
+                    bytesLoaded = 32_768L,
+                ),
+                "$failure",
+            )
+        }
+        // A certificate the device rejects stays fatal.
         assertEquals(
             C.TIME_UNSET,
             siloMediaLoadRetryDelayMs(
-                cause = reset,
+                cause = SSLHandshakeException("Trust anchor for certification path not found."),
                 errorCount = 1,
                 isResumableProgressiveDirectPlay = true,
-                bytesLoaded = 0L,
-            ),
-        )
-        assertEquals(
-            C.TIME_UNSET,
-            siloMediaLoadRetryDelayMs(
-                cause = reset,
-                errorCount = 1,
-                isResumableProgressiveDirectPlay = false,
                 bytesLoaded = 32_768L,
             ),
         )
@@ -263,3 +351,26 @@ class MediaLoadRetryPolicyTest {
         assertTrue(siloMediaLoadRetryDelayMs(responseCode = 503, errorCount = 2) > 0L)
     }
 }
+
+/** One failed load of [uri] for the policies under test; [bytesLoaded] is the task's total. */
+@OptIn(UnstableApi::class)
+internal fun loadErrorInfo(
+    uri: Uri,
+    loadTaskId: Long,
+    error: IOException,
+    errorCount: Int,
+    bytesLoaded: Long = 0L,
+) = LoadErrorHandlingPolicy.LoadErrorInfo(
+    LoadEventInfo(
+        loadTaskId,
+        DataSpec(uri),
+        uri,
+        emptyMap(),
+        /* elapsedRealtimeMs= */ 0L,
+        /* loadDurationMs= */ 0L,
+        bytesLoaded,
+    ),
+    MediaLoadData(C.DATA_TYPE_MEDIA),
+    error,
+    errorCount,
+)

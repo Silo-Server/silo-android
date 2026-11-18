@@ -7,9 +7,6 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
-import androidx.media3.exoplayer.source.LoadEventInfo
-import androidx.media3.exoplayer.source.MediaLoadData
-import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import java.io.EOFException
 import java.io.IOException
 import java.net.ProtocolException
@@ -169,20 +166,7 @@ class SidecarSubtitleLoadErrorHandlingPolicyTest {
     }
 
     private fun errorInfo(loadTaskId: Long, error: IOException, errorCount: Int, bytesLoaded: Long = 0L) =
-        LoadErrorHandlingPolicy.LoadErrorInfo(
-            LoadEventInfo(
-                loadTaskId,
-                DataSpec(Uri.parse(URL)),
-                Uri.parse(URL),
-                emptyMap(),
-                /* elapsedRealtimeMs= */ 0L,
-                /* loadDurationMs= */ 0L,
-                bytesLoaded,
-            ),
-            MediaLoadData(C.DATA_TYPE_MEDIA),
-            error,
-            errorCount,
-        )
+        loadErrorInfo(Uri.parse(URL), loadTaskId, error, errorCount, bytesLoaded)
 
     private companion object {
         const val URL = "https://silo.example/api/v2/stream/session/subtitles/3.vtt"

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -25,6 +26,7 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -46,7 +48,7 @@ import org.siloserver.silo.network.TokenManagerImpl
 @OptIn(UnstableApi::class)
 @RunWith(RobolectricTestRunner::class)
 class ProgressiveDirectPlayResumeIntegrationTest {
-    private val fixture = seekableWavFixture()
+    private val fixture = wavFixture(sampleRate = 8_000, channels = 1, bitsPerSample = 8, pcmBytes = 2_000)
     private val players = mutableListOf<ExoPlayer>()
     private val clients = mutableListOf<OkHttpClient>()
     private val servers = mutableListOf<MockWebServer>()
@@ -79,6 +81,36 @@ class ProgressiveDirectPlayResumeIntegrationTest {
             dispatcher.requests[1].getHeader("Range"),
         )
         assertEquals("\"fixture-v1\"", dispatcher.requests[1].getHeader("If-Range"))
+    }
+
+    @Test
+    fun `a later cut after a successful resume gets its own retry window`() {
+        // #981: the stream is cut, resumes, plays on for 11 minutes and is cut
+        // again (a proxy reload). The second cut is a new outage, not the
+        // tail of the first one, so it must resume rather than surface a
+        // player error and rebuild the player.
+        // Each cut lands after more than MEDIA_LOAD_OUTAGE_PROGRESS_BYTES.
+        val largeFixture = wavFixture(sampleRate = 48_000, channels = 2, bitsPerSample = 16, pcmBytes = 6 shl 20)
+        val nowMs = AtomicLong(1_000_000L)
+        val dispatcher = RangeFixtureDispatcher(
+            largeFixture,
+            ResumeResponse.DISCONNECT_AGAIN,
+            beforeDispatch = { requestNumber ->
+                if (requestNumber == 2) nowMs.addAndGet(11 * 60_000L)
+            },
+        )
+        val harness = prepareHarness(dispatcher, nowMs = nowMs::get)
+
+        awaitResumeRequest(harness.player, dispatcher)
+        // The second cut lands while playing; it is checked below, not thrown.
+        TestPlayerRunHelper.play(harness.player)
+            .ignoringNonFatalErrors()
+            .untilState(Player.STATE_ENDED)
+
+        assertNull(harness.player.playerError)
+        assertEquals(3, dispatcher.requests.size)
+        assertEquals(2, harness.loadErrors.size)
+        assertTrue(harness.loadErrors.none(ObservedLoadError::wasCanceled))
     }
 
     @Test
@@ -180,7 +212,10 @@ class ProgressiveDirectPlayResumeIntegrationTest {
         return harness.loadErrors[1]
     }
 
-    private fun prepareHarness(dispatcher: Dispatcher): ProgressiveHarness {
+    private fun prepareHarness(
+        dispatcher: Dispatcher,
+        nowMs: () -> Long = SystemClock::elapsedRealtime,
+    ): ProgressiveHarness {
         val server = MockWebServer().also {
             it.dispatcher = dispatcher
             it.start()
@@ -206,6 +241,7 @@ class ProgressiveDirectPlayResumeIntegrationTest {
             .setLoadErrorHandlingPolicy(
                 SiloMediaLoadErrorHandlingPolicy(
                     isResumableProgressiveDirectPlay = { it == mediaUri },
+                    nowMs = nowMs,
                 ),
             )
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -257,6 +293,7 @@ class ProgressiveDirectPlayResumeIntegrationTest {
 
     private enum class ResumeResponse {
         COMPLETE,
+        DISCONNECT_AGAIN,
         NO_PROGRESS,
         ENTITY_CHANGED,
         RANGE_NOT_SATISFIABLE,
@@ -265,11 +302,13 @@ class ProgressiveDirectPlayResumeIntegrationTest {
     private class RangeFixtureDispatcher(
         private val fixture: ByteArray,
         private val resumeResponse: ResumeResponse,
+        private val beforeDispatch: (requestNumber: Int) -> Unit = {},
     ) : Dispatcher() {
         val requests = CopyOnWriteArrayList<RecordedRequest>()
 
         override fun dispatch(request: RecordedRequest): MockResponse {
             requests += request
+            beforeDispatch(requests.size)
             return if (requests.size == 1) {
                 partialResponse(start = 0, etag = "\"fixture-v1\"")
                     .setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY)
@@ -283,6 +322,12 @@ class ProgressiveDirectPlayResumeIntegrationTest {
                 when (resumeResponse) {
                     ResumeResponse.COMPLETE ->
                         partialResponse(start, etag = "\"fixture-v1\"")
+                    ResumeResponse.DISCONNECT_AGAIN ->
+                        partialResponse(start, etag = "\"fixture-v1\"").apply {
+                            if (requests.size == 2) {
+                                setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY)
+                            }
+                        }
                     ResumeResponse.NO_PROGRESS ->
                         partialResponse(start, etag = "\"fixture-v1\"", body = byteArrayOf())
                             .setHeader("Content-Length", fixture.size - start)
@@ -323,9 +368,9 @@ class ProgressiveDirectPlayResumeIntegrationTest {
         generateSequence(this as Throwable?) { it.cause }.filterIsInstance<T>().firstOrNull()
 
     private companion object {
-        fun seekableWavFixture(): ByteArray {
-            val sampleRate = 8_000
-            val pcm = ByteArray(sampleRate / 4) { index ->
+        fun wavFixture(sampleRate: Int, channels: Int, bitsPerSample: Int, pcmBytes: Int): ByteArray {
+            val blockAlign = channels * bitsPerSample / 8
+            val pcm = ByteArray(pcmBytes) { index ->
                 (128 + (index % 64) - 32).toByte()
             }
             return ByteArrayOutputStream(44 + pcm.size).apply {
@@ -335,11 +380,11 @@ class ProgressiveDirectPlayResumeIntegrationTest {
                 writeAscii("fmt ")
                 writeLittleEndian(16, 4)
                 writeLittleEndian(1, 2)
-                writeLittleEndian(1, 2)
+                writeLittleEndian(channels, 2)
                 writeLittleEndian(sampleRate, 4)
-                writeLittleEndian(sampleRate, 4)
-                writeLittleEndian(1, 2)
-                writeLittleEndian(8, 2)
+                writeLittleEndian(sampleRate * blockAlign, 4)
+                writeLittleEndian(blockAlign, 2)
+                writeLittleEndian(bitsPerSample, 2)
                 writeAscii("data")
                 writeLittleEndian(pcm.size, 4)
                 write(pcm)
