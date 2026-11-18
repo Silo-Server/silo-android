@@ -451,8 +451,10 @@ class SettingsViewModel(
 
     /** A Show Next Up choice: seconds before the end, or null for Off. */
     fun setNextUpChoice(choice: Int?) {
-        val enabled = _uiState.value.nextUpEnabled
-        viewModelScope.launch { NextUpChoice.apply(playerSettingsStore, choice, enabled) }
+        val state = _uiState.value
+        viewModelScope.launch {
+            NextUpChoice.apply(playerSettingsStore, choice, state.nextUpEnabled, state.nextUpOffSupported)
+        }
     }
 
     fun setPassOutThreshold(value: Int) {

@@ -23,13 +23,18 @@ object NextUpChoice {
 
     fun selected(enabled: Boolean, seconds: Int): Int? = if (enabled) seconds.coerceAtLeast(0) else null
 
-    /** Off leaves the seconds alone; a time turns Next Up back on if it was off. */
-    suspend fun apply(store: PlayerSettingsStore, choice: Int?, currentlyEnabled: Boolean) {
+    /**
+     * Off leaves the seconds alone. A time writes both keys where the server
+     * stores Off, so the picker's choice is this device's whole choice: one
+     * inherited half would follow a later profile change to Off. Where the
+     * server lacks the key, only a saved Off is turned back on.
+     */
+    suspend fun apply(store: PlayerSettingsStore, choice: Int?, currentlyEnabled: Boolean, offSupported: Boolean) {
         if (choice == null) {
             store.setNextUpEnabled(false)
             return
         }
-        if (!currentlyEnabled) store.setNextUpEnabled(true)
+        if (offSupported || !currentlyEnabled) store.setNextUpEnabled(true)
         store.setNextUpPromptSeconds(choice)
     }
 }
