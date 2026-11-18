@@ -52,35 +52,45 @@ internal class SiloMediaLoadErrorHandlingPolicy(
 
     private val windowsByLoadTask = ConcurrentHashMap<Long, RetryWindow>()
 
+    private data class ReadProgress(val bytes: Long, val sustained: Boolean)
+
     // ProgressiveMediaPeriod passes the same DataSpec to open() and to its error
     // policy. Weak keys let successful requests go away without a failure callback.
-    private val sustainedReads = Collections.synchronizedMap(WeakHashMap<DataSpec, Boolean>())
+    private val readsByOpen = Collections.synchronizedMap(WeakHashMap<DataSpec, ReadProgress>())
 
     fun trackDirectPlayReads(factory: DataSource.Factory) = DataSource.Factory {
         val upstream = factory.createDataSource()
         object : DataSource by upstream {
-            private var pending: DataSpec? = null
+            private var request: DataSpec? = null
+            private var bytes = 0L
             private var firstReadMs = C.TIME_UNSET
+            private var sustained = false
 
             override fun open(dataSpec: DataSpec): Long {
-                pending = dataSpec.takeIf { isResumableProgressiveDirectPlay(it.uri) }
+                request = dataSpec.takeIf { isResumableProgressiveDirectPlay(it.uri) }
+                bytes = 0
                 firstReadMs = C.TIME_UNSET
+                sustained = false
                 return upstream.open(dataSpec)
             }
 
             override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
                 val count = upstream.read(buffer, offset, length)
-                val spec = pending
-                if (count > 0 && spec != null) {
-                    val now = nowMs()
-                    if (firstReadMs == C.TIME_UNSET) {
-                        firstReadMs = now
-                    } else if (now - firstReadMs >= RECOVERY_INTERVAL_MS) {
-                        sustainedReads[spec] = true
-                        pending = null
+                if (count > 0 && request != null) {
+                    bytes += count
+                    if (!sustained) {
+                        val now = nowMs()
+                        if (firstReadMs == C.TIME_UNSET) firstReadMs = now
+                        sustained = now - firstReadMs >= RECOVERY_INTERVAL_MS
                     }
                 }
                 return count
+            }
+
+            override fun close() {
+                request?.let { readsByOpen[it] = ReadProgress(bytes, sustained) }
+                request = null
+                upstream.close()
             }
         }
     }
@@ -90,14 +100,16 @@ internal class SiloMediaLoadErrorHandlingPolicy(
         val event = loadErrorInfo.loadEventInfo
         val bytesLoaded = attemptBytesTracker.bytesLoadedForAttempt(event.loadTaskId, event.bytesLoaded)
         val resumableDirectPlay = isResumableProgressiveDirectPlay(event.dataSpec.uri)
-        val resumeOffset = event.dataSpec.position + bytesLoaded
-        val readOverRecoveryInterval = sustainedReads.remove(event.dataSpec) == true
+        // The task total can include reads before an extractor seek. Only bytes from
+        // the DataSpec that failed belong to this request's end offset.
+        val read = readsByOpen.remove(event.dataSpec)
+        val resumeOffset = event.dataSpec.position + (read?.bytes ?: 0L)
         val now = nowMs()
         val window = checkNotNull(windowsByLoadTask.compute(event.loadTaskId) { _, previous ->
             // A progressive file can stay in the same load task for an entire movie.
             // Repeated short reads or re-reading the same part of the file is one outage.
-            val substantialRead = resumableDirectPlay && bytesLoaded >= RECOVERY_BYTES
-            val recovered = previous != null && substantialRead && readOverRecoveryInterval &&
+            val substantialRead = read != null && read.bytes >= RECOVERY_BYTES
+            val recovered = previous != null && substantialRead && read.sustained &&
                 (previous.lastSubstantialEndOffset == null ||
                     abs(resumeOffset - previous.lastSubstantialEndOffset) >= RECOVERY_BYTES)
             val end = if (substantialRead) resumeOffset else previous?.lastSubstantialEndOffset

@@ -30,6 +30,16 @@ class DirectPlayRetryWindowTest {
         }
     }).createDataSource()
 
+    private var lastTotalBytes = 0L
+    private val buffer = ByteArray(64 * 1024)
+
+    private fun readBytes(bytes: Long) {
+        var remaining = bytes
+        while (remaining > 0) {
+            remaining -= source.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+        }
+    }
+
     private fun fail(
         atMs: Long,
         position: Long,
@@ -38,16 +48,21 @@ class DirectPlayRetryWindowTest {
         uri: Uri = original,
         firstReadMs: Long? = null,
         lastReadMs: Long = atMs,
+        bytesBeforeSeek: Long = 0,
     ): Long {
         val dataSpec = DataSpec.Builder().setUri(uri).setPosition(position).build()
-        source.open(dataSpec)
-        if (firstReadMs != null) {
-            val buffer = ByteArray(1)
-            now = firstReadMs
-            source.read(buffer, 0, 1)
-            now = lastReadMs
-            source.read(buffer, 0, 1)
+        now = firstReadMs ?: lastReadMs
+        if (bytesBeforeSeek > 0) {
+            source.open(DataSpec(uri))
+            readBytes(bytesBeforeSeek)
+            source.close()
         }
+        source.open(dataSpec)
+        val bytesThisOpen = totalBytes - lastTotalBytes - bytesBeforeSeek
+        readBytes(bytesThisOpen / 2)
+        now = lastReadMs
+        readBytes(bytesThisOpen - bytesThisOpen / 2)
+        lastTotalBytes = totalBytes
         source.close()
         now = atMs
         val event = LoadEventInfo.Builder(1L, dataSpec, now).setBytesLoaded(totalBytes).build()
@@ -69,6 +84,12 @@ class DirectPlayRetryWindowTest {
         assertEquals(1_000L, fail(0, 0, 2_000_000, 1))
         assertEquals(2_000L, fail(60_000, 0, 2_000_000, 2))
         assertEquals(C.TIME_UNSET, fail(100_000, 0, 4_000_000, 3, firstReadMs = 61_000))
+    }
+
+    @Test
+    fun extractorSeekDoesNotAddEarlierReadsToTheCutOffset() {
+        assertEquals(1_000L, fail(0, 10_000_000, 2_000_000, 1, bytesBeforeSeek = 1_000_000))
+        assertEquals(1_000L, fail(660_000, 11_000_000, 3_000_000, 2, firstReadMs = 10_000))
     }
 
     @Test
@@ -99,6 +120,7 @@ class DirectPlayRetryWindowTest {
         assertEquals(1_000L, fail(0, 0, 2_000_000, 1))
         assertEquals(C.TIME_UNSET, fail(100_000, 2_000_000, 2_004_096, 2, firstReadMs = 5_000))
         policy.onLoadTaskConcluded(1L)
+        lastTotalBytes = 0L
         val segment = Uri.parse("https://silo.test/segment.ts")
         assertEquals(1_000L, fail(200_000, 0, 2_000_000, 1, segment))
         assertEquals(C.TIME_UNSET, fail(300_000, 2_000_000, 8_000_000, 2, segment, firstReadMs = 220_000))
