@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import org.siloserver.silo.common.settings.NextUpChoice
+import org.siloserver.silo.common.settings.nextUpChoiceLabel
 import org.siloserver.silo.common.i18n.text
 import androidx.annotation.StringRes
 import androidx.compose.material3.Text
@@ -11,7 +13,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -40,8 +41,6 @@ import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 // position in these lists back to the value.
 private val resumeRewindOptions = listOf(0, 3, 5, 7, 10, 15, 20, 30)
 private val passOutThresholdOptions = listOf(0, 2, 3, 4, 5)
-// Up-Next prompt timing (seconds before end; 0 = at end). Mirrors TV/tvOS.
-private val nextUpPromptOptions = listOf(0, 10, 30, 60, 120)
 
 @Composable
 private fun resumeRewindLabel(seconds: Int) =
@@ -49,13 +48,6 @@ private fun resumeRewindLabel(seconds: Int) =
 
 @Composable
 private fun passOutThresholdLabel(count: Int) = if (count <= 0) stringResource(CommonR.string.settings_off) else LocaleFormat.integer(count, currentNumberLocale())
-
-@Composable
-private fun nextUpPromptLabel(seconds: Int): String = when {
-    seconds <= 0 -> stringResource(CommonR.string.settings_nextUp_atEnd)
-    seconds < 60 -> pluralStringResource(CommonR.plurals.settings_nextUp_secondsBeforeEnd, seconds, seconds)
-    else -> pluralStringResource(CommonR.plurals.settings_nextUp_minutesBeforeEnd, seconds / 60, seconds / 60)
-}
 
 /**
  * The menu for a profile-layered picker: "Use profile setting" first, then
@@ -298,6 +290,8 @@ fun PlaybackCellularSection(
 fun PlaybackEpisodesSection(
     autoPlayNext: Boolean,
     nextUpPromptSeconds: Int,
+    nextUpEnabled: Boolean,
+    nextUpOffSupported: Boolean,
     introSkipMode: IntroSkipMode,
     autoSkipCredits: Boolean,
     resumeRewindSeconds: Int,
@@ -305,7 +299,8 @@ fun PlaybackEpisodesSection(
     /** Keys this device holds its own value for. */
     deviceOverrides: Set<String>,
     onAutoPlayNextChanged: (Boolean) -> Unit,
-    onNextUpPromptSecondsChanged: (Int) -> Unit,
+    /** Seconds before the end, or null for Off. */
+    onNextUpChoice: (Int?) -> Unit,
     onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
@@ -329,13 +324,15 @@ fun PlaybackEpisodesSection(
             onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.AutoPlayNext) },
         )
 
+        val nextUpOptions = NextUpChoice.options(nextUpOffSupported, nextUpEnabled)
+        val nextUpSelected = NextUpChoice.selected(nextUpEnabled, nextUpPromptSeconds)
         ProfileLayeredDropdownRow(
         label = stringResource(CommonR.string.settings_nextUp_title),
-        value = nextUpPromptLabel(nextUpPromptSeconds),
-        options = nextUpPromptOptions.map { nextUpPromptLabel(it) },
-        selectedIndex = nextUpPromptOptions.indexOf(nextUpPromptSeconds.coerceAtLeast(0)),
+        value = nextUpChoiceLabel(nextUpSelected),
+        options = nextUpOptions.map { nextUpChoiceLabel(it) },
+        selectedIndex = nextUpOptions.indexOf(nextUpSelected),
         overridden = overridden(PlaybackSettingsKeys.NextUpPromptSeconds),
-        onIndexSelected = { onNextUpPromptSecondsChanged(nextUpPromptOptions[it]) },
+        onIndexSelected = { onNextUpChoice(nextUpOptions[it]) },
             onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.NextUpPromptSeconds) },
         )
 

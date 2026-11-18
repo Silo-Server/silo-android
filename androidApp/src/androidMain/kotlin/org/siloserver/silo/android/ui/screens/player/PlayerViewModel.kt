@@ -1040,6 +1040,17 @@ class PlayerViewModel(
     // Seconds before the end of the file to surface Up Next (0 = only at end).
     private val nextUpPromptSeconds: StateFlow<Int> = playerSettingsStore.nextUpPromptSecondsFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 30)
+    // Show Next Up: Off means no card, and the player closes at the end.
+    private val nextUpEnabled: StateFlow<Boolean> = playerSettingsStore.nextUpEnabledFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    private val _closeAtEndRequests = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    /** PlayerScreen leaves the player the way Back does: playback ended with Next Up off. */
+    val closeAtEndRequests: kotlinx.coroutines.flow.SharedFlow<Unit> = _closeAtEndRequests.asSharedFlow()
 
     /**
      * Video relative-seek intervals every phone surface uses (buttons,
@@ -6193,6 +6204,11 @@ class PlayerViewModel(
                 shuffleRefreshedForPostRoll = true
                 refreshShuffleNext()
             }
+        } else if (!nextUpEnabled.value) {
+            // Next Up off: nothing before the end, and the player closes at the
+            // end. A shuffle still moves on; the viewer asked for one.
+            if (videoEnded) _closeAtEndRequests.tryEmit(Unit)
+            return
         }
         if (autoAdvanceHandled) {
             if (videoEnded) {

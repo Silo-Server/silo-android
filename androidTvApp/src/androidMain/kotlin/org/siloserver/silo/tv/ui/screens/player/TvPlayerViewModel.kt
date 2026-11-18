@@ -1850,6 +1850,10 @@ class TvPlayerViewModel(
      */
     val roomAudioTrackChanges: SharedFlow<Unit> = _roomAudioTrackChanges
 
+    private val _closeAtEndRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Screen leaves the player the way Back does: playback ended with Next Up off. */
+    val closeAtEndRequests: SharedFlow<Unit> = _closeAtEndRequests
+
     private val _remoteStopRequests = MutableSharedFlow<String?>(extraBufferCapacity = 1)
     /** Screen collects this and runs its teardown/exit, showing the notice when there is one. */
     val remoteStopRequests: SharedFlow<String?> = _remoteStopRequests
@@ -2012,6 +2016,9 @@ class TvPlayerViewModel(
     // Seconds before the end of the file to surface Up Next (0 = only at end).
     private val nextUpPromptSeconds: StateFlow<Int> = playerSettingsStore.nextUpPromptSecondsFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 30)
+    // Show Next Up: Off means no overlay, and the player closes at the end.
+    private val nextUpEnabled: StateFlow<Boolean> = playerSettingsStore.nextUpEnabledFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val hdrEnabled: StateFlow<Boolean> = playerSettingsStore.hdrEnabledFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val dolbyVisionEnabled: StateFlow<Boolean> = playerSettingsStore.dolbyVisionEnabledFlow
@@ -5408,6 +5415,18 @@ class TvPlayerViewModel(
                 shuffleRefreshedForPostRoll = true
                 refreshShuffleNext()
             }
+        } else if (!nextUpEnabled.value) {
+            // Next Up off: nothing before the end, and the player closes at the
+            // end. A shuffle still moves on; the viewer asked for one. An
+            // overlay the viewer opened stays up, without a countdown.
+            if (videoEnded) {
+                if (_uiState.value.showNextUp) {
+                    _uiState.update { it.copy(nextUpVideoEnded = true) }
+                } else {
+                    _closeAtEndRequests.tryEmit(Unit)
+                }
+            }
+            return
         }
         // Playback end reopens a dismissed card without restarting its timer.
         // A card still showing keeps its existing countdown.

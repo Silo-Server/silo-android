@@ -1575,6 +1575,43 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `Next Up stays on against a server whose manifest lacks the Off setting`() = runTest {
+        var keys: Set<String> = setOf(PlaybackSettingsKeys.PreferredQuality)
+        var contract = capabilitiesAt(30)
+        val api = FakeSettingsApi(
+            effective = mapOf(stored(PlaybackSettingsKeys.NextUpEnabled, JsonPrimitive(false))),
+        )
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            settingsRepository = SettingsRepository(api),
+            getDeviceId = { null },
+            contractRevision = SettingsContractRevision({ contract }, { serverUrl }, { ApiResult.Success(keys) }),
+            dataStoreFactory = { _, id ->
+                PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_nu_$id.preferences_pb") })
+            },
+        )
+        store.setNextUpEnabled(false)
+        assertFalse(store.nextUpEnabledFlow.first(), "the last choice seen, until the manifest is read")
+
+        // A server without the setting: Off hides and Next Up shows as before.
+        store.refreshFromServer()
+        assertFalse(PlaybackSettingsKeys.NextUpEnabled in api.requestedKeys)
+        assertFalse(store.nextUpEnabledSupportedFlow.first())
+        assertTrue(store.nextUpEnabledFlow.first())
+
+        // The server upgrades to a contract with the setting.
+        keys = keys + PlaybackSettingsKeys.NextUpEnabled
+        contract = capabilitiesAt(31)
+        store.refreshFromServer()
+        assertTrue(store.nextUpEnabledSupportedFlow.first())
+        assertFalse(store.nextUpEnabledFlow.first())
+    }
+
+    @Test
     fun `cellular quality is left out of the batch while the server revision is unknown`() = runTest {
         val contractRevision = SettingsContractRevision(
             { ApiResult.NetworkError(IllegalStateException("offline")) },

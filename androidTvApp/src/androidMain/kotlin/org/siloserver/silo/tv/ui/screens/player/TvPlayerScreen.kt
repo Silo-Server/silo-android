@@ -634,6 +634,10 @@ fun TvPlayerScreen(
             stopPlaybackAndExit()
         }
     }
+    // With Next Up off, the end of playback leaves the player like Back.
+    LaunchedEffect(Unit) {
+        viewModel.closeAtEndRequests.collect { stopPlaybackAndExit() }
+    }
     val latestOnReturnToWatchPartyLobby by rememberUpdatedState(onReturnToWatchPartyLobby)
     val latestOnWatchPartyEnded by rememberUpdatedState(onWatchPartyEnded)
     if (watchParty != null && roomId != null) {

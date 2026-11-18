@@ -673,6 +673,11 @@ fun PlayerScreen(
         }
     }
 
+    // With Next Up off, the end of playback leaves the player like Back.
+    LaunchedEffect(Unit) {
+        viewModel.closeAtEndRequests.collect { exitPlayer() }
+    }
+
     // Surface transient Watch Party server rejections as a brief Toast. These
     // flow on the repository's errors stream and never eject the user. Only
     // collected while bound to a room.
