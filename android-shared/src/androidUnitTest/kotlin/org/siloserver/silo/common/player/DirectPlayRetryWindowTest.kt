@@ -4,11 +4,13 @@ import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.PlaceholderDataSource
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
-import java.net.SocketException
+import java.net.SocketTimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import org.junit.runner.RunWith
@@ -21,19 +23,43 @@ class DirectPlayRetryWindowTest {
     private var now = 0L
     private val policy = SiloMediaLoadErrorHandlingPolicy({ it == original }, { now })
 
-    private fun fail(atMs: Long, position: Long, totalBytes: Long, count: Int, uri: Uri = original): Long {
-        now = atMs
+    private val source = policy.trackDirectPlayReads(DataSource.Factory {
+        object : DataSource by PlaceholderDataSource.INSTANCE {
+            override fun open(dataSpec: DataSpec): Long = C.LENGTH_UNSET.toLong()
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int = length
+        }
+    }).createDataSource()
+
+    private fun fail(
+        atMs: Long,
+        position: Long,
+        totalBytes: Long,
+        count: Int,
+        uri: Uri = original,
+        firstReadMs: Long? = null,
+        lastReadMs: Long = atMs,
+    ): Long {
         val dataSpec = DataSpec.Builder().setUri(uri).setPosition(position).build()
+        source.open(dataSpec)
+        if (firstReadMs != null) {
+            val buffer = ByteArray(1)
+            now = firstReadMs
+            source.read(buffer, 0, 1)
+            now = lastReadMs
+            source.read(buffer, 0, 1)
+        }
+        source.close()
+        now = atMs
         val event = LoadEventInfo.Builder(1L, dataSpec, now).setBytesLoaded(totalBytes).build()
         return policy.getRetryDelayMsFor(
-            LoadErrorHandlingPolicy.LoadErrorInfo(event, MediaLoadData(C.DATA_TYPE_MEDIA), SocketException(), count),
+            LoadErrorHandlingPolicy.LoadErrorInfo(event, MediaLoadData(C.DATA_TYPE_MEDIA), SocketTimeoutException(), count),
         )
     }
 
     @Test
     fun laterOutageGetsFreshWindowAfterSustainedProgress() {
         assertEquals(1_000L, fail(0, 0, 1_000_000, 1))
-        assertEquals(1_000L, fail(660_000, 1_000_000, 1_001_000_000, 2))
+        assertEquals(1_000L, fail(660_000, 1_000_000, 1_001_000_000, 2, firstReadMs = 1_000))
         assertEquals(2_000L, fail(690_000, 1_001_000_000, 1_001_000_000, 3))
         assertEquals(C.TIME_UNSET, fail(750_000, 1_001_000_000, 1_001_000_000, 4))
     }
@@ -42,7 +68,22 @@ class DirectPlayRetryWindowTest {
     fun rereadingSameBytesAfterFailedReopenDoesNotRenewWindow() {
         assertEquals(1_000L, fail(0, 0, 2_000_000, 1))
         assertEquals(2_000L, fail(60_000, 0, 2_000_000, 2))
-        assertEquals(C.TIME_UNSET, fail(100_000, 0, 4_000_000, 3))
+        assertEquals(C.TIME_UNSET, fail(100_000, 0, 4_000_000, 3, firstReadMs = 61_000))
+    }
+
+    @Test
+    fun burstsSeparatedByReadTimeoutsExhaustTheOriginalWindow() {
+        for (i in 0..2) {
+            val burst = i * 31_000L
+            fail(
+                atMs = burst + 30_000, position = i * 1_000_000L, totalBytes = (i + 1) * 1_000_000L,
+                count = 2, firstReadMs = burst, lastReadMs = burst + 10,
+            )
+        }
+        assertEquals(
+            C.TIME_UNSET,
+            fail(123_000, 3_000_000, 4_000_000, 2, firstReadMs = 93_000, lastReadMs = 93_010),
+        )
     }
 
     @Test
@@ -56,10 +97,10 @@ class DirectPlayRetryWindowTest {
     @Test
     fun fewBytesOrLargeNonProgressiveLoadDoNotRenewWindow() {
         assertEquals(1_000L, fail(0, 0, 2_000_000, 1))
-        assertEquals(C.TIME_UNSET, fail(100_000, 2_000_000, 2_004_096, 2))
+        assertEquals(C.TIME_UNSET, fail(100_000, 2_000_000, 2_004_096, 2, firstReadMs = 5_000))
         policy.onLoadTaskConcluded(1L)
         val segment = Uri.parse("https://silo.test/segment.ts")
         assertEquals(1_000L, fail(200_000, 0, 2_000_000, 1, segment))
-        assertEquals(C.TIME_UNSET, fail(300_000, 2_000_000, 8_000_000, 2, segment))
+        assertEquals(C.TIME_UNSET, fail(300_000, 2_000_000, 8_000_000, 2, segment, firstReadMs = 220_000))
     }
 }

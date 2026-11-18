@@ -65,8 +65,9 @@ class ProgressiveDirectPlayResumeIntegrationTest {
     fun `progressive source resumes both interruptions at their byte offsets`() {
         val movie = seekableWavFixture(sampleRate = 48_000, pcmBytes = 2 * 1024 * 1024)
         val dispatcher = RangeFixtureDispatcher(movie, ResumeResponse.SECOND_CUT)
+        var resumedReads = 0
         val harness = prepareHarness(dispatcher) {
-            if (dispatcher.requests.size < 2) 0L else 660_000L
+            if (dispatcher.requests.size >= 2 && resumedReads++ > 0) 660_000L else 0L
         }
         TestPlayerRunHelper.play(harness.player).ignoringNonFatalErrors().untilState(Player.STATE_ENDED)
 
@@ -203,13 +204,12 @@ class ProgressiveDirectPlayResumeIntegrationTest {
                 isResumableDirectPlayUri = { it == mediaUri },
             )
         }
-        val mediaSourceFactory = ProgressiveMediaSource.Factory(guardedFactory)
-            .setLoadErrorHandlingPolicy(
-                SiloMediaLoadErrorHandlingPolicy(
-                    isResumableProgressiveDirectPlay = { it == mediaUri },
-                    nowMs = nowMs,
-                ),
-            )
+        val policy = SiloMediaLoadErrorHandlingPolicy(
+            isResumableProgressiveDirectPlay = { it == mediaUri },
+            nowMs = nowMs,
+        )
+        val mediaSourceFactory = ProgressiveMediaSource.Factory(policy.trackDirectPlayReads(guardedFactory))
+            .setLoadErrorHandlingPolicy(policy)
         val context = ApplicationProvider.getApplicationContext<Context>()
         val mediaSource = mediaSourceFactory.createMediaSource(
             MediaItem.fromUri(mediaUri),

@@ -4,6 +4,8 @@ import android.net.Uri
 import androidx.media3.common.C
 import androidx.media3.common.ParserException
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
@@ -15,6 +17,8 @@ import java.net.ProtocolException
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.Collections
+import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
@@ -42,12 +46,44 @@ internal class SiloMediaLoadErrorHandlingPolicy(
 
     private data class RetryWindow(
         val startedAtMs: Long,
-        val lastFailureAtMs: Long,
         val lastSubstantialEndOffset: Long?,
         val failures: Int,
     )
 
     private val windowsByLoadTask = ConcurrentHashMap<Long, RetryWindow>()
+
+    // ProgressiveMediaPeriod passes the same DataSpec to open() and to its error
+    // policy. Weak keys let successful requests go away without a failure callback.
+    private val sustainedReads = Collections.synchronizedMap(WeakHashMap<DataSpec, Boolean>())
+
+    fun trackDirectPlayReads(factory: DataSource.Factory) = DataSource.Factory {
+        val upstream = factory.createDataSource()
+        object : DataSource by upstream {
+            private var pending: DataSpec? = null
+            private var firstReadMs = C.TIME_UNSET
+
+            override fun open(dataSpec: DataSpec): Long {
+                pending = dataSpec.takeIf { isResumableProgressiveDirectPlay(it.uri) }
+                firstReadMs = C.TIME_UNSET
+                return upstream.open(dataSpec)
+            }
+
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                val count = upstream.read(buffer, offset, length)
+                val spec = pending
+                if (count > 0 && spec != null) {
+                    val now = nowMs()
+                    if (firstReadMs == C.TIME_UNSET) {
+                        firstReadMs = now
+                    } else if (now - firstReadMs >= RECOVERY_INTERVAL_MS) {
+                        sustainedReads[spec] = true
+                        pending = null
+                    }
+                }
+                return count
+            }
+        }
+    }
 
     override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
         val invalidResponse = loadErrorInfo.exception as? HttpDataSource.InvalidResponseCodeException
@@ -55,20 +91,20 @@ internal class SiloMediaLoadErrorHandlingPolicy(
         val bytesLoaded = attemptBytesTracker.bytesLoadedForAttempt(event.loadTaskId, event.bytesLoaded)
         val resumableDirectPlay = isResumableProgressiveDirectPlay(event.dataSpec.uri)
         val resumeOffset = event.dataSpec.position + bytesLoaded
+        val readOverRecoveryInterval = sustainedReads.remove(event.dataSpec) == true
         val now = nowMs()
         val window = checkNotNull(windowsByLoadTask.compute(event.loadTaskId) { _, previous ->
             // A progressive file can stay in the same load task for an entire movie.
             // Repeated short reads or re-reading the same part of the file is one outage.
             val substantialRead = resumableDirectPlay && bytesLoaded >= RECOVERY_BYTES
-            val recovered = previous != null && substantialRead &&
-                now - previous.lastFailureAtMs >= RECOVERY_INTERVAL_MS &&
+            val recovered = previous != null && substantialRead && readOverRecoveryInterval &&
                 (previous.lastSubstantialEndOffset == null ||
                     abs(resumeOffset - previous.lastSubstantialEndOffset) >= RECOVERY_BYTES)
             val end = if (substantialRead) resumeOffset else previous?.lastSubstantialEndOffset
             if (previous == null || recovered) {
-                RetryWindow(now, now, end, failures = 1)
+                RetryWindow(now, end, failures = 1)
             } else {
-                previous.copy(lastFailureAtMs = now, lastSubstantialEndOffset = end, failures = previous.failures + 1)
+                previous.copy(lastSubstantialEndOffset = end, failures = previous.failures + 1)
             }
         })
         // Media3 can reset its count after extraction, or carry it across a recovery.
