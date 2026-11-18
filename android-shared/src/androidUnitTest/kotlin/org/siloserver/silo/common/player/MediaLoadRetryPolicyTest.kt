@@ -38,15 +38,22 @@ class MediaLoadRetryPolicyTest {
     )
 
     /**
-     * One connection reset of load task 1, which has loaded [cumulativeBytes]
-     * in all. The policy keeps its own count, so Media3's [errorCount] only
-     * matters where a test shows it is ignored.
+     * One connection reset of an attempt that opened at [position], with
+     * [cumulativeBytes] loaded by the task in all. The policy keeps its own
+     * count, so Media3's [errorCount] only matters where a test shows it is
+     * ignored.
      */
-    private fun failDirectPlay(cumulativeBytes: Long, errorCount: Int = 1): Long =
+    private fun failDirectPlay(
+        cumulativeBytes: Long,
+        position: Long = 0L,
+        errorCount: Int = 1,
+        loadTaskId: Long = 1L,
+    ): Long =
         policy.getRetryDelayMsFor(
             loadErrorInfo(
                 uri = mediaUri,
-                loadTaskId = 1L,
+                loadTaskId = loadTaskId,
+                position = position,
                 error = HttpDataSource.HttpDataSourceException(
                     SocketException("Connection reset"),
                     DataSpec(mediaUri),
@@ -77,13 +84,34 @@ class MediaLoadRetryPolicyTest {
     }
 
     @Test
-    fun `a few kilobytes between direct-play failures stay in one outage`() {
-        assertEquals(1_000L, failDirectPlay(cumulativeBytes = 4L shl 20))
-        nowMs += 45_000L
-        assertEquals(2_000L, failDirectPlay(cumulativeBytes = (4L shl 20) + 8_192L))
-        nowMs += 45_000L
-
-        assertEquals(C.TIME_UNSET, failDirectPlay(cumulativeBytes = (4L shl 20) + 16_384L))
+    fun `only a meaningful recovery starts a new direct-play outage`() {
+        // Each case: the first cut ends at 4 MiB, then a second attempt opens
+        // at `position`, loads `attemptBytes` and is cut `gapMs` later. A new
+        // outage retries after 1 s; the same one is out of window at 89 s, or
+        // on its second backoff step sooner.
+        data class Case(val name: String, val gapMs: Long, val position: Long, val attemptBytes: Long, val expected: Long)
+        val mib = 1L shl 20
+        val cases = listOf(
+            Case("recovered", gapMs = 89_000L, position = 4 * mib, attemptBytes = mib, expected = 1_000L),
+            Case("a low-bitrate recovery", gapMs = 89_000L, position = 4 * mib, attemptBytes = 600L shl 10, expected = 1_000L),
+            Case("a few kilobytes", gapMs = 89_000L, position = 4 * mib, attemptBytes = 8_192L, expected = C.TIME_UNSET),
+            Case("cut at the same byte", gapMs = 89_000L, position = mib, attemptBytes = 3 * mib, expected = C.TIME_UNSET),
+            Case("cut again within 20 s", gapMs = 10_000L, position = 4 * mib, attemptBytes = mib, expected = 2_000L),
+        )
+        cases.forEachIndexed { index, case ->
+            val task = 100L + index
+            assertEquals(1_000L, failDirectPlay(cumulativeBytes = 4 * mib, loadTaskId = task), case.name)
+            nowMs += case.gapMs
+            assertEquals(
+                case.expected,
+                failDirectPlay(
+                    cumulativeBytes = 4 * mib + case.attemptBytes,
+                    position = case.position,
+                    loadTaskId = task,
+                ),
+                case.name,
+            )
+        }
     }
 
     @Test
@@ -352,7 +380,10 @@ class MediaLoadRetryPolicyTest {
     }
 }
 
-/** One failed load of [uri] for the policies under test; [bytesLoaded] is the task's total. */
+/**
+ * One failed load of [uri] for the policies under test; [bytesLoaded] is the
+ * task's total and [position] where the failed attempt opened.
+ */
 @OptIn(UnstableApi::class)
 internal fun loadErrorInfo(
     uri: Uri,
@@ -360,10 +391,11 @@ internal fun loadErrorInfo(
     error: IOException,
     errorCount: Int,
     bytesLoaded: Long = 0L,
+    position: Long = 0L,
 ) = LoadErrorHandlingPolicy.LoadErrorInfo(
     LoadEventInfo(
         loadTaskId,
-        DataSpec(uri),
+        DataSpec.Builder().setUri(uri).setPosition(position).build(),
         uri,
         emptyMap(),
         /* elapsedRealtimeMs= */ 0L,

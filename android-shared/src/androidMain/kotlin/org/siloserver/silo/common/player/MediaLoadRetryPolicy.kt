@@ -66,11 +66,13 @@ internal class SiloMediaLoadErrorHandlingPolicy(
             loadErrorInfo.loadEventInfo.dataSpec.uri,
         )
         val now = nowMs()
+        val cutAt = loadErrorInfo.loadEventInfo.dataSpec.position.coerceAtLeast(0L) +
+            bytesLoaded.coerceAtLeast(0L)
         val outage = outageByLoadTask.compute(loadErrorInfo.loadEventInfo.loadTaskId) { _, current ->
-            if (current == null || (resumableDirectPlay && bytesLoaded >= MEDIA_LOAD_OUTAGE_PROGRESS_BYTES)) {
-                MediaLoadOutage(startedAtMs = now, failures = 1)
+            if (current == null || (resumableDirectPlay && current.recoveredBefore(now, bytesLoaded, cutAt))) {
+                MediaLoadOutage(startedAtMs = now, failures = 1, lastFailureAtMs = now, cutAt = cutAt)
             } else {
-                current.copy(failures = current.failures + 1)
+                current.copy(failures = current.failures + 1, lastFailureAtMs = now)
             }
         }!!
         val delayMs = siloMediaLoadRetryDelayMs(
@@ -336,19 +338,37 @@ internal fun okhttp3.OkHttpClient.withSidecarSubtitleTimeouts(): okhttp3.OkHttpC
  * its last retry that extracted samples).
  *
  * A progressive direct-play load is one task for the whole file, so a failure
- * there after an attempt that loaded [MEDIA_LOAD_OUTAGE_PROGRESS_BYTES] starts
- * a new outage (#981): a proxy reload minutes after a resumed cut gets a full
- * window, while a backend that trickles a few kilobytes and stalls again does
- * not. HLS segments restart from their first byte on every retry, so their
- * failures stay in one outage.
+ * there starts a new outage once the load has recovered (#981): a proxy
+ * reload minutes after a resumed cut gets a full window. A backend that
+ * trickles a few kilobytes, a load that is cut again within seconds, or one
+ * that keeps dying at the same byte (a retry re-reads from the extractor's
+ * position, so it can load plenty and still stop there) stays in its outage
+ * and runs out of window. HLS segments restart from their first byte on
+ * every retry, so their failures always stay in one outage.
  */
 internal data class MediaLoadOutage(
     val startedAtMs: Long,
     val failures: Int,
-)
+    val lastFailureAtMs: Long,
+    /** Where the cut that started this outage ended, as a byte offset into the file. */
+    val cutAt: Long,
+) {
+    /**
+     * Whether the attempt that loaded [bytesLoaded] and was cut at [cutAt],
+     * at [nowMs], had recovered: it ran [MEDIA_LOAD_OUTAGE_MIN_RECOVERY_MS]
+     * past the previous failure, loaded [MEDIA_LOAD_OUTAGE_PROGRESS_BYTES]
+     * and got past where this outage began.
+     */
+    fun recoveredBefore(nowMs: Long, bytesLoaded: Long, cutAt: Long): Boolean =
+        nowMs - lastFailureAtMs >= MEDIA_LOAD_OUTAGE_MIN_RECOVERY_MS &&
+            bytesLoaded >= MEDIA_LOAD_OUTAGE_PROGRESS_BYTES &&
+            cutAt != this.cutAt
+}
 
-/** About 8 s of a 1 Mbps stream, well above what a stalled backend trickles. */
-internal const val MEDIA_LOAD_OUTAGE_PROGRESS_BYTES: Long = 1L shl 20
+/** About 4 s of a 1 Mbps stream, or a minute of a 64 kbps audiobook; far above what a stalled backend trickles. */
+internal const val MEDIA_LOAD_OUTAGE_PROGRESS_BYTES: Long = 512L shl 10
+
+internal const val MEDIA_LOAD_OUTAGE_MIN_RECOVERY_MS: Long = 20_000L
 
 /** The class, plus the HTTP status or HTTP/2 reset code where there is one; never the message. */
 private fun Throwable.logLabel(): String =
