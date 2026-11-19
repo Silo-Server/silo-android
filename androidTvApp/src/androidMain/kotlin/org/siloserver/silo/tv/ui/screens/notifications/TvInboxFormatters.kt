@@ -73,30 +73,33 @@ internal data class TvInboxCardModel(
  * instant for the relative-time label (injected for deterministic tests).
  *
  * Episode rows render as a rich card (poster + series title + SxEy/episode
- * subtitle); every other type — including unrecognized ones — renders a
- * posterless fallback card with a friendly type label.
+ * subtitle); every other type renders a posterless fallback card.
+ * `watchlist.available` names the arrived title; the rest — including
+ * unrecognized types — use a friendly type label.
  */
 internal fun tvInboxCardModel(row: NotificationRow, now: Instant): TvInboxCardModel {
     val isEpisode = row.type == NotificationType.EpisodeAvailable
+    val isWatchlist = row.type == NotificationType.WatchlistAvailable
     val seriesTitle = row.seriesTitle.ifBlank { null }
     val episodeTitle = row.episodeTitle.ifBlank { null }
     val posterUrl = row.posterUrl.ifBlank { null }
     val posterThumbhash = row.posterThumbhash.ifBlank { null }
 
     val hasTag = row.seasonNumber != null && row.episodeNumber != null
-    val subtitle = if (isEpisode) {
-        TvInboxText.Episode(row.seasonNumber, row.episodeNumber, episodeTitle).takeIf { hasTag || episodeTitle != null }
-    } else {
-        (episodeTitle ?: seriesTitle)?.let(TvInboxText::Plain)
+    val subtitle = when {
+        isEpisode -> TvInboxText.Episode(row.seasonNumber, row.episodeNumber, episodeTitle).takeIf { hasTag || episodeTitle != null }
+        // The title already names the arrived item.
+        isWatchlist -> null
+        else -> (episodeTitle ?: seriesTitle)?.let(TvInboxText::Plain)
     }
 
     return TvInboxCardModel(
         id = row.id,
         isRich = isEpisode && (posterUrl != null || seriesTitle != null),
-        title = if (isEpisode) {
-            seriesTitle?.let(TvInboxText::Plain) ?: TvInboxText.Resource(CommonR.string.notifications_type_newEpisode)
-        } else {
-            fallbackTitleForType(row.rawType)
+        title = when {
+            isEpisode -> seriesTitle?.let(TvInboxText::Plain) ?: TvInboxText.Resource(CommonR.string.notifications_type_newEpisode)
+            isWatchlist -> watchlistAvailableTitle(seriesTitle)
+            else -> fallbackTitleForType(row.rawType)
         },
         subtitle = subtitle,
         posterUrl = posterUrl,
@@ -106,6 +109,11 @@ internal fun tvInboxCardModel(row: NotificationRow, now: Instant): TvInboxCardMo
         targetContentId = row.seriesId ?: row.episodeId ?: row.libraryId?.toString(),
     )
 }
+
+/** Title for a `watchlist.available` row; [seriesTitle] names the arrived movie or series. */
+internal fun watchlistAvailableTitle(seriesTitle: String?): TvInboxText =
+    seriesTitle?.let { TvInboxText.Resource(CommonR.string.notifications_type_watchlistAvailable, listOf(it)) }
+        ?: TvInboxText.Resource(CommonR.string.notifications_type_watchlistAvailableUntitled)
 
 /** Friendly label for a wire `type` string, with a generic fallback. */
 internal fun fallbackTitleForType(type: String): TvInboxText = when (type) {
