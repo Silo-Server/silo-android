@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
 import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.getStringWithNames
 import org.siloserver.silo.common.i18n.localizedResources
 import org.siloserver.silo.common.i18n.text
@@ -172,6 +173,9 @@ import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.common.audiobook.AudiobookText
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 
 internal data class TvSeriesDetailRedirect(
     val seriesContentId: String,
@@ -718,6 +722,7 @@ private fun TvDetailContent(
         )
     }
     val audiobookParts = audiobookTimeline?.tracks.orEmpty()
+    val audiobookTotalSeconds = AudiobookText.totalDurationSeconds(detail, audiobookTimeline?.totalSeconds)
     // Keyed on the configuration too: the fallback chapter names are catalog text.
     val audiobookChapters = remember(audiobookTimeline, resources, configuration) {
         audiobookDisplayChapters(resources, audiobookTimeline, detail.versions)
@@ -995,7 +1000,12 @@ private fun TvDetailContent(
                             state = state,
                             playFocus = playFocus,
                             onPlay = onPlay,
-                            overview = detail.overview,
+                            chapters = audiobookChapters.map { it.title to it.startSeconds },
+                            totalSeconds = audiobookTotalSeconds,
+                            pageSurface = pageSurfaceColor,
+                            onOpenChapters = { chaptersDialogOpen = true },
+                            onToggleFavorite = viewModel::onToggleFavorite,
+                            onToggleFinished = viewModel::onToggleWatched,
                         )
                     } else {
                         TvDetailHero(
@@ -1109,6 +1119,22 @@ private fun TvDetailContent(
                         modifier = Modifier,
                         verticalArrangement = Arrangement.spacedBy(TvDetailSectionGap),
                     ) {
+                        // tvOS About: the description beside the book's facts,
+                        // the first stop below the hero (Chapters moved into the
+                        // hero's action row).
+                        if (isAudiobook) {
+                            val aboutFacts = AudiobookText.facts(resources, detail, audiobookTotalSeconds, audiobookParts.size)
+                            if (!detail.overview.isNullOrBlank() || aboutFacts.isNotEmpty()) {
+                                TvAudiobookAboutSection(
+                                    overview = detail.overview?.trim().orEmpty(),
+                                    facts = aboutFacts,
+                                    upFocusRequester = playFocus,
+                                    onDirectionUp = returnToHero,
+                                    modifier = Modifier.padding(horizontal = Spacing.safeArea),
+                                )
+                            }
+                        }
+
                         if (isAudiobook && audiobookParts.size > 1) {
                             TvAudiobookPartsSection(
                                 tracks = audiobookParts,
@@ -1134,15 +1160,6 @@ private fun TvDetailContent(
                             )
                         }
 
-                        if (isAudiobook && audiobookChapters.isNotEmpty()) {
-                            TvAudiobookChaptersSection(
-                                chapters = audiobookChapters,
-                                onOpenChapters = { chaptersDialogOpen = true },
-                                upFocusRequester = if (audiobookParts.size > 1) null else playFocus,
-                                onDirectionUp = returnToHero,
-                                modifier = Modifier.padding(horizontal = Spacing.safeArea),
-                            )
-                        }
 
                         if (isAudiobook && audiobookSeries?.entries?.isNotEmpty() == true) {
                             TvAudiobookRelatedRailSection(
@@ -1843,7 +1860,10 @@ private fun HeroActionRow(
     // For series/season we must NOT fall back to playing the container — Play is
     // a no-op until the next-up episode resolves (episodes still loading, or an
     // empty/error season). Movie/episode are always ready.
-    val playReady = !isSeriesOrSeason || (nextUp != null && state.nextUpTargetReady)
+    // A card seed (state.isProvisional) has no files or watch state yet, so
+    // Play and the More menu wait for the fetched detail.
+    val playReady = !state.isProvisional &&
+        (!isSeriesOrSeason || (nextUp != null && state.nextUpTargetReady))
     val containerResume = remember(detail.userData) { detail.resumePositionSeconds() }
     val nextUpResume = remember(nextUp?.userData) { nextUp?.userData?.resumePositionSeconds() }
     val resumePosition = if (isSeriesOrSeason) nextUpResume else containerResume
@@ -1992,14 +2012,18 @@ private fun HeroActionRow(
                 TvPrimaryPillButton(
                     stableHero = true,
                     icon = Icons.Filled.PlayArrow,
-                    title = playButtonLabel(
-                        resources = resources,
-                        isSeriesOrSeason = isSeriesOrSeason,
-                        seriesContainer = detail.type == "series",
-                        nextUp = nextUp,
-                        hasResume = hasResume,
-                        resumePosition = resumePosition,
-                    ),
+                    title = if (state.isProvisional) {
+                        stringResource(CommonR.string.common_loading)
+                    } else {
+                        playButtonLabel(
+                            resources = resources,
+                            isSeriesOrSeason = isSeriesOrSeason,
+                            seriesContainer = detail.type == "series",
+                            nextUp = nextUp,
+                            hasResume = hasResume,
+                            resumePosition = resumePosition,
+                        )
+                    },
                     onClick = {
                         if (playReady && !playLaunchPending) {
                             playLaunchPending = true
@@ -2111,7 +2135,7 @@ private fun HeroActionRow(
                     isActive = false,
                     contentDescription = stringResource(CommonR.string.detail_moreOptions),
                     titleOnFocus = stringResource(CommonR.string.detail_more),
-                    onClick = { moreOpen = true },
+                    onClick = { if (!state.isProvisional) moreOpen = true },
                 )
             }
         }
@@ -2596,27 +2620,130 @@ private fun TvAudiobookPartsSection(
     }
 }
 
+/**
+ * tvOS `TVAudiobookDetailSections.aboutSection`: one full-width focus stop
+ * holding the description beside the book's facts. Select shows the whole
+ * description in place (tvOS opens it full screen) when it is cut off; a
+ * description taller than the card scrolls with Down and Up before focus
+ * leaves the card.
+ */
+/** Tall enough for most descriptions, short enough to stay on one screen with its heading. */
+private val AboutExpandedMaxHeight = 300.dp
+
+/** About three lines of the description per Down or Up. */
+private val AboutScrollStep = 63.dp
+
 @Composable
-private fun TvAudiobookChaptersSection(
-    chapters: List<TvAudiobookDisplayChapter>,
-    onOpenChapters: () -> Unit,
+private fun TvAudiobookAboutSection(
+    overview: String,
+    facts: List<Pair<String, String>>,
     upFocusRequester: FocusRequester?,
     onDirectionUp: (() -> Boolean)?,
     modifier: Modifier = Modifier,
 ) {
+    var expanded by remember(overview) { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val textScroll = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    val scrollStep = with(LocalDensity.current) { AboutScrollStep.toPx() }
+    LaunchedEffect(expanded) { if (!expanded) textScroll.scrollTo(0) }
     Column(
-        modifier = modifier.widthIn(max = 720.dp),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        TvDetailSectionHeader(title = stringResource(CommonR.string.detail_audiobook_chapters))
-        TvAudiobookDetailActionRow(
-            title = stringResource(CommonR.string.detail_audiobook_chapterList),
-            subtitle = pluralStringResource(CommonR.plurals.detail_audiobook_chapterCount, chapters.size, chapters.size, LocaleFormat.integer(chapters.size)),
-            trailing = stringResource(CommonR.string.detail_audiobook_open),
-            onClick = onOpenChapters,
-            upFocusRequester = upFocusRequester,
-            onDirectionUp = onDirectionUp,
-        )
+        TvDetailSectionHeader(title = stringResource(CommonR.string.audiobook_about_title))
+        Surface(
+            onClick = { expanded = !expanded },
+            interactionSource = interactionSource,
+            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = Color.Transparent,
+                contentColor = Color.White,
+                focusedContainerColor = Color.White.copy(alpha = 0.08f),
+                focusedContentColor = Color.White,
+                pressedContainerColor = Color.White.copy(alpha = 0.12f),
+                pressedContentColor = Color.White,
+            ),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionDown -> if (expanded && textScroll.canScrollForward) {
+                            scope.launch { textScroll.animateScrollBy(scrollStep) }
+                            true
+                        } else {
+                            false
+                        }
+                        Key.DirectionUp -> if (expanded && textScroll.canScrollBackward) {
+                            scope.launch { textScroll.animateScrollBy(-scrollStep) }
+                            true
+                        } else {
+                            onDirectionUp?.invoke() == true
+                        }
+                        else -> false
+                    }
+                }
+                .then(if (upFocusRequester != null) Modifier.focusProperties { up = upFocusRequester } else Modifier),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(40.dp),
+            ) {
+                if (overview.isNotEmpty()) {
+                    Text(
+                        text = overview,
+                        fontSize = 15.sp,
+                        lineHeight = 21.sp,
+                        color = Color.White.copy(alpha = if (isFocused) 0.95f else 0.82f),
+                        maxLines = if (expanded) Int.MAX_VALUE else 4,
+                        overflow = TextOverflow.Ellipsis,
+                        // tvOS keeps the description to a readable measure with
+                        // the facts right beside it.
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .widthIn(max = 500.dp)
+                            .then(
+                                if (expanded) {
+                                    Modifier.heightIn(max = AboutExpandedMaxHeight).verticalScroll(textScroll)
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                    )
+                }
+                if (facts.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier.width(240.dp),
+                        verticalArrangement = Arrangement.spacedBy(9.dp),
+                    ) {
+                        facts.forEach { (label, value) ->
+                            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                Text(
+                                    text = label.displayUppercase(),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.2.sp,
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    maxLines = 1,
+                                )
+                                Text(
+                                    text = value,
+                                    fontSize = 14.sp,
+                                    color = Color.White.copy(alpha = 0.9f),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.viewmodel.DetailSeeds
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -119,7 +120,10 @@ private fun BoxSetRailCard(item: BrowseItem, width: Dp, isCurrent: Boolean, onCl
         userState = item.userState,
         progress = boxSetMovieProgress(item),
         // The movie on screen opens nothing new; tapping it is a no-op.
-        onClick = if (isCurrent) ({}) else onClick,
+        onClick = if (isCurrent) ({}) else ({
+            DetailSeeds.offer(item)
+            onClick()
+        }),
         overlay = OverlayDataExtractor.fromBrowseItem(item),
         sharedContentId = item.contentId.takeUnless { isCurrent },
         // Bottom corner: the top corners hold the quality overlays and watched check.

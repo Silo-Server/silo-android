@@ -16,8 +16,8 @@ import org.siloserver.silo.model.settings.QualityPresets
  *   it, so it is normally inside the current edition.
  * - The edition is [editionId] (the viewer's pick), else the one last played
  *   ([lastEditionKey], where a present "" names the unnamed edition, then the
- *   edition of [lastFileId]), else the one whose Auto file compares best
- *   across cuts ([openingEdition]).
+ *   edition of [lastFileId]), else the preferred cut by name whose Auto file
+ *   compares best ([openingEdition]).
  * - Auto is the edition's best first-part file at or below [preferredQuality],
  *   else the closest file above it, else a file of unknown resolution. History
  *   picks only the edition, with one exception: while the item is
@@ -94,20 +94,24 @@ private fun lastPlayedEdition(
 }
 
 /**
- * The edition a page opens on with no history: each edition's Auto file
- * compared across cuts by fit (within the cap, above it, unknown resolution),
- * then resolution (higher within the cap, lower above it), then HDR, then
- * edition preference, then server order. File size is not compared across cuts.
+ * The edition a page opens on with no history, chosen by name first: only the
+ * cuts in the most preferred [preference] class compete, so a standard cut is
+ * never passed over for a longer one in better quality. Among those, each
+ * cut's Auto file is compared by fit (within the cap, above it, unknown
+ * resolution), then resolution (higher within the cap, lower above it), then
+ * HDR, then server order. File size is not compared across cuts.
  */
-private fun openingEdition(editions: List<PlaybackEdition>, cap: Int?): PlaybackEdition =
-    editions.mapIndexed { index, edition -> OpeningCandidate(index, edition, edition.autoFile(cap), cap) }
+private fun openingEdition(editions: List<PlaybackEdition>, cap: Int?): PlaybackEdition {
+    val bestClass = editions.minOf { it.preference }
+    return editions.filter { it.preference == bestClass }
+        .mapIndexed { index, edition -> OpeningCandidate(index, edition, edition.autoFile(cap), cap) }
         .minWith(
             compareBy<OpeningCandidate> { it.fit }
                 .thenBy { if (it.fit == 1) it.rank else -it.rank }
                 .thenByDescending { it.auto.hdr }
-                .thenBy { it.edition.preference }
                 .thenBy { it.index },
         ).edition
+}
 
 private class OpeningCandidate(val index: Int, val edition: PlaybackEdition, val auto: FileVersion, cap: Int?) {
     val rank = resolutionRank(auto.resolution)

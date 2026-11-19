@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.boxset
 
+import org.siloserver.silo.viewmodel.DetailSeeds
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -275,7 +276,10 @@ private fun MemberRow(
                 type = item.type,
                 userState = userState,
                 progress = boxSetMovieProgress(item),
-                onClick = { onMovieClick(item.contentId) },
+                onClick = {
+                    DetailSeeds.offer(item)
+                    onMovieClick(item.contentId)
+                },
                 width = cellWidth,
                 overlay = OverlayDataExtractor.fromBrowseItem(item),
                 actions = actions,

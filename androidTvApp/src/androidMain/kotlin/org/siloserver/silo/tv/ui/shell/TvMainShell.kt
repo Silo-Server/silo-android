@@ -286,6 +286,9 @@ fun TvMainShell(
     // device can only come back from the server.
     var librariesReloadPending by remember { mutableStateOf(false) }
     var librariesRetry by remember { mutableIntStateOf(0) }
+    // Whether a library load has succeeded, so [libraries] is the list TV
+    // shows rather than "not known yet"; see homeCollectionLibraryIds.
+    var librariesKnown by remember { mutableStateOf(false) }
     LaunchedEffect(reachabilityState.status, reachabilityState.lastCheckedAtMs) {
         if (librariesReloadPending && reachabilityState.status == ServerReachabilityStatus.Reachable) librariesRetry++
     }
@@ -310,6 +313,7 @@ fun TvMainShell(
         when (result) {
             is ApiResult.Success -> {
                 value = result.data.visibleOnTv().sortedBy { it.sortOrder }
+                librariesKnown = true
             }
             // Keep what's shown, minus a library hidden since.
             is ApiResult.Error,
@@ -577,6 +581,28 @@ fun TvMainShell(
         restoreContentAfterDetail = true
         detailReturnRoot = null
         onOpenCollectionDetail(collectionId, title)
+    }
+    // A Home collection card returns like a Home item: the feed restores focus
+    // to the card it was opened from.
+    // The libraries whose server collections Home may show: the ones TV
+    // shows this profile (never ebooks), once a load has said which. Null
+    // until then, and Home holds server collections back meanwhile.
+    val homeCollectionLibraryIds = remember(librariesKnown, libraries) {
+        if (librariesKnown) libraries.mapTo(mutableSetOf()) { it.id } else null
+    }
+    val openHomeCollection: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit = open@{ card ->
+        // Null for a personal collection. Decoding drops server collections
+        // without a library; guard anyway.
+        val libraryId = if (card.isUserCollection) null else card.libraryIdInt ?: return@open
+        restoreContentAfterDetail = true
+        detailReturnRoot = TvMainRoute.Home.route
+        suppressFeedRefreshAfterDetail = true
+        if (libraryId == null) {
+            onOpenCollectionDetail(card.id, card.title)
+        } else {
+            val libraryType = libraries.firstOrNull { it.id == libraryId }?.type.orEmpty()
+            onOpenLibraryCollectionDetail(libraryId, card.id, card.title, libraryType, "library_collection", null)
+        }
     }
     // A row's full page is an outer route like a detail page, so it takes the
     // same hand-back: Home's feed restores focus to the row's "Explore all"
@@ -1355,6 +1381,8 @@ fun TvMainShell(
                             openForYou(null)
                         },
                         onExploreSection = openHomeSection,
+                        onCollectionClick = openHomeCollection,
+                        homeCollectionLibraryIds = homeCollectionLibraryIds,
                         onOpenSettings = {
                             navigateToRoute(TvMainRoute.Settings.route)
                             moveFocusToContent(TvMainRoute.Settings.route)
@@ -1383,6 +1411,8 @@ fun TvMainShell(
                             openForYou(null)
                         },
                         onExploreSection = openHomeSection,
+                        onCollectionClick = openHomeCollection,
+                        homeCollectionLibraryIds = homeCollectionLibraryIds,
                         onOpenSettings = {
                             navigateToRoute(TvMainRoute.Settings.route)
                             moveFocusToContent(TvMainRoute.Settings.route)

@@ -59,6 +59,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
+import org.siloserver.silo.viewmodel.DetailSeeds
 
 private const val MISSING_SERIES_ERROR = "missing_series"
 
@@ -68,6 +69,12 @@ private const val MISSING_SERIES_ERROR = "missing_series"
 data class ItemDetailUiState(
     val isLoading: Boolean = true,
     val detail: ItemDetail? = null,
+    /**
+     * [detail] is the card the page was opened from ([DetailSeeds]), not a
+     * fetched detail. The page draws it, but actions that need the full
+     * detail (play, download, watched, remote playback) wait for the fetch.
+     */
+    val isProvisional: Boolean = false,
     val similarItems: List<org.siloserver.silo.model.catalog.BrowseItem> = emptyList(),
     /** The box set this movie belongs to, for the box set row after the extras; null for none. */
     val boxSet: org.siloserver.silo.model.catalog.CatalogBoxSetDetail? = null,
@@ -205,8 +212,17 @@ class ItemDetailViewModel(
 
     // A route that names its episode starts with it selected, so the series
     // hero opens on that episode instead of showing the series overview until
-    // the season's episodes arrive.
-    private val _uiState = MutableStateFlow(ItemDetailUiState(selectedEpisodeContentId = initialEpisodeContentId))
+    // the season's episodes arrive. The tapped card ([DetailSeeds]) draws the
+    // page on its first frame; the detail request replaces it.
+    private val _uiState = MutableStateFlow(
+        DetailSeeds.take(contentId).let { seed ->
+            ItemDetailUiState(
+                selectedEpisodeContentId = initialEpisodeContentId,
+                detail = seed,
+                isProvisional = seed != null,
+            )
+        },
+    )
     val uiState: StateFlow<ItemDetailUiState> = kotlinx.coroutines.flow.combine(_uiState, personalDataRepository.memberships.actions) { state, actions ->
         var projected = state
         actions.values.filter { it.baseline != null && it.intent.key.itemId == contentId && personalDataRepository.memberships.current(it.intent) }.forEach {
@@ -493,7 +509,19 @@ class ItemDetailViewModel(
             val liveDetail = async {
                 catalogRepository.getItemDetail(contentId, libraryId = libraryId, joinWarmup = !afterAccessChange)
             }
+            // A page that already knows it is a series, from its card or the
+            // durable cache, loads seasons and first episodes alongside the
+            // detail request rather than after it.
+            var seasonsStarted = false
+            fun startSeasonsIfSeries() {
+                if (!seasonsStarted && _uiState.value.detail?.type == "series") {
+                    seasonsStarted = true
+                    loadSeasons(contentId)
+                }
+            }
+            startSeasonsIfSeries()
             seedCachedDetail()
+            startSeasonsIfSeries()
 
             when (val result = liveDetail.await()) {
                 is ApiResult.Success -> {
@@ -502,6 +530,7 @@ class ItemDetailViewModel(
                         it.copy(
                             isLoading = false,
                             detail = detail,
+                            isProvisional = false,
                             userRating = detail.userRating,
                             error = null,
                         )
@@ -512,8 +541,7 @@ class ItemDetailViewModel(
                         similarJob = viewModelScope.launch { loadSimilar(detail, similarOwner, similarRun) }
                     }
                     loadBoxSet(detail)
-                    // For series, load seasons
-                    if (detail.type == "series") {
+                    if (detail.type == "series" && !seasonsStarted) {
                         loadSeasons(detail.contentId)
                     }
                     // For episodes, load the parent series' seasons + this
@@ -543,10 +571,12 @@ class ItemDetailViewModel(
                         // The durable cache still holds a title the server
                         // now refuses; drop the copy seedCachedDetail painted
                         // so the screen shows the error, not stale actions.
-                        val detail = if (dropsDetailOn(result)) null else it.detail
+                        // A card seed is never kept in place of the error.
+                        val detail = if (it.isProvisional || dropsDetailOn(result)) null else it.detail
                         it.copy(
                             isLoading = false,
                             detail = detail,
+                            isProvisional = false,
                             error = result.errorText(CommonR.string.detail_error_loadFailed),
                             episodeFallbackContentId = initialEpisodeContentId.takeIf { detail == null },
                         )
@@ -554,11 +584,14 @@ class ItemDetailViewModel(
                 }
                 is ApiResult.NetworkError -> {
                     _uiState.update { state ->
+                        val detail = state.detail.takeUnless { state.isProvisional }
                         state.copy(
                             isLoading = false,
+                            detail = detail,
+                            isProvisional = false,
                             error = UiText.Res(CommonR.string.catalog_error_network),
                             // Offline, the episode may still be cached when its series is not.
-                            episodeFallbackContentId = initialEpisodeContentId.takeIf { state.detail == null },
+                            episodeFallbackContentId = initialEpisodeContentId.takeIf { detail == null },
                         )
                     }
                 }
@@ -634,6 +667,8 @@ class ItemDetailViewModel(
      * [showAccessRefusal]: see [refreshAfterAccessChange].
      */
     private fun quietRefresh(afterWatchedChange: Boolean = false, showAccessRefusal: Boolean = false) {
+        // A card seed has nothing to refresh; its full load is still running.
+        if (_uiState.value.isProvisional) return
         val current = _uiState.value.detail ?: return
         // A newer detail read replaces an unfinished one, so an older answer
         // cannot land after it, for example restoring a title the newer read
@@ -704,6 +739,7 @@ class ItemDetailViewModel(
             it.copy(
                 isLoading = true,
                 detail = cached,
+                isProvisional = false,
                 userRating = cached.userRating,
                 error = null,
             )

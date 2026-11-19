@@ -59,6 +59,11 @@ class CatalogRepository(
      * leaves composition.
      */
     private val detailRequestScope = CoroutineScope(SupervisorJob() + requestDispatcher)
+
+    init {
+        // A detail page's card seed belongs to the identity it was tapped under.
+        org.siloserver.silo.viewmodel.DetailSeeds.bindIdentity(identityTransitions.generation)
+    }
     private val detailRequestMutex = Mutex()
     private data class DetailRequestKey(
         val identityGeneration: Long,
@@ -90,6 +95,18 @@ class CatalogRepository(
     suspend fun libraryHasItems(libraryId: Int, mediaType: String? = null): Boolean? =
         when (val result = catalogApi.getCatalog(libraryId = libraryId, mediaType = mediaType, limit = 1, skipTotal = true)) {
             is ApiResult.Success -> result.data.items.isNotEmpty()
+            else -> null
+        }
+
+    /**
+     * The library's exact size under [mediaType] (a mixed library's Movies or
+     * Series side), for the phone Libraries header. Null when the server
+     * could not answer or can only estimate it. Read straight from the API,
+     * like [libraryHasItems], so the one-item page never reaches the cache.
+     */
+    suspend fun libraryCount(libraryId: Int, mediaType: String? = null): Int? =
+        when (val result = catalogApi.getCatalog(libraryId = libraryId, mediaType = mediaType, limit = 1)) {
+            is ApiResult.Success -> result.data.total.takeIf { result.data.totalExact != false }
             else -> null
         }
 

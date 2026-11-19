@@ -79,6 +79,10 @@ import org.siloserver.silo.android.ui.screens.cast.SiloCastLaunchHaptics
 import org.siloserver.silo.android.ui.screens.cast.SiloCastMiniBar
 import org.siloserver.silo.android.ui.screens.cast.SiloCastRemoteScreen
 import org.siloserver.silo.android.ui.screens.MainScreen
+import org.siloserver.silo.android.ui.screens.audiobook.AudiobookPlaybackBridge
+import org.siloserver.silo.android.ui.screens.audiobook.AudiobookPlaybackRequest
+import org.siloserver.silo.android.ui.screens.audiobook.AudiobookSessionViewModel
+import org.siloserver.silo.android.ui.screens.audiobook.LocalAudiobookSession
 import org.siloserver.silo.android.ui.screens.auth.LoginScreen
 import org.siloserver.silo.android.ui.screens.auth.PasswordChangeScreen
 import org.siloserver.silo.android.ui.screens.auth.DevicePairingScreen
@@ -202,6 +206,24 @@ private val ProfilePromptDeferredRoutes: Set<String> = setOf(
     Route.PasswordChange.route,
 )
 
+/**
+ * Destinations that end a running audiobook session when they open. The video
+ * player takes over the one playback engine; the sign-in chain and Who's
+ * Watching leave the signed-in profile the book was playing for. Server,
+ * account and profile switches that skip these screens end the session
+ * through [AudiobookSessionViewModel]'s identity check instead.
+ */
+private val AudiobookSessionEndingRoutes: Set<String> = setOf(
+    Route.Player.ROUTE,
+    Route.Login.route,
+    Route.ServerSetup.route,
+    Route.ServerSetupPrefilled.ROUTE,
+    Route.Setup.route,
+    Route.Signup.route,
+    Route.ProfileSelection.route,
+    Route.PasswordChange.route,
+)
+
 /** Page-to-page cross-fade duration (ms). Snappier than Compose Nav's 700ms default. */
 private const val PageFadeDurationMs = 200
 
@@ -267,6 +289,9 @@ fun AppNavigation(
     val nativeSignInCoordinator: org.siloserver.silo.android.auth.NativeSignInCoordinator = koinInject()
     val profileSwitchTeardown: org.siloserver.silo.android.auth.ProfileSwitchTeardown = koinInject()
     val siloCastController: SiloCastController = koinInject()
+    // Activity-scoped: the audiobook session outlives its player route, so a
+    // minimized book keeps playing under the mini player.
+    val audiobookSession: AudiobookSessionViewModel = koinViewModel()
     // Lives as long as the nav host, so work started from a destination that is
     // popped in the same gesture (re-hydrating after a profile switch) is not
     // cancelled with that destination's own scope.
@@ -781,6 +806,7 @@ fun AppNavigation(
         LocalHeroSourceHandoff provides heroSourceHandoff,
         LocalProfileSwitch provides switchProfile,
         LocalAddProfile provides addProfile,
+        LocalAudiobookSession provides audiobookSession,
     ) {
     Box(modifier = Modifier.fillMaxSize()) {
     // The first-run screens draw over one shared brand-light backdrop that
@@ -2122,9 +2148,29 @@ fun AppNavigation(
                     defaultValue = null
                 },
             ),
-        ) {
+        ) { entry ->
+            // Opening the book that is already playing shows its session;
+            // anything else starts a new one (see AudiobookPlaybackRequest).
+            // The entry id keeps a recreated activity on the same session.
+            val player = remember(entry.id) {
+                audiobookSession.open(AudiobookPlaybackRequest.from(entry.arguments), entry.id)
+            }
+            val activeSession by audiobookSession.active.collectAsState()
+            // The session ended under the full player (an account or profile
+            // change): close the player rather than show a dead session.
+            LaunchedEffect(activeSession, player) {
+                if (activeSession?.player !== player &&
+                    navController.currentBackStackEntry?.id == entry.id
+                ) {
+                    navController.popBackStack()
+                }
+            }
             org.siloserver.silo.android.ui.screens.audiobook.AudiobookPlayerScreen(
-                onBackClick = { navController.popBackStack() },
+                viewModel = player,
+                // Back and the chevron minimize: the book keeps playing.
+                onMinimize = { navController.popBackStack() },
+                // The effect above closes the route once the session ends.
+                onStop = { audiobookSession.stop() },
             )
         }
 
@@ -2410,6 +2456,22 @@ fun AppNavigation(
         }
 
         WatchPartySoloGuardDialog(externalSoloGuard)
+
+        // Runs the audiobook session's engine wiring while one is active,
+        // whichever screen shows it (the full player, the mini player, or
+        // none). Keyed so each session gets its own controller.
+        val activeAudiobook by audiobookSession.active.collectAsState()
+        activeAudiobook?.let { session ->
+            key(session) {
+                AudiobookPlaybackBridge(session)
+            }
+        }
+        // The video player shares the one playback engine, and the sign-in
+        // chain and profile picker leave the signed-in session: each ends the
+        // audiobook first (iOS closes its players at the same boundaries).
+        LaunchedEffect(currentRoute) {
+            if (currentRoute in AudiobookSessionEndingRoutes) audiobookSession.stop()
+        }
 
         // Nearby-TV offer, app-wide once signed in (iOS parity). Not over the
         // sign-in chain, where the phone has no session to approve with, nor

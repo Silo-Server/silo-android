@@ -813,6 +813,12 @@ class LibrariesViewModelTest {
                                 ?.let { SiloJson.parseToJsonElement(it.text).jsonObject }
                             fun field(name: String): String? = body?.get(name)?.let { (it as? JsonPrimitive)?.contentOrNull }
                                 ?: request.url.parameters[name]
+                            // The header's one-title size read, not a page of the grid or a shelf.
+                            val isCountProbe = field("limit") == "1" && field("sort") == null && field("skip_total") != "true"
+                            if (isCountProbe) {
+                                requests.send("count:${field("library_id")}:${field("type")}")
+                                return@addHandler respondJson(catalogBody("count"))
+                            }
                             catalogTypes += field("type")
                             catalogQueries += listOf("type", "library_id", "match", "cursor").associateWith { field(it) }
                             val rawSort = field("sort")

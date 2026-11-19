@@ -1,5 +1,8 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import androidx.compose.runtime.remember
+import org.siloserver.silo.android.ui.components.sharedArtworkAspectRatio
+import org.siloserver.silo.viewmodel.DetailSeeds
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -51,6 +54,8 @@ private fun SimilarRailContent(
     modifier: Modifier = Modifier,
 ) {
     val rowState = rememberLazyListState()
+    // Square covers when every title is an audiobook; one card height otherwise.
+    val posterAspectRatio = remember(items) { sharedArtworkAspectRatio(items.map { it.type }) }
     DeferImagePresentationWhileScrolling(rowState) {
     LazyRow(
         state = rowState,
@@ -73,7 +78,11 @@ private fun SimilarRailContent(
                 type = item.type,
                 userState = null,
                 progress = null,
-                onClick = { onSelect(item.contentId) },
+                onClick = {
+                    DetailSeeds.offer(item)
+                    onSelect(item.contentId)
+                },
+                artworkAspectRatio = posterAspectRatio,
                 overlay = org.siloserver.silo.overlays.OverlayDataExtractor.fromBrowseItem(item),
                 sharedContentId = item.contentId,
                 widthIsExact = true,

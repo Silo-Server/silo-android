@@ -51,6 +51,7 @@ import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.i18n.text
@@ -202,7 +203,12 @@ private fun HomeSectionReorderList(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
                     Text(
-                        text = pluralStringResource(CommonR.plurals.rowPage_item, section.items.size, section.items.size),
+                        text = if (section.isCollectionRow) {
+                            val count = section.collections.size
+                            pluralStringResource(CommonR.plurals.home_editor_collectionCount, count, count, LocaleFormat.integer(count))
+                        } else {
+                            pluralStringResource(CommonR.plurals.rowPage_item, section.items.size, section.items.size)
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

@@ -25,7 +25,8 @@ suspend fun scopeLibrarySection(
     mediaScope: String?,
     loadPage: suspend (CatalogContinuationV2?) -> ApiResult<CatalogResponse>,
 ): ScopedLibrarySection {
-    if (mediaScope == null) return ScopedLibrarySection(section)
+    // A row of collections has no titles to scope: its cards are collections.
+    if (mediaScope == null || section.isCollectionRow) return ScopedLibrarySection(section)
     val initial = section.items.filter { matchesLibraryMediaScope(it.type, mediaScope) }
     val target = (section.itemLimit.takeIf { it > 0 } ?: section.items.size.coerceAtLeast(20)).coerceAtMost(100)
     // An incomplete slice never learned how long the scoped list is, so it keeps the server's count
