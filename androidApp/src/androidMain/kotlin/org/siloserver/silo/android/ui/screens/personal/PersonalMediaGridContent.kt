@@ -225,8 +225,11 @@ private fun PersonalMediaGridContent(
     val visibleItems = remember(state.items, mediaFilter) { mediaFilter?.apply(state.items) ?: state.items }
     // The header's count describes what is showing, not the whole list.
     val headerState = mediaFilter?.let { state.copy(total = it.shownTotal(state, visibleItems.size)) } ?: state
-    LaunchedEffect(visibleItems.isEmpty(), state.hasMore, state.isLoadingMore, state.isLoading) {
-        if (visibleItems.isEmpty() && state.hasMore && !state.isLoadingMore && !state.isLoading) {
+    // Keyed on the loaded count and refresh too, so the effect re-runs after a
+    // page or refresh that added no matches; otherwise every key can come back
+    // unchanged and a narrowed view stays empty while pages remain.
+    LaunchedEffect(visibleItems.isEmpty(), state.items.size, state.hasMore, state.isLoadingMore, state.isLoading, state.isRefreshing) {
+        if (visibleItems.isEmpty() && state.hasMore && !state.isLoadingMore && !state.isLoading && !state.isRefreshing) {
             onLoadMore()
         }
     }

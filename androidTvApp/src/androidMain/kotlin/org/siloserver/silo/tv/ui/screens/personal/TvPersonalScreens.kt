@@ -352,7 +352,9 @@ private fun rememberShownItems(
     val filter = mediaSwitch?.selected ?: return TvShownItems(state.items, state.total)
     val tvItems = remember(state.items) { state.items.visibleOnTv() }
     val items = remember(tvItems, filter) { filter.apply(tvItems) }
-    LaunchedEffect(items.isEmpty(), state.hasMore, state.isLoading, state.isLoadingMore, state.isRefreshing, state.error) {
+    // Keyed on the loaded count too: a fast page that adds no matches can
+    // land before a frame sees isLoadingMore, leaving every other key unchanged.
+    LaunchedEffect(items.isEmpty(), state.items.size, state.hasMore, state.isLoading, state.isLoadingMore, state.isRefreshing, state.error) {
         if (items.isEmpty() && state.hasMore && !state.isLoading &&
             !state.isLoadingMore && !state.isRefreshing && state.error == null
         ) {

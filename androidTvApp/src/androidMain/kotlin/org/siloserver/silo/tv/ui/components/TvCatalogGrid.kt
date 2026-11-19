@@ -180,7 +180,10 @@ fun TvCatalogGrid(
         }
     }
 
-    LaunchedEffect(shouldLoadMore) {
+    // Keyed on pagedSize too: a page can land before a frame sees isLoading,
+    // so shouldLoadMore stays true across it and would never fire again. A
+    // failed page leaves pagedSize unchanged, so this still doesn't retry it.
+    LaunchedEffect(shouldLoadMore, pagedSize) {
         if (shouldLoadMore) {
             loadMoreRequestedSize = pagedSize
             onLoadMore()
