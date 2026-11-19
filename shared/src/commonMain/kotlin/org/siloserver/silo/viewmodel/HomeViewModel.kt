@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
@@ -78,10 +79,9 @@ class HomeViewModel(
     private val diagnostics: HomeDiagnosticsObserver = HomeDiagnosticsObserver.None,
     private val catalogLanguage: org.siloserver.silo.domain.settings.CatalogLanguageRevision? = null,
     /**
-     * Whether Home starts on screen. Android TV keeps one Home for the whole
-     * shell, which can come back on another tab, so it starts hidden and the
-     * screens that show its rows report [onShown] and [onHidden]; the phone
-     * never reports and stays shown.
+     * Whether Home starts on screen. The apps keep Home's ViewModel while
+     * another screen covers its rows. The screens report [onShown] and
+     * [onHidden] so Home only reconciles while the viewer can see it.
      */
     startShown: Boolean = true,
 ) : ViewModel() {
@@ -95,6 +95,8 @@ class HomeViewModel(
      * player covering Home holds up to half the heap.
      */
     private var shown = startShown
+    private var hasBeenShown = false
+    private var initialLoads = 0
 
     private suspend fun mayPublish(owner: AuthScopeSnapshot, generation: Int): Boolean {
         val valid = sectionRepository.isHomeAuthorityCurrent(owner)
@@ -151,8 +153,13 @@ class HomeViewModel(
      * Home's rows are on screen. A refresh that waited while they were hidden
      * runs on [runPendingRealtimeRefresh] or the next [refreshFromRealtime].
      */
-    fun onShown() {
+    fun onShown(refreshOnResume: Boolean = false) {
+        val returning = hasBeenShown
         shown = true
+        hasBeenShown = true
+        if (refreshOnResume && (returning || !_uiState.value.isLoading)) {
+            refreshFromRealtime()
+        }
     }
 
     /**
@@ -204,7 +211,7 @@ class HomeViewModel(
      * While Home is hidden they wait for it to be shown.
      */
     fun refreshFromRealtime() {
-        if (!shown || realtimeRefreshInFlight || _uiState.value.isRefreshing) {
+        if (!shown || realtimeRefreshInFlight || initialLoads > 0 || _uiState.value.isLoading || _uiState.value.isRefreshing) {
             realtimeRefreshPending = true
             diagnostics.completed(
                 HomeLoadObservation(
@@ -225,7 +232,15 @@ class HomeViewModel(
         val run = ++realtimeRefreshRun
         realtimeRefreshJob = viewModelScope.launch {
             try {
-                fetchSections(HomeLoadTrigger.REALTIME)
+                for (attempt in 0..3) {
+                    var retry = false
+                    val generation = fetchSections(HomeLoadTrigger.REALTIME) { retry = true }
+                    if (!retry || attempt == 3) break
+                    delay(1_000L shl attempt)
+                    if (!shown || generation != fetchGeneration) break
+                    // The retry will cover any events that arrived while it waited.
+                    realtimeRefreshPending = false
+                }
             } finally {
                 if (run == realtimeRefreshRun) realtimeRefreshInFlight = false
             }
@@ -239,69 +254,76 @@ class HomeViewModel(
      * it ends, instead of a second full read beside it.
      */
     fun runPendingRealtimeRefresh() {
-        if (!realtimeRefreshPending || _uiState.value.isLoading) return
+        if (!shown || !realtimeRefreshPending || initialLoads > 0 || _uiState.value.isLoading) return
         realtimeRefreshPending = false
         refreshFromRealtime()
     }
 
     fun loadSections() {
         viewModelScope.launch {
-            // Stale-while-revalidate: serve the cached home instantly (offline-
-            // capable), then refresh from the network below.
-            // Captured BEFORE the cached read, which suspends: a refresh can
-            // start and publish fresh sections while we are in there, and
-            // overlaying the cache on top would put stale rows back on screen.
-            val bootstrapGeneration = fetchGeneration
-            val cacheStarted = TimeSource.Monotonic.markNow()
-            val owner = sectionRepository.captureHomeAuthority()
-            if (owner == null) {
-                if (fetchGeneration == bootstrapGeneration) fetchSections(HomeLoadTrigger.INITIAL)
-                runPendingRealtimeRefresh()
-                return@launch
+            initialLoads++
+            try {
+                loadInitialSections()
+            } finally {
+                initialLoads--
             }
-            if (!mayPublish(owner, bootstrapGeneration)) return@launch
-            val cached = homeCache.getCachedHomeV2(owner)
-            if (!mayPublish(owner, bootstrapGeneration)) {
-                diagnostics.completed(
-                    HomeLoadObservation(
-                        trigger = HomeLoadTrigger.INITIAL,
-                        source = HomeLoadSource.CACHE,
-                        outcome = HomeLoadOutcome.SUPERSEDED,
-                        durationMs = cacheStarted.elapsedNow().inWholeMilliseconds,
-                        sectionCount = cached?.sections?.size ?: 0,
-                        duplicateSectionKeyCount = cached?.sections?.duplicateSectionKeyCount() ?: 0,
-                        duplicateItemRowCount = cached?.sections?.duplicateItemRowCount() ?: 0,
-                    ),
-                )
-                return@launch
-            }
+            runPendingRealtimeRefresh()
+        }
+    }
+
+    private suspend fun loadInitialSections() {
+        // Stale-while-revalidate: serve the cached home instantly (offline-
+        // capable), then refresh from the network below.
+        // Captured BEFORE the cached read, which suspends: a refresh can
+        // start and publish fresh sections while we are in there, and
+        // overlaying the cache on top would put stale rows back on screen.
+        val bootstrapGeneration = fetchGeneration
+        val cacheStarted = TimeSource.Monotonic.markNow()
+        val owner = sectionRepository.captureHomeAuthority()
+        if (owner == null) {
+            if (fetchGeneration == bootstrapGeneration) fetchSections(HomeLoadTrigger.INITIAL)
+            return
+        }
+        if (!mayPublish(owner, bootstrapGeneration)) return
+        val cached = homeCache.getCachedHomeV2(owner)
+        if (!mayPublish(owner, bootstrapGeneration)) {
             diagnostics.completed(
                 HomeLoadObservation(
                     trigger = HomeLoadTrigger.INITIAL,
                     source = HomeLoadSource.CACHE,
-                    outcome = if (cached != null && cached.sections.isNotEmpty()) {
-                        HomeLoadOutcome.HIT
-                    } else {
-                        HomeLoadOutcome.MISS
-                    },
+                    outcome = HomeLoadOutcome.SUPERSEDED,
                     durationMs = cacheStarted.elapsedNow().inWholeMilliseconds,
                     sectionCount = cached?.sections?.size ?: 0,
                     duplicateSectionKeyCount = cached?.sections?.duplicateSectionKeyCount() ?: 0,
                     duplicateItemRowCount = cached?.sections?.duplicateItemRowCount() ?: 0,
                 ),
             )
-            if (cached != null && cached.sections.isNotEmpty()) {
-                val overlaid = overlayLocalState(cached.sections)
-                if (!mayPublish(owner, bootstrapGeneration)) return@launch
-                displayedOwner = owner
-                _uiState.update { it.copy(isLoading = false, sections = overlaid, error = null) }
-            } else {
-                _uiState.update { it.copy(isLoading = true, error = null) }
-            }
-            fetchSections(HomeLoadTrigger.INITIAL)
-            // A refresh that waited during the first load runs after it, not beside it.
-            runPendingRealtimeRefresh()
+            return
         }
+        diagnostics.completed(
+            HomeLoadObservation(
+                trigger = HomeLoadTrigger.INITIAL,
+                source = HomeLoadSource.CACHE,
+                outcome = if (cached != null && cached.sections.isNotEmpty()) {
+                    HomeLoadOutcome.HIT
+                } else {
+                    HomeLoadOutcome.MISS
+                },
+                durationMs = cacheStarted.elapsedNow().inWholeMilliseconds,
+                sectionCount = cached?.sections?.size ?: 0,
+                duplicateSectionKeyCount = cached?.sections?.duplicateSectionKeyCount() ?: 0,
+                duplicateItemRowCount = cached?.sections?.duplicateItemRowCount() ?: 0,
+            ),
+        )
+        if (cached != null && cached.sections.isNotEmpty()) {
+            val overlaid = overlayLocalState(cached.sections)
+            if (!mayPublish(owner, bootstrapGeneration)) return
+            displayedOwner = owner
+            _uiState.update { it.copy(isLoading = false, sections = overlaid, error = null) }
+        } else {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+        }
+        fetchSections(HomeLoadTrigger.INITIAL)
     }
 
     fun refresh() {
@@ -338,7 +360,7 @@ class HomeViewModel(
      * Runs one home fetch and returns the generation it ran as, so callers can
      * tell whether their own work is still the newest before acting on it.
      */
-    private suspend fun fetchSections(trigger: HomeLoadTrigger): Int {
+    private suspend fun fetchSections(trigger: HomeLoadTrigger, onTransientFailure: () -> Unit = {}): Int {
         val generation = ++fetchGeneration
         val owner = sectionRepository.captureHomeAuthority()
         if (generation != fetchGeneration || !currentCoroutineContext().isActive) return generation
@@ -470,6 +492,7 @@ class HomeViewModel(
                     )
                 }
                 report(HomeLoadOutcome.API_ERROR)
+                if (result.code == 408 || result.code == 429 || result.code in 500..599) onTransientFailure()
             }
             is ApiResult.NetworkError -> {
                 if (!mayPublish(owner, generation)) {
@@ -483,6 +506,7 @@ class HomeViewModel(
                     )
                 }
                 report(HomeLoadOutcome.NETWORK_ERROR)
+                onTransientFailure()
             }
         }
         return generation
