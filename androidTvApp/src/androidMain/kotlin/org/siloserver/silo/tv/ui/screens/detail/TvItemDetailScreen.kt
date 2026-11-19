@@ -733,8 +733,8 @@ private fun TvDetailContent(
     // The collections row: below Cast & Crew on a series page, below the box
     // set row on a movie page (web).
     val collectionsRow = state.collectionsRow.takeIf { !isAudiobook }
-    val showsSeriesCollectionsRow = collectionsRow != null && detail.type == "series"
-    val showsMovieCollectionsRow = collectionsRow != null && detail.type == "movie"
+    val seriesCollectionsRow = collectionsRow?.takeIf { detail.type == "series" }
+    val movieCollectionsRow = collectionsRow?.takeIf { detail.type == "movie" }
     val showsTrailersSection = !isAudiobook && trailerEntries.isNotEmpty()
     val showsSimilarRail = !isAudiobook && detail.type != "episode" && state.moreLikeThis.isNotEmpty()
     val showsDetailsSection = !isAudiobook && remember(detail) { detail.hasTvDetailFacts() }
@@ -1436,8 +1436,8 @@ private fun TvDetailContent(
                             }
                         }
 
-                        if (showsSeriesCollectionsRow) {
-                            collectionsSection(collectionsRow!!, if (!hasEpisodeNavAbove && !showsCastSection) returnToHero else null)
+                        if (seriesCollectionsRow != null) {
+                            collectionsSection(seriesCollectionsRow, if (!hasEpisodeNavAbove && !showsCastSection) returnToHero else null)
                         }
 
                         if (showsTrailersSection) {
@@ -1458,7 +1458,7 @@ private fun TvDetailContent(
                                         0.0,
                                     )
                                 },
-                                onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection && !showsSeriesCollectionsRow) {
+                                onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection && seriesCollectionsRow == null) {
                                     returnToHero
                                 } else {
                                     null
@@ -1526,8 +1526,8 @@ private fun TvDetailContent(
                             )
                         }
 
-                        if (showsMovieCollectionsRow) {
-                            collectionsSection(collectionsRow!!, if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) returnToHero else null)
+                        if (movieCollectionsRow != null) {
+                            collectionsSection(movieCollectionsRow, if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) returnToHero else null)
                         }
 
                         if (showsSimilarRail) {
