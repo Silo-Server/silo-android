@@ -11,6 +11,8 @@ import org.siloserver.silo.network.AuthScopeSnapshot
 class PlaybackRepository(private val sequenced: SequencedPlayback) {
     suspend fun controlOwner(sessionId: String): Pair<AuthScopeSnapshot, String?>? = sequenced.controlOwner(sessionId)
     fun isSequenced(sessionId: String): Boolean = sequenced.owns(sessionId)
+    /** See [SequencedPlayback.serverFeatures]. */
+    fun playbackServerFeatures(playbackAttemptId: String): Set<String> = sequenced.serverFeatures(playbackAttemptId)
     /** [SequencedPlayback] answers null for a session it never journaled. */
     private fun unknownSession() = ApiResult.Error(0, "playback_unavailable", "This playback session is not owned by the app.")
     private suspend fun <T> guarded(block: suspend () -> ApiResult<T>): ApiResult<T> = try { block() }
@@ -30,9 +32,20 @@ class PlaybackRepository(private val sequenced: SequencedPlayback) {
         request: PlaybackReplanRequestV3,
     ): ApiResult<PlaybackDecisionResponseV3> = guarded { sequenced.replan(sessionId, request) }
 
-    /** Reports attempt-scoped telemetry under the original v2 admission authority. */
-    suspend fun reportRouteEventV3(request: PlaybackRouteEventV3): ApiResult<Unit> =
-        guarded { sequenced.routeEvent(request) }
+    /**
+     * Reports attempt-scoped telemetry under the original v2 admission
+     * authority. [eventId]: see [SequencedPlayback.routeEvent].
+     */
+    suspend fun reportRouteEventV3(request: PlaybackRouteEventV3, eventId: String? = null): ApiResult<Unit> =
+        guarded { sequenced.routeEvent(request, eventId) }
+
+    /** Journals telemetry to send later without sending it. See [SequencedPlayback.saveRouteEvent]. */
+    suspend fun saveRouteEventV3(request: PlaybackRouteEventV3, eventId: String): ApiResult<Unit> =
+        guarded { sequenced.saveRouteEvent(request, eventId) }
+
+    /** Sends the telemetry earlier launches left unsent. See [SequencedPlayback.replayRouteEvents]. */
+    suspend fun replayRouteEventsV3(): ApiResult<Unit> =
+        guarded { sequenced.replayRouteEvents(); ApiResult.Success(Unit) }
 
     /** Reports current playback position and paused state to the server. */
     suspend fun updateProgress(

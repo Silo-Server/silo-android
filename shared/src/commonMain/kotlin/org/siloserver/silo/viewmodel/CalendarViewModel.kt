@@ -6,7 +6,6 @@ import org.siloserver.silo.model.calendar.CalendarDay
 import org.siloserver.silo.model.calendar.CalendarFilter
 import org.siloserver.silo.model.calendar.CalendarItem
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.CalendarRepository
 import org.siloserver.silo.util.IsoDate
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +15,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.network.AuthScopeSnapshot
 
 data class CalendarUiState(
@@ -36,7 +38,7 @@ data class CalendarUiState(
     val libraryId: Int? = null,
     /** Server-grouped day buckets for the visible week. */
     val days: List<CalendarDay> = emptyList(),
-    val error: String? = null,
+    val error: UiText? = null,
 ) {
     /** The 7 ISO dates of the visible week, Monday first. */
     val weekDates: List<String>
@@ -133,7 +135,7 @@ class CalendarViewModel(
             if (generation != loadGeneration || !currentCoroutineContext().isActive) return@launch
             if (!valid || owner == null) {
                 cache.clear(); cacheOwner = null
-                _uiState.update { it.copy(days = emptyList(), isLoading = false, isRefreshing = false, error = "Sign in to load calendar.") }
+                _uiState.update { it.copy(days = emptyList(), isLoading = false, isRefreshing = false, error = UiText.Key(SharedString.CalendarSignedOut)) }
                 return@launch
             }
             val sameOwner = cacheOwner == owner
@@ -221,7 +223,7 @@ class CalendarViewModel(
                 it.copy(
                     isLoading = false,
                     isRefreshing = false,
-                    error = if (it.days.isEmpty()) result.errorMessage("Failed to load calendar") else null,
+                    error = if (it.days.isEmpty()) result.errorText(SharedString.CalendarLoadFailed) else null,
                 )
             }
         }

@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.home
 
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.showsWholeList
 import org.siloserver.silo.tv.ui.components.TvRowStyle
 import org.siloserver.silo.tv.ui.components.isTvProgressRow
 import org.siloserver.silo.tv.ui.util.isAudiobookMediaType
@@ -9,6 +10,26 @@ import org.siloserver.silo.tv.ui.util.visibleOnTv
 internal fun List<ResolvedSection>.normalizeTvHomeSections(): List<ResolvedSection> =
     visibleOnTv().flatMap { section ->
         if (section.isTvProgressRow()) section.splitAudioProgress() else listOf(section)
+    }
+
+/**
+ * Keeps the server collection cards whose library is one TV shows this
+ * profile ([shownLibraryIds]; never an ebook library), and drops a row of
+ * collections left with none. Null [shownLibraryIds] means the libraries are
+ * not known yet: server cards wait for them, since an unverified card could
+ * be an ebook library's. Personal collections always stay.
+ */
+internal fun List<ResolvedSection>.withTvShownCollections(shownLibraryIds: Set<Int>?): List<ResolvedSection> =
+    mapNotNull { section ->
+        if (!section.isCollectionRow) return@mapNotNull section
+        val kept = section.collections.filter { card ->
+            card.isUserCollection || (shownLibraryIds != null && card.libraryIdInt in shownLibraryIds)
+        }
+        when {
+            kept.isEmpty() -> null
+            kept.size == section.collections.size -> section
+            else -> section.copy(collections = kept, totalCount = kept.size)
+        }
     }
 
 internal fun ResolvedSection.isTvAudioProgressSection(): Boolean =
@@ -20,15 +41,30 @@ internal fun ResolvedSection.tvHomeRowStyle(): TvRowStyle = when {
     else -> TvRowStyle.Poster
 }
 
+private const val CONTINUE_LISTENING_TYPE = "continue_listening"
+private const val CONTINUE_LISTENING_ID_SUFFIX = "-continue-listening"
+
+/**
+ * The server section a Home row's full page reads. A Continue Listening row
+ * made by [splitAudioProgress] keeps its own id, because the TV stores Home
+ * row order and visibility by id, but the server only knows the row it came from.
+ */
+internal fun ResolvedSection.tvHomeBrowseSectionId(): String =
+    if (sectionType == CONTINUE_LISTENING_TYPE) id.removeSuffix(CONTINUE_LISTENING_ID_SUFFIX) else id
+
 private fun ResolvedSection.splitAudioProgress(): List<ResolvedSection> {
     val audioItems = items.filter { isAudiobookMediaType(it.type) }
     if (audioItems.isEmpty()) return listOf(this)
 
     val nonAudioItems = items.filterNot { isAudiobookMediaType(it.type) }
     val listening = copy(
-        id = "$id-continue-listening",
-        sectionType = "continue_listening",
+        id = "$id$CONTINUE_LISTENING_ID_SUFFIX",
+        sectionType = CONTINUE_LISTENING_TYPE,
+        // English fallback; sectionTitle() shows the catalog's text for titleKey.
+        // The key must be replaced, or the row would inherit the source row's.
         title = "Continue Listening",
+        titleKey = "home.section.continueListening",
+        titleArgs = null,
         totalCount = audioItems.size,
         items = audioItems,
     )
@@ -37,7 +73,10 @@ private fun ResolvedSection.splitAudioProgress(): List<ResolvedSection> {
         if (nonAudioItems.isNotEmpty()) {
             add(
                 copy(
-                    totalCount = nonAudioItems.size,
+                    // Only a row that held its whole list counts its own cards.
+                    // One cut at its limit keeps the source count, so losing its
+                    // audiobooks does not make it look whole and drop "Explore all".
+                    totalCount = if (showsWholeList) nonAudioItems.size else totalCount,
                     items = nonAudioItems,
                 )
             )

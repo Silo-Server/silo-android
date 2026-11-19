@@ -78,6 +78,7 @@ class DownloadSubscriptionEvaluatorTest {
     ) = DownloadSubscription(
         id = "sub",
         serverId = "server",
+        accountId = "account",
         profileId = "profile",
         targetType = DownloadSubscriptionTargetType.Series,
         targetId = "series",

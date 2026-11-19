@@ -1,5 +1,10 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -22,7 +27,11 @@ import org.siloserver.silo.tv.ui.screens.player.resolveTvServerSubtitleTrackInde
  * had previewed did not exist. The row's own answer travels now, tagged so an
  * auto-resolved pick is never mistaken for the viewer's own.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = Application::class)
 class TvSubtitleLaunchHandoffTest {
+
+    private val text = TvPlaybackText(ApplicationProvider.getApplicationContext<Application>().resources)
 
     private val autoEnglishAlways = TvPlaybackFormatting.SubtitleAutoContext(
         preferredLanguage = "en",
@@ -56,7 +65,7 @@ class TvSubtitleLaunchHandoffTest {
     fun theHandoffIsExactlyWhatThePillShows() {
         assertEquals(
             "Auto - English · SRT",
-            TvPlaybackFormatting.subtitleValueLabel(pgsPlusSidecar, null, autoEnglishAlways),
+            TvPlaybackFormatting.subtitleValueLabel(pgsPlusSidecar, null, autoEnglishAlways, text = text),
         )
         val selection = TvPlaybackFormatting.subtitleLaunchSelection(
             version = pgsPlusSidecar,
@@ -65,7 +74,7 @@ class TvSubtitleLaunchHandoffTest {
         )
         assertEquals(
             "English · SRT",
-            TvPlaybackFormatting.subtitleValueLabel(pgsPlusSidecar, selection?.selectionIndex),
+            TvPlaybackFormatting.subtitleValueLabel(pgsPlusSidecar, selection?.selectionIndex, text = text),
         )
     }
 
@@ -78,7 +87,7 @@ class TvSubtitleLaunchHandoffTest {
             audioLanguage = "eng",
         )
 
-        assertEquals("Auto - None", TvPlaybackFormatting.subtitleValueLabel(version, null, context))
+        assertEquals("Auto - None", TvPlaybackFormatting.subtitleValueLabel(version, null, context, text = text))
         assertEquals(
             TvSubtitleLaunchSelection(-1, autoResolved = true),
             TvPlaybackFormatting.subtitleLaunchSelection(version, null, context),

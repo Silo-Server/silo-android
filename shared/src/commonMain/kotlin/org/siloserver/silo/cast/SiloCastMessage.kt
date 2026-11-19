@@ -206,6 +206,12 @@ data class SiloCastPlaybackRequest(
     val startFromBeginning: Boolean,
     val resumePosition: Double? = null,
     val libraryId: Int? = null,
+    /**
+     * True when the viewer picked [fileId]'s version on the phone, so the TV
+     * pins it (`allow_alternate_versions: false`). Omitted otherwise; older
+     * peers ignore it, as Apple's do.
+     */
+    val pinsVersion: Boolean? = null,
 )
 
 @Serializable
@@ -226,12 +232,33 @@ data class SiloCastHandoffOffer(
     val title: String? = null,
     /** The deployment identity the phone verified at [serverURL]. */
     val serverIdentity: String? = null,
+    /**
+     * Other addresses the deployment offers, from its connections document,
+     * public first, then providers. The TV may use one that reports
+     * [serverIdentity]; reachability is the TV's to test.
+     */
+    val serverEndpoints: List<SiloCastServerEndpoint>? = null,
     /** The token from an earlier `handoff_ready`, to reuse that identity from a new connection without another approval. */
     val resumeToken: String? = null,
     /** The user agreed to replace a title another profile started, after the TV answered `replace_confirmation_required`. */
     val replaceConfirmed: Boolean? = null,
     /** With [replaceConfirmed]: the title the user agreed to replace. The TV honors it only while that title is on screen. */
     val replacingContentId: String? = null,
+)
+
+/**
+ * One address in [SiloCastHandoffOffer.serverEndpoints]. Mirrors silo-apple
+ * `ServerEndpoint`: [kind] is `public` or `provider`, kept as a string so a
+ * kind this build doesn't know still decodes.
+ */
+@Serializable
+data class SiloCastServerEndpoint(
+    val url: String,
+    val kind: String,
+    /** Provider slug for a `provider` endpoint, e.g. `tailscale`. */
+    val provider: String? = null,
+    /** Provider display name from its manifest. */
+    val displayName: String? = null,
 )
 
 @Serializable
@@ -324,6 +351,15 @@ data class SiloCastPlaybackState(
     val hasNextEpisode: Boolean,
     val nextEpisodeTitle: String? = null,
     val error: String? = null,
+    /**
+     * Absolute, signed poster URL for the playing title (the series poster for
+     * an episode), so an integration can fetch artwork without its own Silo
+     * sign-in. The TV re-signs it before it expires. Omitted when unknown;
+     * older peers ignore it, so it needs no feature flag.
+     */
+    val posterUrl: String? = null,
+    /** Synopsis of the playing title. Omitted when unknown. */
+    val overview: String? = null,
 )
 
 /**

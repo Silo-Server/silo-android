@@ -18,6 +18,70 @@ import kotlin.test.assertTrue
 
 class TvTrackSelectionPersistenceTest {
     @Test
+    fun autoClearedOnThePageOutlivesItsWriteInTheAudioPreview() {
+        // The details still answer German (1); Auto was chosen here and its
+        // DELETE has landed, so nothing is pending any more.
+        val version = FileVersion(
+            fileId = 7,
+            audioTracks = listOf(AudioTrack(language = "eng", codec = "aac"), AudioTrack(language = "deu", codec = "aac")),
+            effectiveAudioTrackIndex = 1,
+        )
+        val detail = org.siloserver.silo.model.catalog.ItemDetail(
+            contentId = "e1", type = "episode", title = "E1", seriesId = "show", versions = listOf(version),
+        )
+        val before = TvItemDetailUiState()
+        assertEquals(1, before.automaticAudioOrdinal(detail, version))
+
+        val cleared = before.copy(
+            pickedSeriesAudioChoices = mapOf("show" to org.siloserver.silo.model.playback.PendingSeriesAudioChoice(null)),
+        )
+        // No capabilities known in this state, so no device-language answer either.
+        assertNull(cleared.automaticAudioOrdinal(detail, version))
+
+        // Once a refreshed detail answers differently (here: a newer pick of
+        // English made in the player), the page's own pick stops applying.
+        val withBaseline = cleared.copy(
+            pickedAudioBaselines = mapOf("show" to org.siloserver.silo.model.playback.PickedAudioBaseline.of(detail)),
+        )
+        assertNull(withBaseline.automaticAudioOrdinal(detail, version))
+        val refreshedVersion = version.copy(effectiveAudioTrackIndex = 0)
+        val refreshed = detail.copy(versions = listOf(refreshedVersion))
+        assertEquals(0, withBaseline.automaticAudioOrdinal(refreshed, refreshedVersion))
+    }
+
+    @Test
+    fun aRememberedSessionTrackYieldsToTheNewerSeriesChoice() {
+        // Episode tracks: English (0), Japanese (1); subtitles: English (0), English SDH (1).
+        val version = FileVersion(
+            fileId = 4,
+            audioTracks = listOf(AudioTrack(language = "eng", codec = "eac3"), AudioTrack(language = "jpn", codec = "ac3")),
+            subtitleTracks = listOf(
+                SubtitleTrack(index = 2, language = "eng", codec = "subrip", title = "English"),
+                SubtitleTrack(index = 3, language = "eng", codec = "subrip", title = "SDH"),
+            ),
+            effectiveAudioTrackIndex = 1,
+        )
+        val sdh = org.siloserver.silo.model.playback.SubtitleTrackSignature(
+            source = "embedded", language = "en", codec = "subrip", label = "SDH", hearingImpaired = true,
+        )
+        val detail = org.siloserver.silo.model.catalog.ItemDetail(
+            contentId = "e04", type = "episode", title = "E4", seriesId = "show",
+            versions = listOf(version), effectiveSubtitleMode = "always", effectiveSubtitleTrackSignature = sdh,
+        )
+
+        // The last playback ended on English / Off; the series now holds Japanese + SDH.
+        assertEquals(null to null, sessionTracksConsistentWithSeriesChoice(detail, version, audio = 0, subtitle = -1))
+        // Values that agree with the series choice stay.
+        assertEquals(1 to 1, sessionTracksConsistentWithSeriesChoice(detail, version, audio = 1, subtitle = 1))
+        // No series subtitle choice: the session value stands.
+        val noChoice = detail.copy(effectiveSubtitleTrackSignature = null)
+        assertEquals(1 to 0, sessionTracksConsistentWithSeriesChoice(noChoice, version, audio = 1, subtitle = 0))
+        // Off for the series: only Off agrees.
+        val off = detail.copy(effectiveSubtitleMode = "off", effectiveSubtitleTrackSignature = null)
+        assertEquals(1 to null, sessionTracksConsistentWithSeriesChoice(off, version, audio = 1, subtitle = 0))
+    }
+
+    @Test
     fun nextUpSelectionRecordsEpisodeFileAndCombinedSubtitleFingerprint() = runTest {
         val version = version()
         val payload = buildTrackSelectionPersistence(
@@ -62,7 +126,7 @@ class TvTrackSelectionPersistenceTest {
     }
 
     @Test
-    fun playbackReturnPreservesPreviouslySelectedAudio() {
+    fun playbackReturnLeavesAudioToTheSeriesChoice() {
         val contentId = "episode-playback-return-audio"
         TvDetailTrackSelectionSession.remember(contentId, fileId = 22, audio = 1, subtitle = 0)
 
@@ -75,7 +139,10 @@ class TvTrackSelectionPersistenceTest {
             durationSeconds = 120.0,
         )
 
-        assertEquals(1, TvDetailTrackSelectionSession.recall(contentId)?.audio)
+        // The player does not report audio, and the viewer may have picked
+        // again there: the page's older pick must not come back as a selection.
+        assertNull(TvDetailTrackSelectionSession.recall(contentId)?.audio)
+        assertEquals(2, TvDetailTrackSelectionSession.recall(contentId)?.subtitle)
     }
 
     @Test
@@ -129,8 +196,10 @@ class TvTrackSelectionPersistenceTest {
 
         assertEquals(37.0, playbackReturn?.positionSeconds)
         assertNull(TvDetailTrackSelectionSession.consumePlaybackReturn(contentId))
+        // The subtitle the player ended on remains; the audio is left to the
+        // series choice (see playbackReturnLeavesAudioToTheSeriesChoice).
         assertEquals(
-            TvDetailTrackSelectionSession.Saved(fileId = 22, audio = 1, subtitle = 2),
+            TvDetailTrackSelectionSession.Saved(fileId = 22, audio = null, subtitle = 2),
             TvDetailTrackSelectionSession.recall(contentId),
         )
     }

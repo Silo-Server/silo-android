@@ -68,6 +68,8 @@ data class Account(
     @SerialName("download_allowed") val downloadAllowed: Boolean = false,
     /** Present only inside an admin impersonation session. */
     val impersonation: Impersonation? = null,
+    /** The account holds a temporary password; absent from servers that predate it. */
+    @SerialName("password_change_required") val passwordChangeRequired: Boolean? = null,
 )
 
 @Serializable

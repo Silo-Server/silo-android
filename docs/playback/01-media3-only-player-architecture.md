@@ -92,9 +92,10 @@ Android sends one versioned request containing:
 - user `subtitle_fidelity_preference`;
 - current video, display, audio, and subtitle capabilities;
 - `output_route_generation` and any user bandwidth cap (`bandwidth_cap_kbps`).
-  It sends no bandwidth estimate (see 3.6) and always sends `metered: false`:
-  the server ignores it, and older servers require it on `/api/v2` but drop
-  `auto` to their metered limit on `true`;
+  A start may carry the bandwidth probe's estimate and a lowering replan its
+  step-down estimate (see 3.6). It always sends `metered: false`: the server
+  ignores it, and older servers require it on `/api/v2` but drop `auto` to
+  their metered limit on `true`;
 - app, SDK, ABI, form-factor, and protocol feature versions;
 - start position and any active playback-session identity;
 - for recovery, `replan_request_id`, failed `plan_id`, `plan_attempt_id`,
@@ -173,10 +174,11 @@ own rung labels picked from the player's Quality menu; the UI may label `2160p`
 as “4K.” Their meanings are:
 
 - `auto`: play the source whenever the device and the measured connection can
-  carry it, converting only when its capabilities, the bandwidth estimate, the
-  user's bandwidth cap, or a server/administrator limit require it;
+  carry it, converting only when its capabilities, the bandwidth estimate, a
+  learned limit, the user's bandwidth cap, or a server/administrator limit
+  require it;
 - a resolution rung: maximum output resolution with no upscaling. It ignores
-  the bandwidth estimate; only the cap still applies.
+  the bandwidth estimate and any learned limit; only the cap still applies.
 
 There is no Original choice. A stored or linked `original` (also `source` and
 `max`) reads as `auto`, and video requests never send it, because older servers
@@ -188,14 +190,208 @@ The server returns the effective codec, range, resolution, bitrate, and reason.
 Initial HLS transcodes use one effective rendition; true multi-variant ABR is a
 separate protocol feature and must not be implied by the word “adaptive.”
 
+Repeated rebuffering lowers quality, as the server repo's
+`docs/design/2026-10-17-buffering-quality.md` specifies. The phone and TV
+players run one `BufferingQualityController` (`shared/`), fed by one Media3
+adapter, `BufferingQualityPlayerAdapter` (`android-shared/`). It has the web
+player's stall detector and the spec's state machine, and
+`BufferingQualityVectorsTest` replays the spec's vendored `vectors.json`. Its
+mode is `playback.buffering_quality_mode` (Settings → Lower quality when
+buffering): `always`, the default, lowers Auto at once and offers **Restore
+quality**; `ask` asks first; `never` only detects and reports. A quality the
+viewer picked is always asked about. Lowering Auto is a `quality_change` replan
+with the step-down estimate (see 3.6); lowering a picked rung names the next
+rung's label and carries no estimate. In a Watch Party the controller is
+suspended: it keeps timing stalls and summarizing plans, but never lowers,
+prompts or shows a notice; leaving the room starts fresh history with the
+startup grace over. A lowering is never queued: while another replan, seek
+recovery or track change is in flight it is refused and watched again later.
+The phone holds a **Restore quality** that meets one until it ends, dropping
+the kept estimate at once; TV merges it into the staged request. An adoption
+the controller did not ask for (a track change, a recovery) drops a pending
+lowering silently.
+
+The controller's answer (**Keep quality**, **Restore quality**), its "Can't
+lower quality" notice and its re-offer wait belong to the title. Another
+attempt at the same title (Retry, a 404 renewal, failure recovery) keeps them;
+other content resets them. A quality change clears them: a pick in the Quality
+menu, a version the viewer picks, or the phone's move to the quality pair of
+the network it is now on.
+
+When the server advertises `playback_plan_summary_v1`, each plan that stops
+playing is reported in a `plan_summary` route event: its stalls, delivered
+bitrate, the rate its media arrived at (`throughput_kbps`, see 3.6), mode,
+last buffering action, and the estimate the request that made the plan carried
+(a seek reanchor's own, for its plan). Every stall's time counts in the total
+and the longest; only stalls of 1 s or more count in `stall_count`. A pause,
+seek or reload ends a stall uncounted, an outage drops its time, and a stall
+still running when its plan ends counts. Until the plan first plays, a reload
+or seek is part of the start's wait, which is timed from the first wait; a
+pause before then ends the current wait uncounted without ending that. An
+outage ends only when the plan's media data arrives again or playback runs; a
+playlist or subtitle load that succeeds, or the network coming back, does not
+end it, and an adopted plan starts with none. A failed plan is reported when the error shows.
+
+Only running out of data is a stall. Media3 also reports `STATE_BUFFERING`
+when its decoder falls behind and drops to the next keyframe, with seconds of
+media still buffered. The adapter reports a wait that begins with more than
+`RENDERER_WAIT_BUFFER_MS` (1 s) buffered past the playhead as a renderer wait,
+which the controller does not count, and turns it into a stall if the buffer
+falls to that threshold before playback resumes, checking every 200 ms while
+the wait lasts. A tunneled player's waits are always network waits: its
+buffered duration includes samples already in the codec, which does not fall
+behind that way. A phone subtitle or cue refresh rebuilds the media item and
+marks a reload, which is not a stall. A buffering pill waits, its timer
+frozen, while an intro, recap, credits or Next Up pill shows, while the TV HUD
+is open, while the player is in picture in picture and, on the phone, while
+Silo is in the background. A display-only notice shows for 5 s of visible
+time, waiting while a lifecycle notice holds the slot or the player is hidden.
+
+The startup stall detector (section 8) treats a starved decoder, buffering with
+under 5 s buffered ahead, as a transport stall. While data still arrives, that
+stall belongs to the buffering controller, which lowers quality, rather than to
+a same-plan reopen.
+
+The server remembers what a lowering learned. A start or replan
+carrying `bandwidth_estimate_source: "observed_rebuffer"` records a learned
+limit for this user, device (`X-Silo-Device-Id`) and connection for 7 days from
+the last observation, and Auto plans under it. A plan the limit lowered carries
+`playback_plan.bandwidth_limit`, and the Quality menu labels Auto “Auto ·
+limited after buffering”. **Restore quality** sends `learned_limit: "clear"`,
+and `never` mode sends `learned_limit: "ignore"` on every start and replan, so
+a limit learned by another profile on this device does not reach it. The
+session manager reads the mode from the profile's stored setting on each
+request, so a start never goes out before the mode is known. Cast requests
+always send `learned_limit: "ignore"` and no estimate: this device's limits
+are not the receiver's. Settings →
+Playback shows the limit for the current connection with a **Reset**
+(`DELETE /api/v2/playback/connection/learned-limit`). Only a server that
+advertises `buffering_quality_v1` gets `buffering_quality_v1` in
+`client_features`, `bandwidth_estimate_source`, and `learned_limit`;
+`gatedForBufferingQuality` strips them for any other server and keeps the
+estimate, and nothing is learned there.
+
 ### 3.6 Network inputs
 
-Requests carry no `bandwidth_estimate_kbps`, so `auto` plays the source
-whenever the device can. Media3's meter times loads that stall on a full buffer
-or wait on a live transcode, so its figure can understate the link and make
-`auto` convert the next title. A measured estimate waits for the server's
-bandwidth probe. `PlaybackNetworkMonitor` still reports Media3's figure in
+A request sends `bandwidth_estimate_kbps` in two cases only:
+
+- **The probe estimate, on a start.** A start sends the highest current
+  reading, a speed test or a playback sample, with
+  `bandwidth_estimate_source: "probe"`. It is a hint:
+  the server uses it only to rule out a source above 80% of the estimate, and
+  only when playback starts. Replans never carry it.
+- **The step-down estimate, on lowering replans.** A replan that lowers Auto
+  after repeated rebuffering sends `floor(delivered bitrate × 7 / 10)` with
+  `bandwidth_estimate_source: "observed_rebuffer"`. Later Auto replans in the
+  same playback keep sending that estimate, without a source, so a failure or
+  track replan does not lift it. The carry ends with **Restore quality**, a
+  quality change the controller did not send, or a new playback attempt.
+
+Media3's bandwidth meter is never sent. It times loads that stall on a full
+buffer or wait on a live transcode, so its figure can understate the link and
+make `auto` convert the next title. `PlaybackNetworkMonitor` reports it only in
 route events and the diagnostics bundle.
+
+The speed test follows the server design's *Connection speed test*. One
+`BandwidthProbeScheduler` per process (`android-shared/.../player/probe/`)
+runs it, and `SpeedTestMeter` (`shared/`) holds its arithmetic, which
+`BandwidthProbeVectorsTest` checks against the spec's `probe_cases`:
+
+- **Endpoint.** Only for a server whose capability `features` carry
+  `connection_speed_v1` and that names a `bandwidth_probe_url`, the probe on the
+  path this client's media takes. That URL is the server's own and goes out
+  with the app's normal auth. A lookup over the local route names the
+  server's LAN address, so the client moves that URL back onto the saved
+  address: there it carries the app's credentials, and the route still takes
+  it, without reading the body ahead. A redirect to a short-lived proxy URL is
+  followed once, without credentials. The same capability response names the target
+  (`bandwidth_probe_target_kbps`), whether automatic tests are on
+  (`bandwidth_probe_automatic`) and the reading lifetime
+  (`bandwidth_probe_max_age_seconds`, 7 days when absent).
+- **Measurement.** One download over one connection, timed in 500 ms windows
+  from the first byte. Window 0 is TCP ramp-up and never counts. A ticker
+  closes each window on the clock, so a window with no bytes counts as 0. The
+  quick test asks for 100 MB and stops at the end of the first window after
+  window 0 that reaches the target, reporting the target as a lower bound;
+  otherwise it reads 3 s and reports the rate over the last 1 s. The accurate
+  test asks for 1 GB, reads 10 s and reports the rate over the last 3 s. A
+  link fast enough to deliver every requested byte before any window after
+  window 0 completes (100 MB in under a second) reports the whole-transfer
+  average instead, a lower bound, or the target when a quick test's average
+  reaches it. A rate above 1 Gbps is reported as 1,000,000 kbps, a lower
+  bound. A result under 100 kbps, a target under 100 included, measured
+  nothing. A probe with no byte in 10 s is abandoned.
+- **When.** A check runs on sign-in, a return to the foreground, a switch to
+  another profile (its target follows the profile's libraries), a network
+  change or the network being validated again, and at no other time. None
+  runs under a borrowed TV identity (a remote or Cast hand-off). It reads this device's readings for the
+  connection (`probe` and `playback_sample` in
+  `GET /api/v2/playback/connection`) at once, so a playback start in the first
+  seconds already sends them. Only the quick test waits, 5 s, and then runs
+  only if automatic tests are on, no current reading proves the link, and it
+  still may (nothing plays or starts, and no `429` from that server is waiting
+  out its `Retry-After`). A `429` holds that server's automatic tests until
+  its `Retry-After` (30 s when missing or unreadable, at least 1 s), across
+  profile and account changes, while the process runs. A settled rate proves
+  the link; a lower bound proves
+  it only while it is at least the current target, so a raised target makes the
+  test due again; without a target any current reading proves it. A check that
+  fails or is refused waits for the next one. **Test speed** always runs the
+  accurate test. Leaving the foreground stops it.
+- **When not.** Never on a metered or cellular network, by the rule that picks
+  the phone's cellular pair (`usesCellularQuality`, which ignores a VPN's own
+  metered flag), and never while local media plays or loads. The process's one Media3 player
+  (`ActivePlayerHolder`) is the playing signal. A video start also tells the
+  probe, which cancels a running test and holds off automatic tests for 60 s.
+  A check still reads the server's readings while media plays, since the next
+  start needs them, and **Test speed** runs as soon as nothing plays.
+- **Reading.** A probe and a playback sample, each current while younger than
+  the lifetime, for the server, network and local route they were taken on. A
+  reading outside 100–1,000,000 kbps, the bounds of `bandwidth_estimate_kbps`,
+  is never kept, the server's or this device's, and one dated ahead of the
+  device's clock counts as now. A start sends the highest current one only to
+  that server, and only when its media takes that route (a Watch Party start
+  stays on the saved address). A network change (lost, or another network
+  handle, transport, metering, VPN state, or this server's local route coming
+  or going) or a server change discards the readings in hand, and the next
+  check looks for the new connection's.
+- **Reporting.** Each result goes to
+  `POST /api/v2/playback/bandwidth-probe/results` with its transport
+  (`wifi`, `ethernet`, `cellular` or `other`) and `lower_bound: true` when it
+  is one. It is kept for starts only once the server stored it, or when the
+  POST got no answer; a result the server refused is never kept. A playback
+  start or leaving the foreground does not cancel the POST.
+
+Playback measures the link too. `PlaybackThroughputMeter` listens to the
+player's video data sources. A request receives from its first read to its
+last, and only a request that received for at least 1 s counts, its bytes after
+the first read and its time; time in which several counted requests were
+receiving counts once. A short request on a warm connection, such as one HLS
+segment, arrives at the connection's burst rate, which on the sandbox was about
+twice what the speed test sustained. Each `plan_summary` sends the figure as
+`throughput_kbps` and resets it; with no counted request, or under 100 kbps,
+it sends nothing. A plan adopted with no plan before it resets the figure
+first, so it counts only from its own adoption. The server keeps the highest
+as this device's `playback_sample`. A progressive
+request held open while the buffer is full reads low, which keeps the figure a
+lower bound.
+
+Settings → Playback → Connection, shown only while the server advertises
+`connection_speed_v1`, displays the latest probe from
+`GET /api/v2/playback/connection` or this device's own stored one when newer,
+“Faster than 115 Mbps” for a lower bound, and without a probe the playback
+sample (“Faster than 51 Mbps · seen during playback”). **Test speed** runs the
+accurate test in the foreground under the same gates, up to 10 s; when its
+report fails, the row says so and keeps the server's reading. It also shows the
+server's `auto_budget_kbps`, which the client displays and never computes. On
+cellular and metered networks the note that speed tests are skipped replaces
+the speed, and **Test speed** and the budget hide. Settings reads the
+connection when Playback settings opens, after a network change while it is
+open, and after **Reset** and **Test speed**. Rates round down: kbps below
+1 Mbps, one decimal below 10 Mbps, whole Mbps from there, with no digit
+grouping. Against a server whose settings manifest lacks
+`playback.buffering_quality_mode`, Settings hides its row and the players run
+`always`.
 
 The phone sends its cellular pair (`playback.cellular_preferred_quality` and
 `playback.cellular_max_bitrate_kbps`) as `quality_preference` and

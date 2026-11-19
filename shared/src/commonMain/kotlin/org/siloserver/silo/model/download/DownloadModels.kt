@@ -218,6 +218,8 @@ data class DownloadCapability(
     @SerialName("season_download") val seasonDownload: Boolean = false,
     @SerialName("series_monitoring") val seriesMonitoring: Boolean = false,
     @SerialName("monitoring_modes") val monitoringModes: List<String> = emptyList(),
+    /** A `revoked` entry was revoked by an administrator: delete the local copy, then the entry (§9.3). */
+    @SerialName("revoked_removes_local") val revokedRemovesLocal: Boolean = false,
 ) {
     /** The label for [quality], with the server's resolution ceiling: "10 Mbps · up to 1080p". */
     fun label(quality: DownloadQuality): String =

@@ -3,6 +3,8 @@ package org.siloserver.silo.audiobook
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.SharedString
 
 class AudiobookChaptersTest {
 
@@ -64,8 +66,8 @@ class AudiobookChaptersTest {
 
     @Test
     fun `count label is one-based current of total`() {
-        assertEquals("Chapter 2 of 3", AudiobookChapters.countLabel(chapters, 150.0))
-        assertEquals("Chapter 1 of 3", AudiobookChapters.countLabel(chapters, 0.0))
+        assertEquals(chapterOf(2, 3), AudiobookChapters.countLabel(chapters, 150.0))
+        assertEquals(chapterOf(1, 3), AudiobookChapters.countLabel(chapters, 0.0))
     }
 
     @Test
@@ -115,15 +117,20 @@ class AudiobookChaptersTest {
 
     @Test
     fun `chapter label uses Chapter N for numeric or blank titles`() {
-        assertEquals("Chapter 1", audiobookChapterLabel(0, "1"))
-        assertEquals("Chapter 8", audiobookChapterLabel(7, "007"))
-        assertEquals("Chapter 3", audiobookChapterLabel(2, "   "))
-        assertEquals("Chapter 1", audiobookChapterLabel(0, ""))
+        assertEquals(chapter(1), audiobookChapterLabel(0, "1"))
+        assertEquals(chapter(8), audiobookChapterLabel(7, "007"))
+        assertEquals(chapter(3), audiobookChapterLabel(2, "   "))
+        assertEquals(chapter(1), audiobookChapterLabel(0, ""))
     }
+
+    private fun chapter(number: Int) = UiText.Key(SharedString.AudiobookChapter, listOf(UiText.Number(number)))
+
+    private fun chapterOf(number: Int, total: Int) =
+        UiText.Key(SharedString.AudiobookChapterOf, listOf(UiText.Number(number), UiText.Number(total)))
 
     @Test
     fun `chapter label keeps meaningful titles trimmed`() {
-        assertEquals("The Body in the Library", audiobookChapterLabel(0, "  The Body in the Library  "))
-        assertEquals("Prologue", audiobookChapterLabel(0, "Prologue"))
+        assertEquals(UiText.Raw("The Body in the Library"), audiobookChapterLabel(0, "  The Body in the Library  "))
+        assertEquals(UiText.Raw("Prologue"), audiobookChapterLabel(0, "Prologue"))
     }
 }

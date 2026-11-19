@@ -14,7 +14,9 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.android.ui.components.SiloTopBar
+import org.siloserver.silo.common.R as CommonR
 
 @Composable
 fun PersonalListsScreen(
@@ -22,12 +24,12 @@ fun PersonalListsScreen(
     onItemClick: (String) -> Unit,
 ) {
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
-    val tabs = listOf("Favorites", "Watchlist")
+    val tabs = listOf(CommonR.string.personal_favorites_title, CommonR.string.personal_watchlist_title)
 
     Scaffold(
         topBar = {
             SiloTopBar(
-                title = "Favorites & Watchlist",
+                title = stringResource(CommonR.string.personal_listsTitle),
                 onBackClick = onBackClick,
             )
         },
@@ -43,7 +45,7 @@ fun PersonalListsScreen(
                     Tab(
                         selected = selectedTabIndex == index,
                         onClick = { selectedTabIndex = index },
-                        text = { Text(label) },
+                        text = { Text(stringResource(label)) },
                     )
                 }
             }

@@ -4,7 +4,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.res.stringResource
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 /**
  * TV "Create profile" form. Mirrors the phone's CreateProfileScreen and calls
@@ -31,7 +34,8 @@ fun TvCreateProfileScreen(
 
     TvProfileForm(
         state = TvProfileFormState(
-            title = "New Profile",
+            title = stringResource(CommonR.string.newProfile_title),
+            subtitle = stringResource(CommonR.string.newProfile_pickLook),
             name = state.name,
             selectedAvatar = state.selectedAvatar,
             avatarStyleId = state.avatarStyleId,
@@ -43,10 +47,10 @@ fun TvCreateProfileScreen(
             pin = state.pin,
             qualityPreference = null,
             subtitleMode = state.subtitleMode,
-            pinHelper = "4-Digit PIN",
-            submitLabel = "Create Profile",
+            pinHelper = stringResource(CommonR.string.profiles_form_pin),
+            submitLabel = stringResource(CommonR.string.newProfile_create),
             isSubmitting = state.isLoading,
-            error = state.error,
+            error = state.error?.text(),
         ),
         callbacks = TvProfileFormCallbacks(
             onNameChanged = viewModel::onNameChanged,

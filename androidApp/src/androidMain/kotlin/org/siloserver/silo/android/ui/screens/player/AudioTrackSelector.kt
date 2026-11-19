@@ -21,8 +21,10 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Bottom sheet for selecting an audio track.
@@ -37,6 +39,7 @@ fun AudioTrackSelector(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState()
+    val defaultTag = stringResource(CommonR.string.detail_trackDefault)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -49,7 +52,7 @@ fun AudioTrackSelector(
                 .padding(bottom = 32.dp),
         ) {
             Text(
-                text = "Audio",
+                text = stringResource(CommonR.string.player_tracks_audio),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
@@ -64,7 +67,7 @@ fun AudioTrackSelector(
                 ) { index, track ->
                     val label = track.title
                         ?: track.language?.uppercase()
-                        ?: "Audio ${index + 1}"
+                        ?: stringResource(CommonR.string.player_tracks_audioNumbered, index + 1)
 
                     val detail = buildString {
                         track.codec?.uppercase()?.let { append(it) }
@@ -77,7 +80,7 @@ fun AudioTrackSelector(
                         }
                         if (track.isDefault) {
                             if (isNotEmpty()) append(" - ")
-                            append("Default")
+                            append(defaultTag)
                         }
                     }.ifEmpty { null }
 
@@ -113,7 +116,7 @@ private fun AudioOptionRow(
         if (isSelected) {
             Icon(
                 imageVector = Icons.Default.Check,
-                contentDescription = "Selected",
+                contentDescription = stringResource(CommonR.string.player_menu_selected),
                 tint = MaterialTheme.colorScheme.primary,
             )
         } else {

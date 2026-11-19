@@ -6,6 +6,7 @@ import org.siloserver.silo.model.download.statusEnum
 
 data class OfflineMedia(
     val serverId: String,
+    val accountId: String,
     val profileId: String,
     val fileId: Int,
     val uriString: String,
@@ -26,6 +27,7 @@ class OfflineMediaResolver(
 
     suspend fun listLocalMedia(
         serverId: String,
+        accountId: String,
         profileId: String,
         contentId: String,
     ): List<OfflineMedia> {
@@ -33,7 +35,7 @@ class OfflineMediaResolver(
         // resolving offline media; otherwise a pre-cutover download could read as
         // missing on the first cold start. Memoized: a no-op after it runs once.
         legacyImporter.awaitImport(System.currentTimeMillis())
-        return metadata.listSidecars(serverId, profileId)
+        return metadata.listSidecars(serverId, accountId, profileId)
             .filter { sidecar ->
                 sidecar.record.contentId == contentId &&
                     sidecar.record.statusEnum() == DownloadStatus.Completed
@@ -41,9 +43,10 @@ class OfflineMediaResolver(
             .mapNotNull { sidecar ->
                 val fileId = sidecar.record.mediaFileId
                 // Bytes are resolved by fileId (sync); metadata confirms scope/content.
-                val media = storage.locateLocalMedia(serverId, profileId, fileId) ?: return@mapNotNull null
+                val media = storage.locateLocalMedia(serverId, accountId, profileId, fileId) ?: return@mapNotNull null
                 OfflineMedia(
                     serverId = serverId,
+                    accountId = accountId,
                     profileId = profileId,
                     fileId = fileId,
                     uriString = media.uriString,
@@ -56,12 +59,13 @@ class OfflineMediaResolver(
 
     suspend fun findLocalMedia(
         serverId: String,
+        accountId: String,
         profileId: String,
         contentId: String,
         requestedFileId: Int?,
         allowFallback: Boolean = true,
     ): OfflineMedia? {
-        val candidates = listLocalMedia(serverId, profileId, contentId)
+        val candidates = listLocalMedia(serverId, accountId, profileId, contentId)
             .let { matches ->
                 if (requestedFileId == null) {
                     matches

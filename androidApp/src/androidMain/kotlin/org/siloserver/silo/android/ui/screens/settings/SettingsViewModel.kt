@@ -16,6 +16,7 @@ import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
 import org.siloserver.silo.common.settings.SeekIntervalStore
 import org.siloserver.silo.common.player.AudiobookSettingsStore
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.auth.User
@@ -25,16 +26,18 @@ import org.siloserver.silo.model.download.effectiveDefault
 import org.siloserver.silo.model.download.labelFor
 import org.siloserver.silo.repository.DownloadsRepository
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
-import org.siloserver.silo.model.settings.CardCaption
 import org.siloserver.silo.model.settings.CardPosterSize
 import org.siloserver.silo.model.settings.CardPresentation
-import org.siloserver.silo.model.settings.CardPresentationPreset
 import org.siloserver.silo.model.settings.CellularQuality
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.NotificationsRepository
+import org.siloserver.silo.repository.PlaybackConnectionRepository
+import org.siloserver.silo.common.player.probe.BandwidthProbeScheduler
+import org.siloserver.silo.common.settings.ConnectionSpeedSettingsModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,15 +46,18 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.settings.SettingsSaveError
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Subtitle display mode. [wire] is the `playback.subtitle_mode` enum member
  * the settings contract declares — the labels are display only.
  */
-enum class SubtitleMode(val label: String, val wire: String) {
-    OFF("Off", "off"),
-    AUTO("Auto", "auto"),
-    ALWAYS("Always", "always");
+enum class SubtitleMode(@StringRes val label: Int, val wire: String) {
+    OFF(CommonR.string.settingsManifest_playback_subtitle_mode_option_off, "off"),
+    AUTO(CommonR.string.settingsManifest_playback_subtitle_mode_option_auto, "auto"),
+    ALWAYS(CommonR.string.settings_subtitles_mode_always, "always");
 
     companion object {
         fun fromWire(value: String?): SubtitleMode =
@@ -90,11 +96,24 @@ data class SettingsUiState(
     val audioLanguage: String = "",
     val audioLanguageSuggestions: List<String> = emptyList(),
     val introSkipMode: IntroSkipMode = IntroSkipMode.Default,
+    val bufferingQualityMode: BufferingQualityMode = BufferingQualityMode.Default,
+    /** The server's settings manifest is known to define the buffering mode: its row shows only then. */
+    val bufferingQualityModeSupported: Boolean = false,
+    /**
+     * The limit the server learned for this device on this connection after
+     * buffering, or null when there is none or the server does not advertise
+     * the feature. Read with the connection ([ConnectionSpeedSettingsModel]).
+     */
+    val learnedLimit: PlaybackLearnedLimitV2? = null,
+    /** True after a reset the server did not confirm, until the next attempt. */
+    val learnedLimitResetFailed: Boolean = false,
     val autoSkipCredits: Boolean = false,
     val pictureInPictureEnabled: Boolean = true,
     val dolbyVisionEnabled: Boolean = true,
     val dvProfile7HDR10Fallback: Boolean = false,
     val subtitleMatchesDevice: Boolean = false,
+    /** "Only on This Device": subtitle edits stay on this device instead of the profile. */
+    val subtitleUsesDeviceOverride: Boolean = false,
     val showAudiobooks: Boolean = false,
     val subtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
         org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
@@ -152,7 +171,7 @@ data class SettingsUiState(
     /** Spoiler protection for unwatched episodes; toggles show only when supported. */
     val episodeSpoilers: EpisodeSpoilerState = EpisodeSpoilerState(),
     /** Why the last spoiler switch change wasn't saved. */
-    val episodeSpoilerSaveError: String? = null,
+    val episodeSpoilerSaveError: SettingsSaveError? = null,
 
     // Notifications (in-app). Section is hidden entirely unless the server
     // reports in-app notifications are enabled AND preferences load.
@@ -174,6 +193,8 @@ class SettingsViewModel(
     audiobookSettingsStore: AudiobookSettingsStore,
     private val downloadsRepository: DownloadsRepository? = null,
     private val serverRegistry: ServerRegistry? = null,
+    private val playbackConnection: PlaybackConnectionRepository? = null,
+    bandwidthProbe: BandwidthProbeScheduler? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -186,8 +207,26 @@ class SettingsViewModel(
     private var subtitleModeConfirmedGeneration = 0L
     private var forcedSubtitlesConfirmedGeneration = 0L
 
+    /** A second Reset press while the first is in flight is ignored. */
+    private var learnedLimitResetInFlight = false
+
     /** Profile-wide video and audiobook skip intervals (settings revision 9). */
     val seekIntervals = SeekIntervalSettingsModel(seekIntervalStore, audiobookSettingsStore, viewModelScope)
+
+    /**
+     * Playback → Connection: the measured speed, **Test speed** and Auto's
+     * budget. Null without the probe; hidden unless the server measures speed.
+     * On cellular and metered networks the phone's Cellular quality applies.
+     */
+    val connectionSpeed: ConnectionSpeedSettingsModel? = bandwidthProbe?.let { probe ->
+        playbackConnection?.let { connection ->
+            ConnectionSpeedSettingsModel(probe, connection, viewModelScope, hasCellularQuality = true)
+        }
+    }.also { model ->
+        model?.settings?.onEach { settings ->
+            _uiState.update { it.copy(learnedLimit = settings?.connection?.learnedLimit) }
+        }?.launchIn(viewModelScope)
+    }
 
     init {
         loadUserInfo()
@@ -290,6 +329,12 @@ class SettingsViewModel(
                 )
             }
         }.launchIn(viewModelScope)
+        playerSettingsStore.bufferingQualityModeFlow.onEach { mode ->
+            _uiState.update { it.copy(bufferingQualityMode = mode) }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.bufferingQualityModeSupportedFlow.onEach { supported ->
+            _uiState.update { it.copy(bufferingQualityModeSupported = supported) }
+        }.launchIn(viewModelScope)
         combine(
             playerSettingsStore.cellularPreferredQualityFlow,
             playerSettingsStore.cellularMaxBitrateKbpsFlow,
@@ -328,6 +373,9 @@ class SettingsViewModel(
         }.launchIn(viewModelScope)
         playerSettingsStore.subtitleMatchesDeviceFlow.onEach { enabled ->
             _uiState.update { it.copy(subtitleMatchesDevice = enabled) }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.subtitleUsesDeviceOverrideFlow.onEach { enabled ->
+            _uiState.update { it.copy(subtitleUsesDeviceOverride = enabled) }
         }.launchIn(viewModelScope)
         playerSettingsStore.showAudiobooksFlow.onEach { enabled ->
             _uiState.update { it.copy(showAudiobooks = enabled) }
@@ -438,19 +486,9 @@ class SettingsViewModel(
         viewModelScope.launch { cardPresentationStore.hydrateIfNeeded() }
     }
 
-    fun setCardPreset(preset: CardPresentationPreset) {
-        setCardPresentation(preset.presentation)
-    }
-
     fun setCardPosterSize(size: CardPosterSize) {
         setCardPresentation(
             _uiState.value.cardPresentation.presentation.copy(posterSize = size),
-        )
-    }
-
-    fun setCardCaption(caption: CardCaption) {
-        setCardPresentation(
-            _uiState.value.cardPresentation.presentation.copy(caption = caption),
         )
     }
 
@@ -567,6 +605,33 @@ class SettingsViewModel(
         viewModelScope.launch { playerSettingsStore.setIntroSkipMode(mode) }
     }
 
+    fun setBufferingQualityMode(mode: BufferingQualityMode) {
+        viewModelScope.launch { playerSettingsStore.setBufferingQualityMode(mode) }
+    }
+
+    /**
+     * Forgets the learned limit, then reads the connection again so the row
+     * goes and the Connection group's Auto budget, which the limit capped,
+     * catches up.
+     */
+    fun resetLearnedLimit() {
+        val repository = playbackConnection ?: return
+        if (learnedLimitResetInFlight) return
+        learnedLimitResetInFlight = true
+        _uiState.update { it.copy(learnedLimitResetFailed = false) }
+        viewModelScope.launch {
+            try {
+                if (repository.resetLearnedLimit() is ApiResult.Success) {
+                    connectionSpeed?.read()
+                } else {
+                    _uiState.update { it.copy(learnedLimitResetFailed = true) }
+                }
+            } finally {
+                learnedLimitResetInFlight = false
+            }
+        }
+    }
+
     fun setAutoSkipCredits(enabled: Boolean) {
         viewModelScope.launch { playerSettingsStore.setAutoSkipCredits(enabled) }
     }
@@ -585,6 +650,10 @@ class SettingsViewModel(
 
     fun setSubtitleMatchesDevice(enabled: Boolean) {
         viewModelScope.launch { playerSettingsStore.setSubtitleMatchesDevice(enabled) }
+    }
+
+    fun setSubtitleDeviceOverrideEnabled(enabled: Boolean) {
+        viewModelScope.launch { playerSettingsStore.setSubtitleDeviceOverrideEnabled(enabled) }
     }
 
     fun setShowAudiobooks(enabled: Boolean) {

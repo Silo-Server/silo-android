@@ -3,6 +3,7 @@ package org.siloserver.silo.android.push
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.java.KoinJavaComponent.get
@@ -116,18 +117,24 @@ class SiloFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val handler = runCatching { get<PushMessageHandler>(PushMessageHandler::class.java) }.getOrNull()
-            ?: return
-        // Budgeted inside the presenter rather than here, so a stalled server
-        // still ends in a posted notification rather than none at all. The catch
-        // is a boundary net: nothing may escape into the Firebase SDK.
+        val registrar = runCatching { get<AndroidPushRegistrar>(AndroidPushRegistrar::class.java) }.getOrNull()
         runBlocking {
-            runCatching {
-                handler.handle(
-                    data = message.data,
-                    fallbackTitle = message.notification?.title,
-                    fallbackBody = message.notification?.body,
-                )
+            // The push may come from a server this device retired: its pending
+            // retirement goes out again beside the delivery, inside the same budget.
+            val retirements = registrar?.let { launch { withinPushBudget { it.retryPendingRetirements(afterPush = true) } } }
+            // Budgeted inside the presenter rather than here, so a stalled server
+            // still ends in a posted notification rather than none at all. The catch
+            // is a boundary net: nothing may escape into the Firebase SDK.
+            handler?.let {
+                runCatching {
+                    it.handle(
+                        data = message.data,
+                        fallbackTitle = message.notification?.title,
+                        fallbackBody = message.notification?.body,
+                    )
+                }
             }
+            retirements?.join()
         }
     }
 

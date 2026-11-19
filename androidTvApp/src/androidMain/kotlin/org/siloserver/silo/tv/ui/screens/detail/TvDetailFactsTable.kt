@@ -1,5 +1,10 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import java.time.LocalDate
+import java.util.Locale
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.i18n.uppercaseForUi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +27,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.CrewMember
 import org.siloserver.silo.model.catalog.ItemDetail
+import androidx.annotation.StringRes
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Key/value grid that lists directors, writers, studios, networks, countries
@@ -34,7 +42,8 @@ internal fun TvDetailFactsTable(
     detail: ItemDetail,
     modifier: Modifier = Modifier,
 ) {
-    val facts = remember(detail) { detail.assembleFacts() }
+    val locale = currentFormatLocale()
+    val facts = remember(detail, locale) { detail.assembleFacts(locale) }
     if (facts.isEmpty()) return
 
     Column(
@@ -58,7 +67,7 @@ internal fun TvDetailFactsTable(
                 verticalAlignment = Alignment.Top,
             ) {
                 Text(
-                    text = fact.label.uppercase(),
+                    text = stringResource(fact.label).uppercaseForUi(),
                     style = MaterialTheme.typography.titleSmall.copy(
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.0.sp,
@@ -85,37 +94,40 @@ internal fun TvDetailFactsTable(
 
 internal fun ItemDetail.hasTvDetailFacts(): Boolean = assembleFacts().isNotEmpty()
 
-private data class FactRow(val label: String, val value: String)
+private data class FactRow(@StringRes val label: Int, val value: String)
 
-private fun ItemDetail.assembleFacts(): List<FactRow> {
+private fun ItemDetail.assembleFacts(locale: Locale = LocaleFormat.locale()): List<FactRow> {
     val out = mutableListOf<FactRow>()
 
     crew.creditNames(jobs = listOf("director"))?.let {
-        out += FactRow("Director", it)
+        out += FactRow(CommonR.string.detail_director, it)
     }
     crew.creditNames(jobs = listOf("writer", "screenplay", "story", "teleplay"))?.let {
-        out += FactRow(if (crew.hasJob("screenplay")) "Writer" else "Written by", it)
+        out += FactRow(
+            if (crew.hasJob("screenplay")) CommonR.string.detail_writer else CommonR.string.detail_writtenBy,
+            it,
+        )
     }
     studios.takeIf { it.isNotEmpty() }?.let {
-        out += FactRow("Studio", it.take(3).joinToString(", "))
+        out += FactRow(CommonR.string.detail_studio, it.take(3).joinToString(", "))
     }
     networks.takeIf { it.isNotEmpty() }?.let {
-        out += FactRow("Network", it.take(3).joinToString(", "))
+        out += FactRow(CommonR.string.detail_network, it.take(3).joinToString(", "))
     }
     countries.takeIf { it.isNotEmpty() }?.let {
-        out += FactRow("Country", it.take(3).joinToString(", "))
+        out += FactRow(CommonR.string.detail_country, it.take(3).joinToString(", "))
     }
     // Full genre list (the hero eyebrow only shows the first two); mirrors the
     // phone's "Genres" details row.
     genres.filter { it.isNotBlank() }.takeIf { it.isNotEmpty() }?.let {
-        out += FactRow("Genres", it.joinToString(", "))
+        out += FactRow(CommonR.string.detail_genres, it.joinToString(", "))
     }
     if (type.equals("episode", ignoreCase = true)) {
-        TvDetailMetadata.abbreviatedDate(airDate ?: releaseDate)?.let { out += FactRow("Aired", it) }
+        TvDetailMetadata.abbreviatedDate(airDate ?: releaseDate, locale = locale)?.let { out += FactRow(CommonR.string.detail_aired, it) }
     } else {
-        formattedDate(releaseDate)?.let { out += FactRow("Released", it) }
-        formattedDate(firstAirDate)?.let { out += FactRow("First Aired", it) }
-        formattedDate(lastAirDate)?.let { out += FactRow("Last Aired", it) }
+        formattedDate(releaseDate, locale)?.let { out += FactRow(CommonR.string.detail_released, it) }
+        formattedDate(firstAirDate, locale)?.let { out += FactRow(CommonR.string.detail_firstAired, it) }
+        formattedDate(lastAirDate, locale)?.let { out += FactRow(CommonR.string.detail_lastAired, it) }
     }
     return out
 }
@@ -135,17 +147,14 @@ private fun List<CrewMember>.creditNames(jobs: List<String>): String? {
 private fun List<CrewMember>.hasJob(token: String): Boolean =
     any { (it.job?.lowercase()?.contains(token) ?: false) }
 
-private fun formattedDate(raw: String?): String? {
+/** "July 8, 2026" in US English, in [locale]'s order elsewhere; text that isn't a date as is. */
+private fun formattedDate(raw: String?, locale: Locale): String? {
     val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     val parts = trimmed.split("-")
     if (parts.size < 3) return trimmed
     val year = parts[0].toIntOrNull() ?: return trimmed
     val month = parts[1].toIntOrNull() ?: return trimmed
     val day = parts[2].take(2).toIntOrNull() ?: return trimmed
-    val monthNames = listOf(
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December",
-    )
-    val monthName = monthNames.getOrNull(month - 1) ?: return trimmed
-    return "$monthName $day, $year"
+    val date = runCatching { LocalDate.of(year, month, day) }.getOrNull() ?: return trimmed
+    return date.format(LocaleFormat.dateFormatter("yMMMMd", "MMMM d, y", locale, padYear = false))
 }

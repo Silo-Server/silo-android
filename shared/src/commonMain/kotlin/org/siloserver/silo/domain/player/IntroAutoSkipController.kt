@@ -140,6 +140,8 @@ class IntroAutoSkipController(
      * the only seek this controller performs — see the class docs.
      * [playbackActive] should already have rebuffer dips filtered out of it
      * (`settlingFalseEdges`); a pause that reaches here freezes the timer.
+     * [introKey] names the playback the intro belongs to (session and file);
+     * each [introRange] under it is a separate intro, decided on its own.
      */
     fun observe(
         position: Flow<Double>,
@@ -206,7 +208,12 @@ class IntroAutoSkipController(
         inputs: Inputs,
         onSeek: suspend (toSeconds: Double) -> Unit,
     ) {
-        val (pos, range, mode, key, playbackActive) = inputs
+        val (pos, range, mode, playbackKey, playbackActive) = inputs
+        // An episode may have several intros. Keying each by its range here,
+        // rather than trusting a caller key derived from the same position,
+        // keeps a key that lags its range by one emission from pinning a new
+        // intro to the previous one.
+        val key = playbackKey?.let { prefix -> range?.let { "$prefix@${it.start}-${it.end}" } }
 
         // A mode change re-evaluates from scratch: ask -> never takes the offer
         // down, never -> always skips the intro the viewer is sitting in.

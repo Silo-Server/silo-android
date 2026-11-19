@@ -66,6 +66,22 @@ class TvQuickSubtitlePickerChromePolicyTest {
         assertEquals(emptyList<String>(), events)
     }
 
+    @Test
+    fun selectingATrackNoRouteCanShowKeepsPickerOpen() {
+        val events = mutableListOf<String>()
+        val unplayable = row(SubtitleIdentity.ServerBurnIn(1), "unplayable").copy(unplayable = true)
+
+        val handled = dispatchTvQuickSubtitlePickerSelection(
+            presentation = presentation(row(SubtitleIdentity.Off, "off"), unplayable),
+            stableId = unplayable.stableId,
+            onSelect = { events += "select" },
+            onSelectionComplete = { events += "dismiss" },
+        )
+
+        assertFalse(handled)
+        assertEquals(emptyList<String>(), events)
+    }
+
     private fun presentation(vararg rows: TvSubtitleHudRow): TvSubtitleHudPresentation =
         TvSubtitleHudPresentation(
             rows = rows.toList(),

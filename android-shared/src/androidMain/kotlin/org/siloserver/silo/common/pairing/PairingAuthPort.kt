@@ -1,10 +1,15 @@
 package org.siloserver.silo.common.pairing
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.seconds
+import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.network.AccountSessionExpectation
+import org.siloserver.silo.network.AccountSignIn
 import org.siloserver.silo.network.AccountSessionChangedException
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.ServerRegistry
@@ -12,6 +17,13 @@ import org.siloserver.silo.network.CleartextOriginConsent
 import org.siloserver.silo.network.CleartextOriginNotApprovedException
 import org.siloserver.silo.network.requiresApproval
 import org.siloserver.silo.repository.AuthRepository
+
+/**
+ * The saved account a pairing sign-in landed in: [accountId] is its
+ * [org.siloserver.silo.model.server.AccountEntry.localAccountId] on
+ * [serverId]. The same server user signed in twice lands in the same one.
+ */
+data class PairingCommittedAccount(val serverId: String, val accountId: String)
 
 /**
  * Narrow commit seam for the pairing receiver after a candidate server approves device
@@ -35,14 +47,59 @@ interface PairingAuthPort {
         /** Deployment identity verified at [serverUrl], recorded on the saved server. */
         verifiedServerId: String? = null,
     )
+
+    /**
+     * [persistApprovedSession] that also names the server [user] the approval
+     * signed in, so the session refreshes that user's saved account on this
+     * device instead of adding a second one (multi-account spec §5). Ports
+     * that keep no accounts ignore it.
+     */
+    suspend fun persistApprovedSession(
+        serverUrl: String,
+        serverName: String?,
+        accessToken: String,
+        refreshToken: String,
+        expiresIn: Long,
+        expectedIdentity: AccountSessionExpectation?,
+        verifiedServerId: String?,
+        user: User?,
+    ) = persistApprovedSession(serverUrl, serverName, accessToken, refreshToken, expiresIn, expectedIdentity, verifiedServerId)
+
+    /**
+     * [persistApprovedSession] that says which saved account now holds the
+     * session, so the receiver can tell how many accounts a pairing session
+     * signed in and open the first (contract §B.7). Null from ports that keep
+     * no accounts.
+     */
+    suspend fun commitApprovedSession(
+        serverUrl: String,
+        serverName: String?,
+        accessToken: String,
+        refreshToken: String,
+        expiresIn: Long,
+        expectedIdentity: AccountSessionExpectation?,
+        verifiedServerId: String?,
+        user: User?,
+    ): PairingCommittedAccount? {
+        persistApprovedSession(serverUrl, serverName, accessToken, refreshToken, expiresIn, expectedIdentity, verifiedServerId, user)
+        return null
+    }
 }
 
-/** Production adapter matching Apple's receiver-side persist-on-success behavior. */
+/**
+ * Production adapter matching Apple's receiver-side persist-on-success behavior.
+ *
+ * [accountOf] reads `/me` at a server with an access token that isn't saved
+ * yet (null when it can't be read). An approval from an older server names
+ * no user; without the account's server identity the commit can't tell a
+ * refresh of a saved account from a new one, so it asks first.
+ */
 class RegistryPairingAuthPort(
     private val tokenManager: TokenManager,
     private val serverRegistry: ServerRegistry,
     private val cleartextOriginConsent: CleartextOriginConsent? = null,
     private val authRepository: AuthRepository? = null,
+    private val accountOf: (suspend (serverUrl: String, accessToken: String) -> User?)? = null,
 ) : PairingAuthPort {
     private val commitMutex = Mutex()
     override suspend fun captureExpectedIdentity() = tokenManager.captureAccountSessionExpectation()
@@ -55,14 +112,41 @@ class RegistryPairingAuthPort(
         expiresIn: Long,
         expectedIdentity: AccountSessionExpectation?,
         verifiedServerId: String?,
-    ): Unit = withContext(NonCancellable) {
+    ) = persistApprovedSession(serverUrl, serverName, accessToken, refreshToken, expiresIn, expectedIdentity, verifiedServerId, user = null)
+
+    override suspend fun persistApprovedSession(
+        serverUrl: String,
+        serverName: String?,
+        accessToken: String,
+        refreshToken: String,
+        expiresIn: Long,
+        expectedIdentity: AccountSessionExpectation?,
+        verifiedServerId: String?,
+        user: User?,
+    ) {
+        commitApprovedSession(serverUrl, serverName, accessToken, refreshToken, expiresIn, expectedIdentity, verifiedServerId, user)
+    }
+
+    override suspend fun commitApprovedSession(
+        serverUrl: String,
+        serverName: String?,
+        accessToken: String,
+        refreshToken: String,
+        expiresIn: Long,
+        expectedIdentity: AccountSessionExpectation?,
+        verifiedServerId: String?,
+        user: User?,
+    ): PairingCommittedAccount? = withContext(NonCancellable) {
         commitMutex.withLock {
             if (cleartextOriginConsent?.requiresApproval(serverUrl) == true) {
                 throw CleartextOriginNotApprovedException(serverUrl)
             }
+            // Bounded: the phone waits about 30 s for the result. Without an
+            // answer the commit falls back to the background backfill.
+            val signedIn = user ?: readAccount(serverUrl, accessToken)
             val previousServerId = serverRegistry.activeServerId.value
             val serverId = serverRegistry.addOrUpdate(serverUrl, fetchedName = serverName)
-            try {
+            val accountId = try {
                 // Same-server approval is still an A -> B account boundary.
                 // The token manager activates the registry and replaces the
                 // complete profile/token identity inside one destructive gate.
@@ -72,6 +156,13 @@ class RegistryPairingAuthPort(
                     refreshToken = refreshToken,
                     expiresIn = expiresIn,
                     expectedIdentity = expectedIdentity,
+                    // The same server user refreshes its saved account (and
+                    // keeps its remembered profile); another user becomes
+                    // another account on this server.
+                    account = (
+                        authRepository?.accountSignIn(serverId, signedIn)
+                            ?: AccountSignIn(serverUserId = signedIn?.id, username = signedIn?.username)
+                        ).copy(keepsRememberedProfile = true),
                 )
             } catch (changed: AccountSessionChangedException) {
                 throw changed
@@ -106,6 +197,26 @@ class RegistryPairingAuthPort(
             authRepository?.refreshServerContractWithFallback(serverId)
             if (verifiedServerId != null) serverRegistry.setVerifiedServerId(serverId, verifiedServerId)
             if (expectedIdentity != null && tokenManager.captureAccountSessionExpectation()?.generation != expectedIdentity.generation + 1) throw AccountSessionChangedException()
+            // An approval that named no user (an older server) whose /me
+            // couldn't be read leaves the account without its server
+            // identity; fill it in later, in the background.
+            if (signedIn == null) authRepository?.backfillAccountIdentitiesInBackground()
+            accountId?.let { PairingCommittedAccount(serverId, it) }
         }
+    }
+
+    private suspend fun readAccount(serverUrl: String, accessToken: String): User? {
+        val read = accountOf ?: return null
+        return try {
+            withTimeoutOrNull(ACCOUNT_READ_TIMEOUT) { read(serverUrl, accessToken) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private companion object {
+        val ACCOUNT_READ_TIMEOUT = 5.seconds
     }
 }

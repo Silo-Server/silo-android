@@ -18,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -112,14 +113,9 @@ internal fun TvDiagnosticsAction(
 }
 
 /** tvOS `typeTitle(for:)` — used by the prompt and the report detail screen. */
+@Composable
 internal fun org.siloserver.silo.model.diagnostics.DiagnosticsReportType.tvDisplayName(): String =
-    tvDiagnosticsReportTypeTitle(this)
-
-internal fun tvFormatBytes(bytes: Long): String = when {
-    bytes >= 1_048_576 -> "%.1f MB".format(bytes / 1_048_576.0)
-    bytes >= 1_024 -> "%.1f KB".format(bytes / 1_024.0)
-    else -> "$bytes B"
-}
+    stringResource(tvDiagnosticsReportTypeTitle(this))
 
 internal fun tvFormatDate(epochMs: Long): String =
     DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(epochMs))

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
@@ -16,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -36,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,9 +48,11 @@ import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceContainer
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.requests.RequestColors
 import org.siloserver.silo.common.requests.RequestRowCopy
 import org.siloserver.silo.common.requests.RequestStageTrack
+import org.siloserver.silo.common.requests.requestResources
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestDisplayState
@@ -69,6 +74,8 @@ internal fun MyRequestRow(
     isBusy: Boolean = false,
     onOpenInLibrary: (() -> Unit)? = null,
     onCancel: (() -> Unit)? = null,
+    /** Offered only on a failed request that delivered nothing; the caller confirms first. */
+    onRemove: (() -> Unit)? = null,
     showDivider: Boolean = false,
 ) {
     val progress = RequestProgress.of(record)
@@ -96,7 +103,7 @@ internal fun MyRequestRow(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(Icons.Filled.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                    Text("Cancel", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Text(stringResource(CommonR.string.requests_row_swipeCancel), color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                 }
             }
         },
@@ -117,7 +124,7 @@ internal fun MyRequestRow(
                         .combinedClickable(
                             enabled = !isBusy,
                             onClick = onOpen,
-                            onLongClick = if (onCancel != null) ({ menuOpen = true }) else null,
+                            onLongClick = if (onCancel != null || onRemove != null) ({ menuOpen = true }) else null,
                         ),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -133,16 +140,17 @@ internal fun MyRequestRow(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = RequestRowCopy.meta(record, progress),
+                            text = RequestRowCopy.meta(requestResources(), record, progress),
                             fontSize = 12.sp,
                             color = SiloSecondaryText,
-                            maxLines = 1,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(top = 2.dp),
                         )
                         RequestStageTrack(progress = progress, modifier = Modifier.padding(top = 9.dp))
                         RequestStatusLabel(
                             progress = progress,
-                            text = RequestRowCopy.status(record, progress),
+                            text = RequestRowCopy.status(record, progress).text(),
                             fontWeight = FontWeight.SemiBold,
                             color = SiloOnSurface,
                             maxLines = 2,
@@ -152,22 +160,27 @@ internal fun MyRequestRow(
                 }
                 when {
                     onOpenInLibrary != null && progress.display == RequestDisplayState.InLibrary ->
-                        RequestCapsuleButton(title = "Open", icon = Icons.AutoMirrored.Filled.OpenInNew, onClick = onOpenInLibrary)
-                    else -> Text(text = "›", fontSize = 20.sp, color = SiloSecondaryText.copy(alpha = 0.7f))
+                        RequestCapsuleButton(title = stringResource(CommonR.string.requests_row_open), icon = Icons.AutoMirrored.Filled.OpenInNew, onClick = onOpenInLibrary)
+                    onRemove != null && !isBusy ->
+                        RequestCapsuleButton(title = stringResource(CommonR.string.requests_row_remove), icon = Icons.Outlined.Delete, onClick = onRemove)
+                    else -> Text(text = forwardChevron(), fontSize = 20.sp, color = SiloSecondaryText.copy(alpha = 0.7f))
                 }
             }
             SiloDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                SiloDropdownMenuItem(
-                    text = { Text("Cancel Request", color = RequestColors.Rose) },
-                    leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null, tint = RequestColors.Rose) },
-                    onClick = {
-                        menuOpen = false
-                        onCancel?.invoke()
-                    },
-                )
+                onCancel?.let { RoseMenuItem(stringResource(CommonR.string.requests_action_cancel), Icons.Filled.Close) { menuOpen = false; it() } }
+                onRemove?.let { RoseMenuItem(stringResource(CommonR.string.requests_row_removeRequest), Icons.Outlined.Delete) { menuOpen = false; it() } }
             }
         }
     }
+}
+
+@Composable
+private fun RoseMenuItem(label: String, icon: ImageVector, onClick: () -> Unit) {
+    SiloDropdownMenuItem(
+        text = { Text(label, color = RequestColors.Rose) },
+        leadingIcon = { Icon(icon, contentDescription = null, tint = RequestColors.Rose) },
+        onClick = onClick,
+    )
 }
 
 private fun Modifier.rowClickable(enabled: Boolean, onClick: () -> Unit): Modifier =

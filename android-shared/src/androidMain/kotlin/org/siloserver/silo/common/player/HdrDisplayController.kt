@@ -20,8 +20,7 @@ import androidx.annotation.MainThread
  * Android TV devices this triggers an HDMI handshake (1–2 s black screen) —
  * hence the coalescing that suppresses redundant applies.
  *
- * HDR mode selection on API 34+ is done via [Display.Mode.getSupportedHdrTypes];
- * older APIs rely on the platform's implicit HDR negotiation driven by the
+ * Mode selection ignores HDR support; the platform negotiates HDR from the
  * decoder's `Format.colorInfo`.
  *
  * Lifecycle:
@@ -62,8 +61,13 @@ class HdrDisplayController {
      * Priority order:
      * 1. Same width/height as the mode's resolution (avoids upscaling by the
      *    HDMI link when content is 1080p on a 4K TV that would otherwise stay
-     *    at the home-screen 4K mode).
+     *    at the home-screen 4K mode). Failing that, a mode at least as large
+     *    as the video, so cropped 3840x1600 never drops to 1080p output; if
+     *    none is, the largest modes.
      * 2. Closest refresh rate to `frameRateHz` (matches 23.976/24/25/29.97/30/50/59.94/60).
+     * 3. Among equally good refresh rates, a 16:9 mode (never DCI 4096x2160),
+     *    then the largest, so SD or cropped HD content keeps a 4K TV at
+     *    3840x2160 instead of dropping to 480p.
      *
      * No-op if no window is attached, the display doesn't enumerate modes, or
      * the computed signature matches the last apply.
@@ -114,17 +118,34 @@ class HdrDisplayController {
         videoHeight: Int,
         frameRateHz: Float,
     ): Display.Mode? {
-        // Prefer modes whose resolution matches the content or is the closest
-        // larger resolution. Content upscaling by the panel is near-lossless;
-        // HDMI link resampling is what we want to avoid.
+        // Prefer modes whose resolution matches the content or holds it.
+        // Content upscaling by the panel is near-lossless; HDMI link
+        // resampling is what we want to avoid.
         val sameRes = modes.filter { it.physicalWidth == videoWidth && it.physicalHeight == videoHeight }
-        val candidates = sameRes.ifEmpty { modes.toList() }
+        val holding = modes.filter { it.physicalWidth >= videoWidth && it.physicalHeight >= videoHeight }
+        val candidates = when {
+            sameRes.isNotEmpty() -> sameRes
+            holding.isNotEmpty() -> holding
+            else -> {
+                val largest = modes.maxOf { it.pixelArea() }
+                modes.filter { it.pixelArea() == largest }
+            }
+        }
 
         // Shared refresh-rate scoring lives in RefreshRateSelector; the phone
         // RefreshRateMatcher uses the same helper without the resolution
         // pre-filter (phone panels have a fixed native resolution).
-        return RefreshRateSelector.pickByRefreshRateAmong(candidates, frameRateHz)
+        return RefreshRateSelector.pickByRefreshRateAmong(
+            candidates,
+            frameRateHz,
+            tieBreak = compareByDescending<Display.Mode> { it.isSixteenByNine() }
+                .thenByDescending { it.pixelArea() },
+        )
     }
+
+    private fun Display.Mode.pixelArea(): Long = physicalWidth.toLong() * physicalHeight
+
+    private fun Display.Mode.isSixteenByNine(): Boolean = physicalWidth * 9 == physicalHeight * 16
 
     private fun defaultDisplay(window: Window): Display? {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

@@ -438,7 +438,7 @@ class OverlayDataExtractorTest {
         )
         val data = OverlayDataExtractor.fromBrowseItem(item)
         val label = OverlayRegistry.def(OverlayId.ResolutionHdr)?.getValue?.invoke(data)
-        assertEquals("4K DV", label)
+        assertEquals(org.siloserver.silo.common.i18n.UiText.Raw("4K DV"), label)
         assertTrue(data.hdr == "DV HDR10")
     }
 }

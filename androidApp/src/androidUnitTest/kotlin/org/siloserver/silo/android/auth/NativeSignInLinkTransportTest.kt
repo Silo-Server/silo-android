@@ -81,7 +81,7 @@ class NativeSignInLinkTransportTest {
             registry.switchTo(lanId)
             build()
             tokens.switchActiveServer(lanId)
-            if (signedIn) tokens.saveTokens("lan-access", "lan-refresh", 3600)
+            if (signedIn) tokens.replaceAccountSession(serverId = lanId, accessToken = "lan-access", refreshToken = "lan-refresh", expiresIn = 3600)
             return tokens.snapshotCurrentScope()
         }
 

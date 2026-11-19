@@ -71,9 +71,9 @@ class LegacyDownloadImporterTest {
         importer(baseDir).importIfNeeded(nowMs = 1_000L)
 
         // Metadata is now readable from Room.
-        assertEquals("tt1", store.readSidecar("srv1", "profA", 1)?.record?.contentId)
-        assertEquals("tt2", store.readSidecar("srv1", "profB", 2)?.record?.contentId)
-        assertEquals("movie-x", store.readSidecar("srv2", "profA", 3)?.record?.contentId)
+        assertEquals("tt1", store.readSidecar("srv1", "", "profA", 1)?.record?.contentId)
+        assertEquals("tt2", store.readSidecar("srv1", "", "profB", 2)?.record?.contentId)
+        assertEquals("movie-x", store.readSidecar("srv2", "", "profA", 3)?.record?.contentId)
 
         // The legacy tree drained.
         assertFalse(File(baseDir, "downloads").exists())
@@ -86,14 +86,14 @@ class LegacyDownloadImporterTest {
     fun `room rows win over frozen sidecars but the stale file is still removed`() = runTest {
         val baseDir = tmp.newFolder("filesDir")
         // Room already has a (newer) row for this scope/fileId.
-        store.writeSidecar("srv1", "profA", sidecar(7, contentId = "room-newer"))
+        store.writeSidecar("srv1", "", "profA", sidecar(7, contentId = "room-newer"))
         // A frozen legacy sidecar for the same key exists on disk.
         writeLegacySidecar(baseDir, "srv1", "profA", sidecar(7, contentId = "disk-stale"))
 
         importer(baseDir).importIfNeeded(nowMs = 1_000L)
 
         // Room's value is preserved (not overwritten by the stale sidecar)...
-        assertEquals("room-newer", store.readSidecar("srv1", "profA", 7)?.record?.contentId)
+        assertEquals("room-newer", store.readSidecar("srv1", "", "profA", 7)?.record?.contentId)
         // ...and the stale sidecar is drained.
         assertFalse(File(baseDir, "downloads/srv1/profA/7.record.json").exists())
         assertEquals(1, db.legacyImportDao().getByKind("download_sidecar").count { it.status == "skipped" })
@@ -107,7 +107,7 @@ class LegacyDownloadImporterTest {
 
         importer(baseDir).importIfNeeded(nowMs = 1_000L)
 
-        assertNull(store.readSidecar("srv1", "profA", 9))
+        assertNull(store.readSidecar("srv1", "", "profA", 9))
         assertEquals(true, bad.exists()) // not deleted — preserved for recovery
         val failed = db.legacyImportDao().getByKind("download_sidecar").single { it.status == "failed" }
         assertNotNull(failed.error)
@@ -129,8 +129,8 @@ class LegacyDownloadImporterTest {
 
         importer(baseDir).importIfNeeded(nowMs = 1_000L)
 
-        assertNull(store.readSidecar("srv1", "profA", 7))
-        assertNull(store.readSidecar("srv1", "profA", 5))
+        assertNull(store.readSidecar("srv1", "", "profA", 7))
+        assertNull(store.readSidecar("srv1", "", "profA", 5))
         assertEquals(true, mismatched.exists())
         assertEquals(
             "file_id_mismatch",
@@ -147,7 +147,7 @@ class LegacyDownloadImporterTest {
 
         importer(baseDir).importIfNeeded(nowMs = 1_000L)
 
-        assertNull(store.readSidecar("srv1", "profA", 7))
+        assertNull(store.readSidecar("srv1", "", "profA", 7))
         assertEquals(true, tooDeep.exists())
         assertEquals(
             "unexpected_path_depth",
@@ -166,7 +166,7 @@ class LegacyDownloadImporterTest {
         writeLegacySidecar(baseDir, "srv1", "profA", sidecar(2))
         importer.awaitImport(nowMs = 2_000L)
 
-        assertNotNull(store.readSidecar("srv1", "profA", 1))
-        assertNull(store.readSidecar("srv1", "profA", 2))
+        assertNotNull(store.readSidecar("srv1", "", "profA", 1))
+        assertNull(store.readSidecar("srv1", "", "profA", 2))
     }
 }

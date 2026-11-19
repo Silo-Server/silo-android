@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
@@ -31,15 +33,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.screens.auth.AuthColors
 import org.siloserver.silo.android.ui.screens.libraries.libraryIcon
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.model.personal.UserLibrary
-import org.siloserver.silo.model.profile.ANY_RATING_LABEL
+import org.siloserver.silo.model.profile.ANY_RATING_TEXT
 import org.siloserver.silo.model.profile.AssignableLibraries
 import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.contentRatingOptions
@@ -70,21 +77,21 @@ internal fun ProfileAccessControls(
             .padding(16.dp)
             .animateContentSize(),
     ) {
-        PanelLabel("Maximum rating")
+        PanelLabel(stringResource(CommonR.string.profiles_access_maxRating))
         RatingLadder(
             ratings = contentRatingOptions(CONTENT_RATINGS, access.maxContentRating),
             ceiling = access.maxContentRating,
             onSelected = onContentRatingSelected,
         )
         Spacer(modifier = Modifier.height(10.dp))
-        HintText(ratingCeilingCaption(access.maxContentRating))
+        HintText(ratingCeilingCaption(access.maxContentRating).text())
 
         HorizontalDivider(
             color = AuthColors.FieldBorder,
             modifier = Modifier.padding(vertical = 16.dp),
         )
 
-        PanelLabel("Libraries")
+        PanelLabel(stringResource(CommonR.string.profiles_access_libraries))
         LibraryModeSwitch(
             restricted = access.libraryRestrictionsEnabled,
             onRestrictedChange = onLibraryRestrictionsToggled,
@@ -103,18 +110,18 @@ internal fun ProfileAccessControls(
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(modifier = Modifier.width(10.dp))
-                    HintText("Loading libraries…")
+                    HintText(stringResource(CommonR.string.newProfile_librariesLoading))
                 }
 
                 is AssignableLibraries.Failed -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) { HintText(libraries.text) }
+                    Column(modifier = Modifier.weight(1f)) { HintText(libraries.text.text()) }
                     TextButton(onClick = onRetryLibraries, enabled = !libraries.retrying) {
-                        Text("Try Again", color = AuthColors.Primary)
+                        Text(stringResource(CommonR.string.profiles_access_retry), color = AuthColors.Primary)
                     }
                 }
 
                 is AssignableLibraries.Loaded -> if (libraries.libraries.isEmpty()) {
-                    HintText("No libraries are available to assign.", Modifier.padding(vertical = 10.dp))
+                    HintText(stringResource(CommonR.string.newProfile_librariesEmpty), Modifier.padding(vertical = 10.dp))
                 } else {
                     Column {
                         libraries.libraries.forEach { library ->
@@ -179,16 +186,23 @@ private fun RatingLadder(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = rating ?: ANY_RATING_LABEL,
-                    fontSize = 12.sp,
-                    fontWeight = if (isCeiling) FontWeight.SemiBold else FontWeight.Medium,
-                    color = when {
-                        isCeiling -> AuthColors.Background
-                        isAllowed -> AuthColors.OnSurface
-                        else -> AuthColors.OnSurfaceVariant
-                    },
+                // Steps down from 12sp when a translated "Any" is wider than
+                // its step ("Cualquiera"), instead of being cut.
+                BasicText(
+                    text = rating ?: ANY_RATING_TEXT.text(),
+                    style = LocalTextStyle.current.merge(
+                        TextStyle(
+                            fontSize = 12.sp,
+                            fontWeight = if (isCeiling) FontWeight.SemiBold else FontWeight.Medium,
+                            color = when {
+                                isCeiling -> AuthColors.Background
+                                isAllowed -> AuthColors.OnSurface
+                                else -> AuthColors.OnSurfaceVariant
+                            },
+                        ),
+                    ),
                     maxLines = 1,
+                    autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 12.sp, stepSize = 0.5.sp),
                 )
             }
         }
@@ -211,7 +225,10 @@ private fun LibraryModeSwitch(
             .padding(3.dp)
             .selectableGroup(),
     ) {
-        listOf(false to "All libraries", true to "Choose libraries").forEach { (option, label) ->
+        listOf(
+            false to stringResource(CommonR.string.profiles_access_allLibraries),
+            true to stringResource(CommonR.string.profiles_access_chooseLibraries),
+        ).forEach { (option, label) ->
             val selected = option == restricted
             Box(
                 modifier = Modifier

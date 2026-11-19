@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components.marquee
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -142,7 +144,7 @@ fun MarqueeTextField(
         if (isSecure) {
             Icon(
                 imageVector = if (reveal) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                contentDescription = if (reveal) "Hide password" else "Show password",
+                contentDescription = stringResource(if (reveal) CommonR.string.signIn_hidePassword else CommonR.string.signIn_showPassword),
                 tint = MarqueeColors.InkTertiary,
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
@@ -153,7 +155,7 @@ fun MarqueeTextField(
         } else if (showsClearButton && value.isNotEmpty() && enabled) {
             Icon(
                 imageVector = Icons.Filled.Cancel,
-                contentDescription = "Clear",
+                contentDescription = stringResource(CommonR.string.shell_field_clear),
                 tint = Color.White.copy(alpha = 0.3f),
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))

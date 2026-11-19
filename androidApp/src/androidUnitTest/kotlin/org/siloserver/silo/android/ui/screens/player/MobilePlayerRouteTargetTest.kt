@@ -325,7 +325,7 @@ class MobilePlayerRouteTargetTest {
                 intent,
                 PlayerViewModel.PlayerUiState(
                     isLoading = false,
-                    error = "Playback failed",
+                    error = PlayerMessage.Raw("Playback failed"),
                     contentId = "movie-1",
                 ),
             ),

@@ -3,6 +3,24 @@ package org.siloserver.silo.common.player
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
 import android.os.SystemClock
 import android.util.Log
+import org.siloserver.silo.common.R
+import org.siloserver.silo.domain.player.BufferingPlanSummary
+import org.siloserver.silo.domain.player.BufferingQualityMode
+import org.siloserver.silo.domain.player.BufferingQualityReplan
+import org.siloserver.silo.domain.player.KeptStepDownEstimate
+import org.siloserver.silo.domain.player.withKeptStepDownEstimate
+import org.siloserver.silo.common.player.probe.PlaybackBandwidthEstimates
+import org.siloserver.silo.model.playback.BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER
+import org.siloserver.silo.model.playback.BANDWIDTH_ESTIMATE_SOURCE_PROBE
+import org.siloserver.silo.model.playback.BUFFERING_QUALITY_V1_FEATURE
+import org.siloserver.silo.model.playback.LEARNED_LIMIT_CLEAR
+import org.siloserver.silo.model.playback.LEARNED_LIMIT_IGNORE
+import org.siloserver.silo.model.playback.PLAYBACK_PLAN_SUMMARY_V1_FEATURE
+import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
+import org.siloserver.silo.model.playback.gatedForBufferingQuality
+import org.siloserver.silo.model.playback.inPlaceMismatch
+import org.siloserver.silo.model.playback.withPlayerSwitchedAudio
+import org.siloserver.silo.model.playback.carriesHlsSubtitleRendition
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlaybackStartRequestV3
@@ -41,6 +59,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
@@ -120,6 +139,39 @@ open class PlaybackSessionManager(
      * that matters: its plans are for a receiver across the room.
      */
     private val passthroughSuppression: PassthroughSuppressionScope = PassthroughSuppressionRegistry,
+    /**
+     * The bandwidth probe. A video start sends its fresh estimate as
+     * `bandwidth_estimate_kbps` with source `probe`, and tells it playback is
+     * starting so a running probe stops. Replans never carry it: a probe
+     * estimate is a hint for the start only. A manager whose plans play
+     * elsewhere (Cast) keeps [PlaybackBandwidthEstimates.None]: this device's
+     * link is not the receiver's.
+     */
+    private val bandwidthEstimates: PlaybackBandwidthEstimates = PlaybackBandwidthEstimates.None,
+    /**
+     * The video's receive rate since the last call, which [emitPlanSummary]
+     * sends as `throughput_kbps`: [PlaybackThroughputMeter.takeKbps] for the
+     * manager whose plans play in this process's player, else none.
+     */
+    private val throughputKbps: () -> Int? = { null },
+    /**
+     * The playing plan's throughput so far without ending its count, which a
+     * lowering sends as `observed_throughput_kbps`:
+     * [PlaybackThroughputMeter.peekKbps], under the same rule as [throughputKbps].
+     */
+    private val playingPlanThroughputKbps: () -> Int? = { null },
+    /**
+     * The effective `playback.buffering_quality_mode`, read on every start and
+     * replan. In [BufferingQualityMode.NEVER] each request carries
+     * `learned_limit: ignore` (unless it names its own), so a limit learned by
+     * another profile on this device does not reach this one. Servers without
+     * `buffering_quality_v1` never see the field. Dependency injection passes
+     * the last mode this device saw for the active profile, so a start never
+     * goes out on the default while that mode is still loading. A manager
+     * whose plans play on another device (Cast) answers NEVER: the limits this
+     * device learned describe its own link, not the receiver's.
+     */
+    private val bufferingQualityMode: suspend () -> BufferingQualityMode = { BufferingQualityMode.Default },
 ) {
     private data class ActiveVideoAttempt(
         val fileId: Int,
@@ -177,12 +229,16 @@ open class PlaybackSessionManager(
     private data class PreparedStagedVideoReplan(
         val nextAttempt: ActiveVideoAttempt,
         val fallbackReason: String,
+        /** The estimate the staging request carried, for `plan_summary`. */
+        val bandwidthEstimateKbps: Int?,
     )
 
     private data class PendingVideoPublication(
         val replacement: ActiveVideoAttempt,
         val predecessor: ActiveVideoAttempt?,
         val settled: CompletableDeferred<Unit> = CompletableDeferred(),
+        /** Applied in place: the audio sink never left the predecessor's attempt. */
+        val inPlace: Boolean = false,
     )
 
     private data class PendingPublicationRollback(
@@ -248,6 +304,176 @@ open class PlaybackSessionManager(
     private var currentReleaseClaim = 0L
     private var pendingVideoPublication: PendingVideoPublication? = null
     private var contentResetInProgress = false
+
+    /** The plan identity a `plan_summary` names, kept after the plan stops being active. */
+    private data class PlanSummaryIdentity(
+        val playbackAttemptId: String,
+        val sessionId: String,
+        val planAttemptId: String,
+        val planAttemptKey: String,
+        val outputContextId: String?,
+        /** The estimate on the request that produced the plan. */
+        val bandwidthEstimateKbps: Int?,
+    )
+
+    /**
+     * Recent plans by plan id, oldest evicted first, each with its identities
+     * in the order they were made. Guarded by itself. A plan id can repeat: a
+     * replan can return the plan already playing, before that plan's summary
+     * is sent.
+     */
+    private val recentPlans = object : LinkedHashMap<String, ArrayDeque<PlanSummaryIdentity>>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ArrayDeque<PlanSummaryIdentity>>?): Boolean =
+            size > RECENT_PLAN_LIMIT
+    }
+
+    private fun rememberPlan(attempt: ActiveVideoAttempt, bandwidthEstimateKbps: Int?) {
+        val identity = PlanSummaryIdentity(
+            playbackAttemptId = attempt.playbackAttemptId,
+            sessionId = attempt.sessionId,
+            planAttemptId = attempt.planAttemptId,
+            planAttemptKey = attempt.planAttemptKey,
+            outputContextId = attempt.context.output.outputContextId,
+            bandwidthEstimateKbps = bandwidthEstimateKbps,
+        )
+        synchronized(recentPlans) {
+            val identities = recentPlans.getOrPut(attempt.plan.planId) { ArrayDeque() }
+            if (identities.lastOrNull() != identity) identities.addLast(identity)
+        }
+    }
+
+    /**
+     * The oldest identity remembered for [planId]. The last one stays, for a
+     * later summary of the same plan, such as after a same-plan remount.
+     */
+    private fun takePlanIdentity(planId: String): PlanSummaryIdentity? = synchronized(recentPlans) {
+        val identities = recentPlans[planId] ?: return null
+        if (identities.size > 1) identities.removeFirst() else identities.firstOrNull()
+    }
+
+    /** The identity [takePlanIdentity] would return for [planId], left in place. */
+    private fun peekPlanIdentity(planId: String): PlanSummaryIdentity? = synchronized(recentPlans) {
+        recentPlans[planId]?.firstOrNull()
+    }
+
+    /**
+     * Drops the identity a commit remembered for a plan the player never
+     * adopted, such as a TV replacement rolled back before it mounted. No
+     * summary names that plan, and a later adoption that repeats [planId]
+     * would otherwise send its summary under this one's ids.
+     */
+    fun forgetPlanIdentity(planId: String, planAttemptId: String) {
+        synchronized(recentPlans) {
+            val identities = recentPlans[planId] ?: return
+            identities.removeAll { it.planAttemptId == planAttemptId }
+            if (identities.isEmpty()) recentPlans.remove(planId)
+        }
+    }
+
+    private val planSummaryWriteLock = Any()
+
+    /**
+     * The last plan summary write queued, sent or saved. Each waits for the
+     * one before, so the journal sees them in the order they were made: a
+     * summary saved as the app left the foreground never lands after the real
+     * one that replaces it. Guarded by [planSummaryWriteLock].
+     */
+    private var lastPlanSummaryWrite: Job? = null
+
+    private fun queuePlanSummaryWrite(write: suspend () -> Unit) = synchronized(planSummaryWriteLock) {
+        val previous = lastPlanSummaryWrite
+        lastPlanSummaryWrite = telemetryScope.launch {
+            previous?.join()
+            write()
+        }
+    }
+
+    /**
+     * The profile a Restore quality's `learned_limit: "clear"` is still owed
+     * for: the viewer undid a lowering, but its replan could not go out yet.
+     * The next start or replan of that profile carries it, once.
+     */
+    private val owedClearProfileId = AtomicReference<String?>()
+
+    /**
+     * Owes the playing profile a `learned_limit: "clear"`, for a Restore
+     * quality that must wait. The next start or replan carries it, and a
+     * Restore sent later settles it, so it goes out once whatever replaces it.
+     */
+    fun oweLearnedLimitClear() {
+        owedClearProfileId.set(activeVideoAttempt.get()?.profileId)
+    }
+
+    /** A `clear` is still owed: no request has carried it yet. */
+    val learnedLimitClearOwed: Boolean get() = owedClearProfileId.get() != null
+
+    /** The owed `clear`, taken: for a request of [profileId], else dropped. */
+    private fun takeOwedClear(profileId: String): String? =
+        LEARNED_LIMIT_CLEAR.takeIf { owedClearProfileId.getAndSet(null) == profileId }
+
+    /**
+     * A request that took the owed `clear` for [profileId] did not succeed:
+     * it is owed again, unless a newer Restore already owes one. A second
+     * `clear` is harmless.
+     */
+    private fun reoweClear(profileId: String) {
+        owedClearProfileId.compareAndSet(null, profileId)
+    }
+
+    private suspend fun modeLearnedLimit(): String? =
+        LEARNED_LIMIT_IGNORE.takeIf { bufferingQualityMode() == BufferingQualityMode.NEVER }
+
+    /**
+     * The step-down estimate the buffering-quality controller last lowered
+     * Auto with, for the playback attempt it names. Without it a later Auto
+     * replan undoes the lowering whenever no learned limit applies (a server
+     * without `buffering_quality_v1`, or `never` mode): the server plans the
+     * source again, playback stalls, and the controller lowers once more. See
+     * [KeptStepDownEstimate] and [withStepDownEstimate].
+     */
+    private val stepDownEstimate = AtomicReference<KeptStepDownEstimate?>()
+
+    /**
+     * Returns this request as it should be sent under the kept-estimate rule
+     * ([withKeptStepDownEstimate]) and records what it does to
+     * [stepDownEstimate]. Call it where the request is built, right before it
+     * is sent.
+     */
+    private fun PlaybackReplanRequestV3.withStepDownEstimate(
+        bufferingQuality: BufferingQualityReplan?,
+    ): PlaybackReplanRequestV3 {
+        var sent = this
+        stepDownEstimate.updateAndGet { kept ->
+            withKeptStepDownEstimate(kept, bufferingQuality).also { sent = it.request }.kept
+        }
+        return sent
+    }
+
+    /**
+     * Forgets the kept step-down estimate now, for a Restore quality whose
+     * replan must wait for the one in flight: no replan sent meanwhile may
+     * carry the lowering the viewer undid.
+     */
+    fun discardStepDownEstimate() {
+        stepDownEstimate.set(null)
+    }
+
+    /**
+     * The playing plan's throughput so far, which a lowering sends as
+     * `observed_throughput_kbps`; null when it has not measured one or the
+     * network changed. A missed start deadline lowers only below the plan's
+     * delivered bitrate.
+     */
+    fun observedPlanThroughputKbps(): Int? = playingPlanThroughputKbps()
+
+    /**
+     * Starts the next plan's `throughput_kbps` count now, when the controller
+     * adopts a plan with no plan before it: whatever the meter counted since
+     * the last summary was not this plan's.
+     */
+    fun restartPlanThroughput() {
+        throughputKbps()
+    }
 
     private suspend fun <T> withSettledVideoAttempt(
         block: suspend () -> T,
@@ -353,9 +579,17 @@ open class PlaybackSessionManager(
             if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
                 return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
             val network = networkEvidenceProvider.snapshot()
+            // Read before the probe hears of the start, which only stops a
+            // running probe; the cached estimate stays. Only a reading for the
+            // server and route this start's media takes goes with it.
+            val probeEstimateKbps = bandwidthEstimates.freshEstimateKbps(
+                tokenManager.snapshotCurrentScope()?.serverId, allowsLocalRoute,
+            )
+            bandwidthEstimates.playbackStarting()
             if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
                 return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
             val playbackAttemptId = UUID.randomUUID().toString()
+            val owedClear = takeOwedClear(profileId)
             val request = PlaybackStartRequestV3(
                 fileId = fileId,
                 profileId = profileId,
@@ -379,13 +613,20 @@ open class PlaybackSessionManager(
                 subtitleTrackIndex = subtitleTrackIndex?.takeIf { it >= 0 },
                 clientFeatures = playbackClientFeaturesV3(clientPlaybackContext),
                 bandwidthCapKbps = maxBitrateKbps?.takeIf { it > 0 },
+                bandwidthEstimateKbps = probeEstimateKbps,
+                // SequencedPlayback strips the source and learned_limit for a
+                // server without buffering_quality_v1; the estimate stays.
+                bandwidthEstimateSource = probeEstimateKbps?.let { BANDWIDTH_ESTIMATE_SOURCE_PROBE },
+                learnedLimit = owedClear ?: modeLearnedLimit(),
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
                 allowAlternateVersions = allowAlternateVersions,
             )
             if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
                 return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
-            return@withLock when (val result = playbackRepository.startPlaybackV3(request, expectedMetadataOwner, allowsLocalRoute)) {
+            val result = playbackRepository.startPlaybackV3(request, expectedMetadataOwner, allowsLocalRoute)
+            if (owedClear != null && result !is ApiResult.Success) reoweClear(profileId)
+            return@withLock when (result) {
                 is ApiResult.Success -> when (val validated = result.data.validateForMedia3()) {
                     is PlaybackV3Validation.Playable -> {
                         leasedSessionId = validated.sessionId
@@ -599,7 +840,7 @@ open class PlaybackSessionManager(
             attemptCount = 1,
             startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
             firstFrameReported = false,
-        )
+        ).also { rememberPlan(it, request.bandwidthEstimateKbps) } // The probe's estimate, if the start sent one.
     }
 
     private fun installActiveVideoAttemptLocked(
@@ -745,6 +986,8 @@ open class PlaybackSessionManager(
          * the saved cap for the connection. Null keeps the session's.
          */
         qualityPair: PlaybackQualityPair? = null,
+        /** See [prepareActiveVideoSessionReplan]. */
+        bufferingQuality: BufferingQualityReplan? = null,
     ): ApiResult<VideoSessionStartV3> = immediateVideoReplanMutex.withLock {
         when (
             val prepared = prepareActiveVideoSessionReplan(
@@ -759,7 +1002,8 @@ open class PlaybackSessionManager(
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
                 qualityPair = qualityPair,
-                operation = replanOperationForClassification(classification),
+                operation = replanOperation(classification, bufferingQuality),
+                bufferingQuality = bufferingQuality,
                 // A rejected subtitle retry must not tear down healthy video.
                 // Reuse staged rejection cleanup while successful retries still commit.
                 preserveImmediateOutcomes = classification !in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS,
@@ -787,6 +1031,8 @@ open class PlaybackSessionManager(
         clientPlaybackContext: ClientPlaybackContext? = null,
         /** Replaces quality and cap as on [replanActiveVideoSession]: an in-player Auto. */
         qualityPair: PlaybackQualityPair? = null,
+        /** See [prepareActiveVideoSessionReplan]. */
+        bufferingQuality: BufferingQualityReplan? = null,
     ): ApiResult<StagedVideoReplan> = when (
         val prepared = prepareActiveVideoSessionReplan(
             classification = classification,
@@ -799,9 +1045,10 @@ open class PlaybackSessionManager(
             qualityPreference = qualityPreference,
             capabilities = capabilities,
             clientPlaybackContext = clientPlaybackContext,
-            operation = replanOperationForClassification(classification),
+            operation = replanOperation(classification, bufferingQuality),
             preserveImmediateOutcomes = false,
             qualityPair = qualityPair,
+            bufferingQuality = bufferingQuality,
         )
     ) {
         is ApiResult.Success -> when (val value = prepared.data) {
@@ -830,6 +1077,17 @@ open class PlaybackSessionManager(
         operation: String,
         preserveImmediateOutcomes: Boolean,
         qualityPair: PlaybackQualityPair? = null,
+        /**
+         * A replan the buffering-quality controller asked for. The callers
+         * send it as `quality_change` (see [replanOperation]); its quality
+         * preference replaces any other, and its estimate, estimate source
+         * and `learned_limit` go on the request. [sendReplan] then drops the
+         * source and `learned_limit` for a server without
+         * `buffering_quality_v1`. The session's bandwidth cap still applies.
+         * Null leaves the request unchanged, apart from the remembered
+         * step-down estimate (see [stepDownEstimate]).
+         */
+        bufferingQuality: BufferingQualityReplan? = null,
     ): ApiResult<PreparedVideoReplan> = withSettledVideoAttempt {
         if (contentResetInProgress) {
             return@withSettledVideoAttempt ApiResult.Error(
@@ -851,7 +1109,8 @@ open class PlaybackSessionManager(
             )
         }
         val intent = operation in INTENT_V3_OPERATIONS
-        val effectiveQuality = (qualityPair?.qualityPreference ?: qualityPreference)?.lowercase()
+        val effectiveQuality = (bufferingQuality?.qualityPreference ?: qualityPair?.qualityPreference ?: qualityPreference)
+            ?.lowercase()
             ?: active.qualityPreference
         // Mirror the server's own validator so a malformed operation is caught
         // before it costs a round trip: failure recovery must name what failed,
@@ -950,6 +1209,12 @@ open class PlaybackSessionManager(
             } else {
                 active.bandwidthCapKbps
             },
+            bandwidthEstimateKbps = bufferingQuality?.bandwidthEstimateKbps,
+            bandwidthEstimateSource = bufferingQuality?.bandwidthEstimateSource,
+            // A lowering also reports what the plan it leaves actually received.
+            observedThroughputKbps = playingPlanThroughputKbps()
+                .takeIf { bufferingQuality?.bandwidthEstimateSource == BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER },
+            learnedLimit = bufferingQuality?.learnedLimit,
             selectedTracks = SelectedPlaybackTracksV3(
                 audio = selectedTrackIdentity(active, "audio", audioTrackIndex, active.plan.selectedTracks.audio),
                 subtitle = subtitleTrackIndex?.takeIf { it >= 0 }
@@ -960,8 +1225,8 @@ open class PlaybackSessionManager(
             failure = if (intent) null else PlaybackFailureV3(classification, message, decoderName),
             capabilities = currentCapabilities,
             clientPlaybackContext = currentContext,
-        )
-        val result = playbackRepository.replanPlaybackV3(active.sessionId, request)
+        ).withStepDownEstimate(bufferingQuality)
+        val result = sendReplan(active.sessionId, request)
         var committedPlanAttemptId: String? = null
         if (result is ApiResult.Success) {
             // The server has committed this plan. Record it before any
@@ -1009,6 +1274,7 @@ open class PlaybackSessionManager(
                                         "replan_loop_detected",
                                         "The server returned a playback plan that already failed on this output route.",
                                         false,
+                                        messageRes = R.string.player_error_planAlreadyFailed,
                                     ),
                                 ),
                             )
@@ -1023,6 +1289,7 @@ open class PlaybackSessionManager(
                         requested = request.selectedTracks.subtitle,
                         candidate = validated.plan,
                         currentEffectiveFileId = active.plan.effectiveMediaFileId ?: active.fileId,
+                        subtitlePicked = classification == "subtitle_track_changed",
                     )
                     if (subtitleMismatch != null) {
                         stopCandidateSessionIfUnowned(active.sessionId, validated.sessionId)
@@ -1058,6 +1325,16 @@ open class PlaybackSessionManager(
                         startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
                         firstFrameReported = false,
                     )
+                    val subtitlePickOnly = classification == "subtitle_track_changed" && bufferingQuality == null
+                    val inPlaceMismatch = validated.plan.inPlaceMismatch(
+                        current = active.plan.withPlayerSwitchedAudio(request.selectedTracks.audio, validated.plan),
+                        sessionId = validated.sessionId,
+                        currentSessionId = active.sessionId,
+                    )
+                    // Why a subtitle pick's answer is adopted with a remount.
+                    if (subtitlePickOnly && inPlaceMismatch != null) {
+                        Log.i(TAG, "subtitle_replan_not_in_place reason=$inPlaceMismatch delivery=${validated.plan.delivery}")
+                    }
                     val ready = VideoSessionStartV3.Ready(
                         session = validated.plan.toSessionResponse(
                             validated.sessionId,
@@ -1070,6 +1347,13 @@ open class PlaybackSessionManager(
                         planAttemptKey = nextKey,
                         capabilities = currentCapabilities,
                         clientPlaybackContext = currentContext,
+                        // Only a subtitle pick: a quality or output change the
+                        // server happens to answer on the same transport still
+                        // goes through the adoption its own bookkeeping expects.
+                        // Compared against the plan the player renders: that is
+                        // the media a same-transport answer must match, including
+                        // audio the player switched on its own.
+                        inPlace = subtitlePickOnly && inPlaceMismatch == null,
                     )
                     val staged = StagedVideoReplan(
                         basePlaybackAttemptId = active.playbackAttemptId,
@@ -1079,9 +1363,12 @@ open class PlaybackSessionManager(
                         candidateSessionId = validated.sessionId,
                         outputContextId = next.context.output.outputContextId,
                     )
+                    // Remembered for its summary only once committed: a
+                    // discarded candidate never plays.
                     stagedVideoReplans[staged] = PreparedStagedVideoReplan(
                         nextAttempt = next,
                         fallbackReason = classification,
+                        bandwidthEstimateKbps = request.bandwidthEstimateKbps,
                     )
                     ApiResult.Success(PreparedVideoReplan.Staged(staged))
                 }
@@ -1154,6 +1441,7 @@ open class PlaybackSessionManager(
                                     UNEXECUTABLE_ROUTE_REASON,
                                     UNEXECUTABLE_ROUTE_MESSAGE,
                                     false,
+                                    messageRes = R.string.player_error_unexecutableRoute,
                                 ),
                             ),
                         )
@@ -1205,8 +1493,18 @@ open class PlaybackSessionManager(
             return@withLock stagedVideoReplanUnavailable()
         }
 
-        val next = prepared.nextAttempt
-        passthroughSuppression.beginAttempt(next.planAttemptKey)
+        // A plan applied in place keeps the playing transport: its first
+        // frame has been shown and reported, its audio sink and the local
+        // fixes made to it carry on, so none of that starts over.
+        val next = if (staged.candidate.inPlace) {
+            prepared.nextAttempt.copy(
+                firstFrameReported = active.firstFrameReported,
+                startedAtElapsedRealtimeMs = active.startedAtElapsedRealtimeMs,
+                localMutations = active.localMutations,
+            )
+        } else {
+            prepared.nextAttempt.also { passthroughSuppression.beginAttempt(it.planAttemptKey) }
+        }
         val routeEvent = PlaybackRouteEventV3(
             playbackAttemptId = next.playbackAttemptId,
             sessionId = next.sessionId,
@@ -1226,10 +1524,12 @@ open class PlaybackSessionManager(
         // reaches here has queued no release, so the caller's drain finds
         // nothing of its own and returns without waiting.
         activeVideoAttempt.set(next)
+        rememberPlan(next, prepared.bandwidthEstimateKbps)
         if (deferPublication) {
             pendingVideoPublication = PendingVideoPublication(
                 replacement = next,
                 predecessor = active,
+                inPlace = staged.candidate.inPlace,
             )
         }
         runCatching { emitRouteEvent(routeEvent) }
@@ -1424,7 +1724,7 @@ open class PlaybackSessionManager(
 
         pendingVideoPublication = null
         revertRenderedPlanKeepingCursor(pending.predecessor)
-        pending.predecessor?.let {
+        pending.predecessor?.takeUnless { pending.inPlace }?.let {
             passthroughSuppression.beginAttempt(it.planAttemptKey)
         }
         val protectedSessionIds = setOfNotNull(
@@ -1769,24 +2069,29 @@ open class PlaybackSessionManager(
         requested: PlaybackTrackIdentityV3?,
         candidate: PlaybackPlanV3,
         currentEffectiveFileId: Int,
+        /** The request is the viewer's subtitle pick, which an Off candidate would ignore. */
+        subtitlePicked: Boolean,
     ): String? {
         val selected = candidate.selectedTracks.subtitle
         val subtitle = candidate.subtitle
+        val subtitlesOff = selected == null &&
+            subtitle.mode == PlaybackSubtitleModeV3.OFF &&
+            subtitle.trackId == null &&
+            subtitle.artifact == null &&
+            subtitle.hlsRendition == null
         if (requested == null) {
-            return if (selected == null &&
-                subtitle.mode == PlaybackSubtitleModeV3.OFF &&
-                subtitle.trackId == null &&
-                subtitle.artifact == null &&
-                subtitle.hlsRendition == null
-            ) {
-                null
-            } else {
-                "The candidate did not keep subtitles off."
-            }
+            return if (subtitlesOff) null else "The candidate did not keep subtitles off."
         }
         val candidateEffectiveFileId = candidate.effectiveMediaFileId
             ?: candidate.requestedMediaFileId
             ?: currentEffectiveFileId
+        if (candidateEffectiveFileId != currentEffectiveFileId && subtitlesOff && !subtitlePicked) {
+            // The other edition may not carry the requested track, so the server
+            // can turn subtitles off there, as when a quality change moves to it.
+            // It has already committed this plan; refusing it would leave the
+            // player on the old file. A subtitle pick it turned off is refused.
+            return null
+        }
         if (candidateEffectiveFileId == currentEffectiveFileId) {
             if (selected?.id != requested.id ||
                 (selected.index != null && selected.index != requested.index) ||
@@ -1808,9 +2113,10 @@ open class PlaybackSessionManager(
                 if (subtitle.embedded != null && candidate.delivery == org.siloserver.silo.model.playback.PlaybackDelivery.ORIGINAL_HTTP &&
                     subtitle.embedded?.containerTrackId != null && subtitle.artifact == null
                 ) return null
-                // The transcode carries the track in its own playlist; there is
-                // no artifact to check, and validateForMedia3 vetted the shape.
-                if (subtitle.hlsRendition != null && candidate.delivery == org.siloserver.silo.model.playback.PlaybackDelivery.SERVER_TRANSCODE_HLS &&
+                // The transcode or copy remux carries the track in its own
+                // playlist; there is no artifact to check, and
+                // validateForMedia3 vetted the shape.
+                if (subtitle.hlsRendition != null && candidate.delivery.carriesHlsSubtitleRendition() &&
                     subtitle.artifact == null
                 ) return null
                 val artifact = subtitle.artifact
@@ -1892,7 +2198,7 @@ open class PlaybackSessionManager(
             selectedTracks = active.plan.selectedTracks,
             capabilities = active.capabilities,
             clientPlaybackContext = active.context,
-        )
+        ).withStepDownEstimate(bufferingQuality = null)
         emitRouteEvent(
             PlaybackRouteEventV3(
                 playbackAttemptId = active.playbackAttemptId,
@@ -1909,7 +2215,7 @@ open class PlaybackSessionManager(
             ),
         )
 
-        when (val result = playbackRepository.replanPlaybackV3(active.sessionId, request)) {
+        when (val result = sendReplan(active.sessionId, request)) {
             is ApiResult.Success -> {
                 if (SEEK_REANCHOR_V3_FEATURE !in result.data.serverFeatures) {
                     return@withSettledVideoAttempt invalidSeekReanchorResponse(
@@ -1943,6 +2249,7 @@ open class PlaybackSessionManager(
                                 message = "The active playback attempt changed while seek re-anchoring.",
                             )
                         }
+                        rememberPlan(next, request.bandwidthEstimateKbps)
                         emitRouteEvent(
                             PlaybackRouteEventV3(
                                 playbackAttemptId = next.playbackAttemptId,
@@ -2173,7 +2480,7 @@ open class PlaybackSessionManager(
             ),
             capabilities = active.capabilities,
             clientPlaybackContext = active.context,
-        )
+        ).withStepDownEstimate(bufferingQuality = null)
         emitRouteEvent(
             PlaybackRouteEventV3(
                 playbackAttemptId = active.playbackAttemptId,
@@ -2192,7 +2499,7 @@ open class PlaybackSessionManager(
             ),
         )
 
-        when (val result = playbackRepository.replanPlaybackV3(active.sessionId, request)) {
+        when (val result = sendReplan(active.sessionId, request)) {
             is ApiResult.Success -> {
                 result.data.playbackPlan?.let { committedPlan ->
                     val committedKey = committedPlan.planAttemptKey
@@ -2239,6 +2546,7 @@ open class PlaybackSessionManager(
                                     reason = "replan_loop_detected",
                                     message = "The server returned a seek-recovery route that already failed.",
                                     retryable = false,
+                                    messageRes = R.string.player_error_seekRecoveryRouteFailed,
                                 ),
                             )
                         }
@@ -2258,6 +2566,7 @@ open class PlaybackSessionManager(
                                 message = "The active playback attempt changed during seek recovery.",
                             )
                         }
+                        rememberPlan(next, request.bandwidthEstimateKbps)
                         passthroughSuppression.beginAttempt(nextKey)
                         emitRouteEvent(
                             PlaybackRouteEventV3(
@@ -2388,6 +2697,139 @@ open class PlaybackSessionManager(
             playbackRepository.reportRouteEventV3(event)
         }
     }
+
+    /**
+     * Every replan leaves through here. `never` mode adds `learned_limit:
+     * ignore` unless the request names its own, then the buffering-quality
+     * feature gate applies. SequencedPlayback applies the same gate at the
+     * wire from the same feature record, so gating here only makes the log
+     * line match the body sent.
+     */
+    private suspend fun sendReplan(
+        sessionId: String,
+        request: PlaybackReplanRequestV3,
+    ): ApiResult<PlaybackDecisionResponseV3> {
+        val profileId = activeVideoAttempt.get()?.profileId
+        var tookOwedClear = false
+        val learnedLimit = when (request.learnedLimit) {
+            // A Restore sent itself: nothing is owed any more.
+            LEARNED_LIMIT_CLEAR -> LEARNED_LIMIT_CLEAR.also { owedClearProfileId.set(null) }
+            null -> profileId?.let(::takeOwedClear)?.also { tookOwedClear = true } ?: modeLearnedLimit()
+            else -> request.learnedLimit
+        }
+        val outgoing = request
+            .copy(learnedLimit = learnedLimit)
+            .gatedForBufferingQuality(playbackRepository.playbackServerFeatures(request.playbackAttemptId))
+        Log.i(
+            TAG,
+            "replan_request operation=${outgoing.operation ?: FAILURE_RECOVERY_V3_OPERATION} " +
+                "quality_preference=${outgoing.qualityPreference} " +
+                "bandwidth_estimate_kbps=${outgoing.bandwidthEstimateKbps} " +
+                "bandwidth_estimate_source=${outgoing.bandwidthEstimateSource} " +
+                "observed_throughput_kbps=${outgoing.observedThroughputKbps} " +
+                "learned_limit=${outgoing.learnedLimit} " +
+                "bandwidth_cap_kbps=${outgoing.bandwidthCapKbps} " +
+                "failure=${outgoing.failure?.classification} " +
+                "client_features_has_bq=${BUFFERING_QUALITY_V1_FEATURE in outgoing.clientFeatures}",
+        )
+        var result = playbackRepository.replanPlaybackV3(sessionId, outgoing)
+        // A replan that got no response goes again with its original body once
+        // the device is back online, for as long as this session plays: the
+        // server answers it or replays its decision, and an outage never
+        // leaves the session waiting on an answer it lost.
+        var resends = 0
+        while (result is ApiResult.NetworkError && activeVideoAttempt.get()?.sessionId == sessionId) {
+            awaitNetworkRetry(networkEvidenceProvider.updates, resends)
+            if (activeVideoAttempt.get()?.sessionId != sessionId) break
+            resends += 1
+            Log.i(TAG, "replan_resend attempt=$resends replan_request_id=${outgoing.replanRequestId}")
+            result = playbackRepository.replanPlaybackV3(sessionId, outgoing)
+        }
+        if (tookOwedClear && result !is ApiResult.Success) profileId?.let(::reoweClear)
+        return result
+    }
+
+    /**
+     * Sends the `plan_summary` route event for a plan that stopped being the
+     * playing plan: what [org.siloserver.silo.domain.player.BufferingQualityController]
+     * hands its `onPlanSummary` callback. It names the summarized plan even
+     * when the active attempt has already moved to its successor or stopped.
+     *
+     * Sent only while the server advertises `playback_plan_summary_v1` for the
+     * attempt; otherwise, or for a plan this manager no longer remembers, it
+     * is dropped. It replaces any summary [savePlanSummary] saved for the same
+     * adoption.
+     */
+    fun emitPlanSummary(summary: BufferingPlanSummary) {
+        // Taken first, so the next plan's count starts here even when this summary is dropped.
+        val throughput = throughputKbps()
+        val identity = takePlanIdentity(summary.planId) ?: run {
+            Log.w(TAG, "plan_summary dropped: the plan is no longer known")
+            return
+        }
+        if (PLAYBACK_PLAN_SUMMARY_V1_FEATURE !in playbackRepository.playbackServerFeatures(identity.playbackAttemptId)) {
+            return
+        }
+        val event = planSummaryEvent(summary, identity, throughput)
+        val eventId = planSummaryEventId(summary, identity)
+        queuePlanSummaryWrite { playbackRepository.reportRouteEventV3(event, eventId) }
+    }
+
+    /**
+     * Saves the playing plan's summary so far to the playback journal without
+     * sending it, for when the app leaves the foreground and its process may
+     * die there. If the plan later ends in this process, [emitPlanSummary]
+     * sends the real summary under the same `event_id`, replacing this one;
+     * otherwise the next launch sends this one.
+     *
+     * It leaves the plan's identity and throughput count to the real summary,
+     * and so carries no `throughput_kbps`.
+     */
+    fun savePlanSummary(summary: BufferingPlanSummary) {
+        val identity = peekPlanIdentity(summary.planId) ?: return
+        if (PLAYBACK_PLAN_SUMMARY_V1_FEATURE !in playbackRepository.playbackServerFeatures(identity.playbackAttemptId)) {
+            return
+        }
+        val event = planSummaryEvent(summary, identity, throughputKbps = null)
+        val eventId = planSummaryEventId(summary, identity)
+        queuePlanSummaryWrite { playbackRepository.saveRouteEventV3(event, eventId) }
+    }
+
+    private fun planSummaryEvent(
+        summary: BufferingPlanSummary,
+        identity: PlanSummaryIdentity,
+        throughputKbps: Int?,
+    ) = PlaybackRouteEventV3(
+        playbackAttemptId = identity.playbackAttemptId,
+        sessionId = identity.sessionId,
+        planId = summary.planId,
+        planAttemptId = identity.planAttemptId,
+        planAttemptKey = identity.planAttemptKey,
+        event = "plan_summary",
+        outputContextId = identity.outputContextId,
+        diagnostics = buildMap {
+            put("played_ms", summary.playedMs.toString())
+            put("stall_count", summary.stallCount.toString())
+            put("stall_total_ms", summary.stallTotalMs.toString())
+            put("stall_longest_ms", summary.stallLongestMs.toString())
+            summary.deliveredKbps?.takeIf { it > 0 }?.let { put("delivered_kbps", it.toString()) }
+            throughputKbps?.let { put("throughput_kbps", it.toString()) }
+            put("buffering_mode", summary.mode.wireValue)
+            put("buffering_action", summary.action.wireValue)
+            identity.bandwidthEstimateKbps?.let { put("bandwidth_estimate_kbps", it.toString()) }
+        },
+    )
+
+    /**
+     * One `event_id` per adoption, the same for its saved and real summaries,
+     * so the journal keeps one of them and the server records one. A name-based
+     * UUID, because the server takes only a canonical UUID.
+     */
+    private fun planSummaryEventId(summary: BufferingPlanSummary, identity: PlanSummaryIdentity): String =
+        UUID.nameUUIDFromBytes(
+            "plan_summary\n${identity.playbackAttemptId}\n${identity.planAttemptId}\n${summary.adoptionId}"
+                .encodeToByteArray(),
+        ).toString()
 
     fun reportActiveVideoEvent(
         event: String,
@@ -2566,6 +3008,13 @@ open class PlaybackSessionManager(
             else -> FAILURE_RECOVERY_V3_OPERATION
         }
 
+        /** A buffering-quality replan is always a `quality_change`, whatever the classification. */
+        private fun replanOperation(classification: String, bufferingQuality: BufferingQualityReplan?): String =
+            if (bufferingQuality != null) QUALITY_CHANGE_V3_OPERATION else replanOperationForClassification(classification)
+
+        /** Plans remembered for `plan_summary`: the playing one and its predecessors. */
+        private const val RECENT_PLAN_LIMIT = 8
+
         /**
          * The server returned a structurally valid plan that names a client-side
          * runtime correction or transformation this build cannot execute.
@@ -2716,5 +3165,5 @@ open class PlaybackSessionManager(
 internal fun ApiResult<*>.isPlaybackSessionMissingError(): Boolean {
     val error = this as? ApiResult.Error ?: return false
     return error.code == 404 &&
-        (error.error == "playback_session_not_found" || error.message == "Playback session not found")
+        (error.error == "playback_session_not_found" || error.detail == "Playback session not found")
 }

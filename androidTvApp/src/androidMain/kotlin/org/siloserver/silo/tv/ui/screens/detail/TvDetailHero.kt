@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,6 +51,8 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.TvFactsRow
 import org.siloserver.silo.tv.ui.components.TvHeroFactToken
+import org.siloserver.silo.tv.ui.components.bidiIsolated
+import org.siloserver.silo.tv.ui.components.hasRightToLeftScript
 
 /**
  * Approved tvOS detail hero, mapped onto Android TV's half-scale layout
@@ -120,6 +123,8 @@ internal fun TvDetailHero(
                 thumbhash = backdropThumbhash,
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
+                // Keeps the opening card's artwork until the full-size image loads.
+                holdPreviousImage = true,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     // Movie and Series artwork share the same top edge. A
@@ -187,21 +192,19 @@ internal fun TvDetailHero(
                     .focusGroup(),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                if (compactSeries && translation != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.weight(1f)) { actions() }
-                        translation()
-                    }
-                } else if (compactSeries && machineTranslated) {
+                // Keep actions() at one call site: moving it between branches
+                // would recreate the row and drop focus from a focused button
+                // whenever the translation state changes.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { actions() }
                     // Series reserves fixed editorial slots, so the marker sits
                     // at the end of the action row where the translate button
                     // would; it is not focusable and adds no D-pad stop.
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.weight(1f)) { actions() }
+                    if (compactSeries && translation != null) {
+                        translation()
+                    } else if (compactSeries && machineTranslated) {
                         TvMachineTranslatedLabel()
                     }
-                } else {
-                    actions()
                 }
             }
         }
@@ -281,7 +284,14 @@ private fun EditorialColumn(
                             tagline = tagline.takeUnless { isCombinedSeriesEpisode },
                             collapsedMaxLines = 3,
                             dialogTitle = title,
-                            previewText = if (isCombinedSeriesEpisode) "$title · $line" else line,
+                            // The title is isolated whenever any of it reads right to left,
+                            // so the overview, not the title, sets the paragraph direction.
+                            // Left-to-right text keeps its bytes (D28).
+                            previewText = if (isCombinedSeriesEpisode) {
+                                "${bidiIsolated(title, line.hasRightToLeftScript())} · $line"
+                            } else {
+                                line
+                            },
                         )
                     }
                 }
@@ -583,6 +593,8 @@ private val heroDisplayHero = TextStyle(
     fontSize = 42.sp,
     lineHeight = 46.sp,
     letterSpacing = 0.sp,
+    textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
     // Apple shadows the hero title (black@0.55, r16, y4) for legibility on
     // bright backdrops. Inherited by the subtitle/episode `.copy()` variants.
     shadow = Shadow(color = Color.Black.copy(alpha = 0.55f), offset = Offset(0f, 4f), blurRadius = 16f),

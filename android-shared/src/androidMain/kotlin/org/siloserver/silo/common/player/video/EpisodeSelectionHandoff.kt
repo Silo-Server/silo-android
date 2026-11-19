@@ -310,7 +310,7 @@ private fun PlayerSubtitleInfo.toEpisodeSubtitleIntent(): EpisodeSubtitleIntent 
     language = canonicalSubtitleLanguage(language),
     codecFamily = normalizedSubtitleCodecFamily(codec),
     forced = forced,
-    hearingImpaired = subtitleLabelIndicatesHearingImpaired(catalogLabel ?: label),
+    hearingImpaired = episodeSubtitleHearingImpaired(),
     external = episodeSubtitleExternal(),
 )
 
@@ -354,7 +354,7 @@ private fun PlayerSubtitleInfo.episodeSubtitleMatchScore(
 )
 
 private fun PlayerSubtitleInfo.episodeSubtitleHearingImpaired(): Boolean =
-    subtitleLabelIndicatesHearingImpaired(catalogLabel ?: label)
+    hearingImpaired == true || subtitleLabelIndicatesHearingImpaired(catalogLabel ?: label)
 
 private fun PlayerSubtitleInfo.episodeSubtitleExternal(): Boolean? = when (
     (catalogSource ?: source)?.trim()?.lowercase()

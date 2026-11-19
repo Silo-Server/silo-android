@@ -141,7 +141,7 @@ class ProfileSettingsController(
         val result = writeLanguage(SettingKeys.CATALOG_METADATA_LANGUAGE, language, authority)
         // The write committed even if the following settings read is canceled.
         if (result is ApiResult.Success) {
-            catalogLanguage.changed(authority?.let { CatalogCacheScope(it.serverId, requireNotNull(it.profileId)) })
+            catalogLanguage.changed(authority?.let { CatalogCacheScope(it.serverId, requireNotNull(it.profileId), it.accountId.orEmpty()) })
             // Complete durable invalidation even if the post-write reload is
             // canceled, so a later app launch cannot revive the old language.
             withContext(NonCancellable) {

@@ -33,6 +33,9 @@ import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import coil3.compose.AsyncImage
+import coil3.compose.asPainter
+import coil3.imageLoader
+import coil3.memory.MemoryCache
 import coil3.decode.DataSource
 import coil3.request.ImageRequest
 import coil3.request.crossfade
@@ -139,9 +142,25 @@ fun ThumbhashImage(
     /** Applied to the loaded image only — used by the blurred page backdrop. */
     colorFilter: ColorFilter? = null,
     defaultArtwork: DefaultArtworkKind? = null,
+    /**
+     * When [url] changes, keeps drawing the image the previous URL loaded,
+     * while it is still in the memory cache, until the new one is ready,
+     * instead of dropping back to the ThumbHash. A detail hero uses it to
+     * keep the opening card's artwork while the full-size image loads.
+     */
+    holdPreviousImage: Boolean = false,
 ) {
     val context = LocalContext.current
     val deferPresentationWhile = LocalImagePresentationDeferral.current
+    val requestKey = cacheKey ?: url
+    var loadedKey by remember { mutableStateOf<String?>(null) }
+    val heldImage = remember(requestKey) {
+        // Only while another image is on its way: a URL withdrawn on
+        // purpose (a spoiler-hidden still) must not leave the old pixels up.
+        loadedKey?.takeIf { holdPreviousImage && !url.isNullOrBlank() && it != requestKey }
+            ?.let { context.imageLoader.memoryCache?.get(MemoryCache.Key(it))?.image?.asPainter(context) }
+    }
+    val rememberLoaded = { if (holdPreviousImage) loadedKey = requestKey }
 
     // Cached placeholders resolve synchronously (instant on scroll-back); a cold
     // hash decodes off the composition thread and blurs up a frame later, so the
@@ -153,7 +172,7 @@ fun ThumbhashImage(
     // to the default artwork rather than wait on a placeholder that never comes.
     var thumbhashUnusable by remember(thumbhash) { mutableStateOf(false) }
     // Plain `val` (not `by`) so the null-checked `placeholder` smart-casts below.
-    val placeholder = produceState(initialValue = cachedPlaceholder, thumbhash, cachedPlaceholder) {
+    val thumbhashPlaceholder = produceState(initialValue = cachedPlaceholder, thumbhash, cachedPlaceholder) {
         if (cachedPlaceholder != null) return@produceState
         val hash = thumbhash?.takeIf { it.isNotBlank() } ?: run {
             value = null
@@ -163,6 +182,7 @@ fun ThumbhashImage(
         if (decoded != null) ThumbhashPainterCache.put(hash, decoded) else thumbhashUnusable = true
         value = decoded
     }.value
+    val placeholder = heldImage ?: thumbhashPlaceholder
     val hasUsableThumbhash = !thumbhash.isNullOrBlank() && !thumbhashUnusable
 
     if (url.isNullOrBlank()) {
@@ -218,7 +238,10 @@ fun ThumbhashImage(
             // than dropping to an empty box.
             error = placeholder,
             colorFilter = colorFilter,
-            onSuccess = { onSuccess?.invoke() },
+            onSuccess = {
+                rememberLoaded()
+                onSuccess?.invoke()
+            },
             onError = {
                 failed = true
                 onError?.invoke()
@@ -309,6 +332,7 @@ fun ThumbhashImage(
             error = placeholder,
             colorFilter = colorFilter,
             onSuccess = { state ->
+                rememberLoaded()
                 fullImageReady = true
                 if (
                     state.result.dataSource == DataSource.MEMORY_CACHE ||

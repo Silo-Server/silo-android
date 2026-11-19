@@ -28,9 +28,15 @@ fun Iterable<BrowseItem>.visibleOnTv(): List<BrowseItem> =
 fun Iterable<UserLibrary>.visibleOnTv(): List<UserLibrary> =
     filterNot { isTvHiddenMediaType(it.type) }
 
+/**
+ * Rows with something TV shows. A row of collections keeps its cards: they
+ * name no media type, and Home drops ebook libraries' cards where it knows the
+ * library's type.
+ */
 @JvmName("resolvedSectionsVisibleOnTv")
 fun Iterable<ResolvedSection>.visibleOnTv(): List<ResolvedSection> =
     mapNotNull { section ->
+        if (section.isCollectionRow) return@mapNotNull section.takeIf { it.collections.isNotEmpty() }
         val visibleItems = section.items.filterNot { isTvHiddenMediaType(it.type) }
         section.takeIf { visibleItems.isNotEmpty() }?.copy(items = visibleItems)
     }

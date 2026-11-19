@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,8 +32,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -40,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.Text
+import kotlinx.coroutines.delay
 import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.components.MachineTranslatedLabel
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -74,7 +77,10 @@ fun TvFocusMarquee(
     /** An extra line under the block for pages that preview more than catalog
      *  items (the Requests page's status and stage track). */
     footer: (@Composable (TvMarqueeContent) -> Unit)? = null,
+    /** The air date opening the detail line as "Aired …"; travels with [detailLine]. */
+    airDate: String? = content?.airDate,
 ) {
+    val shownDetailLine = tvMarqueeDetailLine(airDate, detailLine)
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -121,7 +127,7 @@ fun TvFocusMarquee(
                             } else {
                                 value.underPrefs(spoilerPrefs)
                             },
-                            detailLine = detailLine.takeIf { value.id == content?.id },
+                            detailLine = shownDetailLine.takeIf { value.id == content?.id },
                             translation = translation.takeIf { it?.contentId == value.contentId },
                             footer = footer,
                         )
@@ -131,7 +137,7 @@ fun TvFocusMarquee(
         } else if (content != null) {
             TvMarqueeBlock(
                 content = content,
-                detailLine = detailLine,
+                detailLine = shownDetailLine,
                 translation = translation.takeIf { it?.contentId == content.contentId },
                 footer = footer,
             )
@@ -153,11 +159,23 @@ private fun TvMarqueeBlock(
     // "Show title art" off: the marquee always names the title in text.
     val logoUrl = titleLogoUrl(content.logoUrl)
     var logoLoaded by remember(logoUrl) { mutableStateOf(false) }
-    val logoAlpha by animateFloatAsState(
+    // The text fallback stays invisible while the logo gets a short grace
+    // period, so a cached or fast logo never flashes the text title first. A
+    // failed or slow logo still falls back to the text.
+    var showTitleFallback by remember(logoUrl) { mutableStateOf(false) }
+    LaunchedEffect(logoUrl) {
+        delay(MarqueeLogoGraceMs)
+        // A logo that decoded inside the grace period fades in alone.
+        if (!logoLoaded) showTitleFallback = true
+    }
+    // Read the fade only through drawAlpha (draw phase): reading it during
+    // composition recomposed the whole block on every frame of the fade.
+    val logoAlpha = animateFloatAsState(
         targetValue = if (logoLoaded) 1f else 0f,
         animationSpec = tween(TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
         label = "marqueeLogoAlpha",
     )
+    val logoFadeDone by remember(logoAlpha) { derivedStateOf { logoAlpha.value >= 1f } }
     // 6dp rows and an 84dp logo slot: the marquee viewport (screen minus the
     // top-bar zone minus the row band) fits five text rows only if the block
     // stays under ~206dp, and the format spec line is the fifth row.
@@ -165,9 +183,9 @@ private fun TvMarqueeBlock(
         modifier = Modifier.widthIn(max = MarqueeContentWidth),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // Keep the semantic text title visible until transparent logo artwork
-        // has actually decoded. A bad/slow URL therefore never creates a blank
-        // title slot; successful artwork fades over the fixed-height fallback.
+        // The text title stays composed (for layout and line count) until the
+        // logo decodes, but only becomes visible after the grace period or on
+        // error, so a bad/slow URL never leaves a blank title slot.
         if (!logoUrl.isNullOrBlank()) {
             Box(
                 modifier = Modifier
@@ -175,7 +193,7 @@ private fun TvMarqueeBlock(
                     .fillMaxWidth(),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                if (!logoLoaded || logoAlpha < 1f) {
+                if (!logoLoaded || !logoFadeDone) {
                     Text(
                         text = content.title,
                         color = Color.White,
@@ -185,7 +203,9 @@ private fun TvMarqueeBlock(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         onTextLayout = { titleLineCount = it.lineCount },
-                        modifier = Modifier.alpha(1f - logoAlpha),
+                        modifier = Modifier.drawAlpha {
+                            if (showTitleFallback) 1f - logoAlpha.value else 0f
+                        },
                     )
                 }
                 ThumbhashImage(
@@ -200,10 +220,11 @@ private fun TvMarqueeBlock(
                     transparent = true,
                     crossfadeMillis = 0,
                     onSuccess = { logoLoaded = true },
+                    onError = { showTitleFallback = true },
                     modifier = Modifier
                         .fillMaxHeight()
                         .widthIn(max = MarqueeLogoMaxWidth)
-                        .alpha(logoAlpha),
+                        .drawAlpha { logoAlpha.value },
                 )
             }
         } else {
@@ -266,15 +287,15 @@ private fun TvMarqueeBlock(
         synopsisText?.let { synopsis ->
             // A running translation pulses the original text until the
             // translated description replaces it.
-            val pulse = if (translating) {
+            val pulse: State<Float>? = if (translating) {
                 rememberInfiniteTransition(label = "marqueeTranslating").animateFloat(
                     initialValue = 0.35f,
                     targetValue = 0.7f,
                     animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
                     label = "marqueeTranslatingAlpha",
-                ).value
+                )
             } else {
-                1f
+                null
             }
             Text(
                 text = synopsis,
@@ -285,15 +306,19 @@ private fun TvMarqueeBlock(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .widthIn(max = MarqueeSynopsisMaxWidth)
-                    .alpha(pulse),
+                    .drawAlpha { pulse?.value ?: 1f },
             )
         }
 
         // Reserve the detail row before the async item-detail response lands.
         // The real line fades over this fixed slot, so the bottom-anchored
         // title/meta/synopsis never jump upward on a cold first focus.
+        // The lift sits on the slot, not the Text: Crossfade draws each line
+        // in an alpha layer clipped to its bounds, which would cut the top
+        // off a Text shifted above them for the whole fade.
         Box(
             modifier = Modifier
+                .offset(y = (-4).dp)
                 .height(MarqueeDetailLineHeight)
                 .widthIn(max = MarqueeSynopsisMaxWidth),
             contentAlignment = Alignment.TopStart,
@@ -311,9 +336,7 @@ private fun TvMarqueeBlock(
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .offset(y = (-4).dp)
-                            .widthIn(max = MarqueeSynopsisMaxWidth),
+                        modifier = Modifier.widthIn(max = MarqueeSynopsisMaxWidth),
                     )
                 }
             }
@@ -337,6 +360,17 @@ private fun TvMarqueeBlock(
 
         footer?.invoke(content)
     }
+}
+
+/**
+ * [Modifier.alpha] that reads [alpha] in the draw phase, so an animated value
+ * redraws the layer without recomposing its caller. Like [Modifier.alpha], it
+ * clips only while translucent.
+ */
+private fun Modifier.drawAlpha(alpha: () -> Float): Modifier = graphicsLayer {
+    val value = alpha()
+    this.alpha = value
+    clip = value != 1f
 }
 
 @Composable
@@ -380,3 +414,6 @@ private val MarqueeMetaGap = 4.dp
 private val MarqueeDetailSize = 14.sp
 private val MarqueeSynopsisSize = 16.sp
 private val MarqueeBadgeSize = 10.5.sp
+
+/** How long the marquee waits on a logo before showing the text title. */
+private const val MarqueeLogoGraceMs = 700L

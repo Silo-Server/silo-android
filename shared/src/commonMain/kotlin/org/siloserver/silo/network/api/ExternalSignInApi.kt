@@ -29,6 +29,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.apiv2.Problem
+import org.siloserver.silo.network.apiv2.ProblemText
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.safeApiV2Call
 import org.siloserver.silo.network.authScope
@@ -283,7 +284,8 @@ class DefaultExternalSignInApi(
                 status == 422 && "body.password" in locations -> WRONG_PASSWORD
                 else -> problem?.code.orEmpty()
             }
-            return ApiResult.Error(status, code, problem?.detail.orEmpty())
+            val detail = problem?.detail.orEmpty()
+            return ApiResult.Error(status, code, problem?.let { ProblemText.message(it) } ?: detail, detail)
         }
     }
 }

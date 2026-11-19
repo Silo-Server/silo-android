@@ -1,6 +1,10 @@
 package org.siloserver.silo.common.player
 
 import android.util.Log
+import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackSessionRecording
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackSessionRecorder
@@ -90,6 +94,9 @@ class PlaybackSessionLifecycle(
     private val mutex = Mutex()
 
     @Volatile private var lastStartParams: StartParams? = null
+
+    /** The playing session's start pinned its file (`allow_alternate_versions: false`). */
+    val sessionPinsVersion: Boolean get() = lastStartParams?.allowAlternateVersions == false
     @Volatile private var lastReportedPosition: Double? = null
     @Volatile private var lastReportedDuration: Double = 0.0
     /** Durable content-time coordinate; differs from session time for multipart audio. */
@@ -243,7 +250,13 @@ class PlaybackSessionLifecycle(
                 reporterJob = null
             }
             _notice.value = null
-            lastStartParams = params
+            // A replan, seek or subtitle change keeps the session, and the
+            // server keeps its start's version pin through it; so must a renewal.
+            lastStartParams = if (lastAdoptedSessionId == session.sessionId && params.allowAlternateVersions == null) {
+                params.copy(allowAlternateVersions = lastStartParams?.allowAlternateVersions)
+            } else {
+                params
+            }
             lastReportedPosition = params.startPosition ?: session.position
             lastReportedDuration = session.durationSeconds ?: 0.0
             lastPersistencePosition = params.startPosition ?: session.position
@@ -713,7 +726,11 @@ class PlaybackSessionLifecycle(
                         sequencedFailures++
                         Log.w(TAG, "sequenced reportProgress failed ($sequencedFailures): $result")
                         if (sequencedFailures >= SEQUENCED_PROGRESS_WARNING_FAILURES) {
-                            _notice.value = PlayerNotice("Playback progress is pending. The current session will not be replaced.", NoticeTone.Warning)
+                            _notice.value = PlayerNotice(
+                                PROGRESS_PENDING_MESSAGE,
+                                NoticeTone.Warning,
+                                messageRes = R.string.player_notice_progressPending,
+                            )
                         }
                     } else {
                         sequencedFailures = 0
@@ -813,6 +830,7 @@ class PlaybackSessionLifecycle(
                 message = OUTAGE_RECONNECT_MESSAGE,
                 tone = NoticeTone.Warning,
                 expiresAtEpochMs = deadline,
+                messageRes = R.string.player_notice_reconnecting,
             )
 
             val diagnosticsRecording = this.diagnosticsRecording
@@ -862,11 +880,12 @@ class PlaybackSessionLifecycle(
                 if (!ownsRecoveredSession(recoveredSessionId)) return@launch
                 Log.w(TAG, "Outage recovery exhausted for playback session")
                 DiagnosticsPlaybackLogger.sessionEvent("session reconnect failed")
-                _state.value = SessionState.Failed(OUTAGE_TIMEOUT_MESSAGE)
+                _state.value = SessionState.Failed(OUTAGE_TIMEOUT_MESSAGE, R.string.player_error_serverTimedOut)
                 _notice.value = PlayerNotice(
                     message = OUTAGE_TIMEOUT_MESSAGE,
                     tone = NoticeTone.Warning,
                     expiresAtEpochMs = null,
+                    messageRes = R.string.player_error_serverTimedOut,
                 )
             }.also { outageJob = it }
         }
@@ -932,7 +951,7 @@ class PlaybackSessionLifecycle(
     private fun isPlaybackSessionMissing(result: ApiResult<*>): Boolean {
         val error = result as? ApiResult.Error ?: return false
         return error.code == 404 &&
-            (error.error == "playback_session_not_found" || error.message == "Playback session not found")
+            (error.error == "playback_session_not_found" || error.detail == "Playback session not found")
     }
 
     private fun nowMs(): Long = System.currentTimeMillis()
@@ -951,8 +970,14 @@ class PlaybackSessionLifecycle(
         const val OUTAGE_MAX_DELAY_MS: Long = 8_000L
         const val OUTAGE_TIMEOUT_MS: Long = 90_000L
 
+        /** English of [R.string.player_notice_progressPending], kept for logs and tests. */
+        const val PROGRESS_PENDING_MESSAGE: String =
+            "Playback progress is pending. The current session will not be replaced."
+
+        /** English of [R.string.player_notice_reconnecting], kept for logs and tests. */
         const val OUTAGE_RECONNECT_MESSAGE: String =
             "Reconnecting. Playback will resume automatically."
+        /** English of [R.string.player_error_serverTimedOut], kept for logs and tests. */
         const val OUTAGE_TIMEOUT_MESSAGE: String =
             "The server did not come back online in time."
     }
@@ -976,7 +1001,14 @@ sealed interface SessionState {
         val deadlineEpochMs: Long,
         val tone: NoticeTone = NoticeTone.Warning,
     ) : SessionState
-    data class Failed(val message: String) : SessionState
+    /**
+     * [message] is the English (or server) text, kept for logs and comparisons;
+     * when [messageRes] is set, the UI shows that catalog string instead.
+     */
+    data class Failed(
+        val message: String,
+        @StringRes val messageRes: Int? = null,
+    ) : SessionState
 }
 
 /** Severity / styling tone for a [PlayerNotice]. */
@@ -985,12 +1017,25 @@ enum class NoticeTone { Info, Warning }
 /**
  * UI surface for transient player banners. `null` from the [PlaybackSessionLifecycle.notice]
  * StateFlow means "show nothing".
+ *
+ * [message] is the text as built (already translated when a composable built
+ * it, English when this lifecycle did). When [messageRes] is set, show that
+ * catalog string instead: read the text through [text], not [message].
  */
 data class PlayerNotice(
     val message: String,
     val tone: NoticeTone,
     val expiresAtEpochMs: Long? = null,
+    @StringRes val messageRes: Int? = null,
 )
+
+/** The text to show for this notice: the catalog string when there is one, else [PlayerNotice.message]. */
+@Composable
+fun PlayerNotice.text(): String = messageRes?.let { stringResource(it) } ?: message
+
+/** The text to show for a failed session: the catalog string when there is one, else the message. */
+@Composable
+fun SessionState.Failed.text(): String = messageRes?.let { stringResource(it) } ?: message
 
 /**
  * Durable inputs for renewing a server-side session that disappeared.
@@ -1020,7 +1065,11 @@ data class StartParams(
     val qualityPreference: String? = null,
     val startPosition: Double? = null,
     val clientPlaybackContext: ClientPlaybackContext,
-    /** Watch Party starts pin the file (false); renewals must keep that. */
+    /**
+     * False pins the file: a Watch Party start or a version the viewer chose.
+     * Renewals must keep it; a same-session adoption without it keeps the
+     * session's.
+     */
     val allowAlternateVersions: Boolean? = null,
 )
 

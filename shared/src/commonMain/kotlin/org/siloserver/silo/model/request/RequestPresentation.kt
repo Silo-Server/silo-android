@@ -31,3 +31,11 @@ fun RequestMediaResult.libraryItemToOpen(): String? =
 /** Same rule for the user's own request records. */
 fun MediaRequest.libraryItemToOpen(): String? =
     RequestDisplayState.of(this).libraryItemToOpen(libraryContentId)
+
+/**
+ * What a library search's "Available to request" row offers: titles the
+ * library doesn't have. The library results above the row already show the
+ * rest. The Apple and Roku clients filter the row the same way.
+ */
+fun List<RequestMediaResult>.withoutLibraryTitles(): List<RequestMediaResult> =
+    filter { it.availability != RequestAvailability.Available }

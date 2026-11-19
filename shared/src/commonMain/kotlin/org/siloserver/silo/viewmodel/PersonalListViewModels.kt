@@ -17,6 +17,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.detailedErrorText
+import org.siloserver.silo.common.i18n.errorText
 
 /**
  * Sort + filter applied to a personal list.
@@ -47,7 +51,7 @@ data class PersonalListUiState(
     val isLoading: Boolean = true,
     val isLoadingMore: Boolean = false,
     val isRefreshing: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val hasMore: Boolean = false,
     val total: Int? = null,
     /** History retains the watched witness even when its card represents a series. */
@@ -278,7 +282,7 @@ abstract class PersonalListViewModel(
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
-                            error = r.message.ifBlank { "Failed to load" },
+                            error = r.errorText(SharedString.PersonalListLoadFailed),
                         )
                     }
                 }
@@ -288,7 +292,7 @@ abstract class PersonalListViewModel(
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
-                            error = "Network error: ${r.exception.message ?: "unknown"}",
+                            error = r.detailedErrorText(),
                         )
                     }
                 }

@@ -13,11 +13,15 @@ import androidx.core.app.NotificationManagerCompat
 import org.siloserver.silo.android.MainActivity
 import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.navigation.Route
-import org.siloserver.silo.android.ui.screens.notifications.watchlistAvailableTitle
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.AppLocales
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.NotificationType
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.currentAccountOn
 import org.siloserver.silo.repository.NotificationsRepository
 
 class PushNotificationPresenter internal constructor(
@@ -25,7 +29,15 @@ class PushNotificationPresenter internal constructor(
     private val notificationsRepository: NotificationsRepository,
     private val tokenManager: TokenManager,
     private val targets: PushTargetResolver,
+    private val registry: ServerRegistry? = null,
 ) {
+    /**
+     * Context for notification text. Before Android 13 the application context
+     * keeps the device language, so this applies the app language the way the
+     * activities do ([AppLocales.wrap]); from 13 it is [context] itself.
+     */
+    private val text: Context get() = AppLocales.wrap(context)
+
     suspend fun present(
         deliveryId: String,
         issuer: PushIssuer? = null,
@@ -51,6 +63,7 @@ class PushNotificationPresenter internal constructor(
         // wildcard at delivery, so a half-attributed notification can act under
         // an identity that never generated it.
         val issuingServerId = attribution?.serverId
+        val issuingAccountId = attribution?.accountId
         val issuingProfileId = attribution?.profileId
         val attributable = attribution != null
 
@@ -70,18 +83,22 @@ class PushNotificationPresenter internal constructor(
             // Only navigable when we know whose it is. Unattributable ones still
             // post — the user should see the event — but tapping just opens the
             // app rather than acting on someone else's library. An attributed
-            // one opens its route only while its server and profile are the
-            // active ones (MainActivity); otherwise it opens the app.
+            // one that names its account switches to its tile (server,
+            // account, profile) first; one from before accounts opens its route
+            // only while its server and profile are the active ones
+            // (MainActivity); otherwise it opens the app.
             if (attributable) {
                 putExtra(EXTRA_NAV_ROUTE, content.route)
                 putExtra(EXTRA_SERVER_ID, issuingServerId)
                 putExtra(EXTRA_PROFILE_ID, issuingProfileId)
+                issuingAccountId?.let { putExtra(EXTRA_ACCOUNT_ID, it) }
             }
         }
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(content.title)
             .setContentText(content.body)
+            .setSubText(attribution?.let(::tileSubtitle))
             .setStyle(NotificationCompat.BigTextStyle().bigText(content.body))
             .setAutoCancel(true)
             .setContentIntent(
@@ -121,7 +138,11 @@ class PushNotificationPresenter internal constructor(
         }
         return FetchedNotification(
             row = row,
-            attribution = PushNotificationAttribution(serverId = target.serverEntryId, profileId = target.profileId),
+            attribution = PushNotificationAttribution(
+                serverId = target.serverEntryId,
+                profileId = target.profileId,
+                accountId = target.accountId,
+            ),
         )
     }
 
@@ -154,8 +175,27 @@ class PushNotificationPresenter internal constructor(
                 identityGenerationBefore = scopeBeforeFetch?.identityGeneration,
                 serverIdAfter = scopeAfterFetch?.serverId,
                 identityGenerationAfter = scopeAfterFetch?.identityGeneration,
-            ),
+            )?.copy(accountId = scopeBeforeFetch?.accountId),
         )
+    }
+
+    /**
+     * "Profile · Server" for a notification attributed to [attribution], once
+     * this device has more than one tile (a profile of a saved account, or a
+     * saved server's Sign in tile) to tell it apart from; null otherwise.
+     */
+    private fun tileSubtitle(attribution: PushNotificationAttribution): String? {
+        val registry = registry ?: return null
+        val accounts = registry.accounts.value
+        val entries = registry.entries.value
+        val tiles = accounts.sumOf { it.cachedProfiles.size.coerceAtLeast(1) } +
+            entries.count { entry -> accounts.none { it.serverId == entry.id } }
+        if (tiles <= 1) return null
+        val account = accounts.firstOrNull { it.localAccountId == attribution.accountId && it.serverId == attribution.serverId }
+            ?: registry.currentAccountOn(attribution.serverId)
+        val profileName = account?.cachedProfiles?.firstOrNull { it.id == attribution.profileId }?.name?.takeIf { it.isNotBlank() }
+        val serverName = entries.firstOrNull { it.id == attribution.serverId }?.displayName?.takeIf { it.isNotBlank() }
+        return listOfNotNull(profileName, serverName).joinToString(" · ").ifBlank { null }
     }
 
     // sync refreshes the inbox for a background_wake push without posting a
@@ -188,38 +228,40 @@ class PushNotificationPresenter internal constructor(
     ): PushNotificationContent {
         if (row == null) {
             return PushNotificationContent(
-                title = fallbackTitle?.takeIf { it.isNotBlank() } ?: "Silo notification",
+                title = fallbackTitle?.takeIf { it.isNotBlank() } ?: text.getString(CommonR.string.notifications_push_genericTitle),
                 // Deliberately does not promise this specific event is visible
                 // under the active identity — it may not be ours to show.
                 body = fallbackBody?.takeIf { it.isNotBlank() }
-                    ?: "Open Silo to check notifications.",
+                    ?: text.getString(CommonR.string.notifications_push_genericBody),
                 route = Route.Inbox.route,
             )
         }
 
         val episodeTag = row.seasonNumber?.let { season ->
-            row.episodeNumber?.let { episode -> "S${season}E$episode" }
+            row.episodeNumber?.let { episode -> text.getString(CommonR.string.catalog_episodeTag, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode)) }
         }
         val route = notificationRouteFor(row)
         return when (row.type) {
             NotificationType.EpisodeAvailable -> PushNotificationContent(
-                title = row.seriesTitle.ifBlank { "New episode available" },
+                title = row.seriesTitle.ifBlank { text.getString(CommonR.string.notifications_type_newEpisode) },
                 body = listOfNotNull(
                     episodeTag,
                     row.episodeTitle.ifBlank { null },
-                ).joinToString(" - ").ifBlank { "Open Silo to watch." },
+                ).joinToString(" - ").ifBlank { text.getString(CommonR.string.notifications_push_episodeBody) },
                 route = route,
             )
             NotificationType.RequestFulfilled -> PushNotificationContent(
-                title = "Request fulfilled",
+                title = text.getString(CommonR.string.notifications_type_requestFulfilled),
                 body = row.episodeTitle.ifBlank { null }
                     ?: row.seriesTitle.ifBlank { null }
-                    ?: "Your requested title is ready.",
+                    ?: text.getString(CommonR.string.notifications_push_requestBody),
                 route = route,
             )
             NotificationType.WatchlistAvailable -> PushNotificationContent(
-                title = watchlistAvailableTitle(row.seriesTitle.ifBlank { null }),
-                body = "From your watchlist.",
+                title = row.seriesTitle.ifBlank { null }
+                    ?.let { text.getString(CommonR.string.notifications_type_watchlistAvailable, it) }
+                    ?: text.getString(CommonR.string.notifications_type_watchlistAvailableUntitled),
+                body = text.getString(CommonR.string.notifications_push_watchlistBody),
                 route = route,
             )
             NotificationType.Unknown -> PushNotificationContent(
@@ -227,11 +269,11 @@ class PushNotificationPresenter internal constructor(
                     ?: row.rawType.substringBefore('.')
                         .replace('_', ' ')
                         .replaceFirstChar { it.uppercase() }
-                        .ifBlank { "Silo notification" },
+                        .ifBlank { text.getString(CommonR.string.notifications_push_genericTitle) },
                 body = fallbackBody?.takeIf { it.isNotBlank() }
                     ?: row.episodeTitle.ifBlank { null }
                     ?: row.seriesTitle.ifBlank { null }
-                    ?: "Open Silo to view it.",
+                    ?: text.getString(CommonR.string.notifications_push_otherBody),
                 route = route,
             )
         }
@@ -243,15 +285,17 @@ class PushNotificationPresenter internal constructor(
             ?: row.seriesId?.takeIf { it.isNotBlank() }?.let { Route.ItemDetail(it).route }
             ?: Route.Inbox.route
 
+    // Re-created on every post, so the channel's name and description follow
+    // the app language; CHANNEL_ID stays fixed.
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Notifications",
+            text.getString(CommonR.string.notifications_channel_name),
             NotificationManager.IMPORTANCE_DEFAULT,
         ).apply {
-            description = "Private Silo notification alerts"
+            description = text.getString(CommonR.string.notifications_channel_description)
         }
         manager.createNotificationChannel(channel)
     }
@@ -268,6 +312,8 @@ class PushNotificationPresenter internal constructor(
         /** Identity the notification was generated for; see [present]. */
         const val EXTRA_SERVER_ID = "silo_notification_server_id"
         const val EXTRA_PROFILE_ID = "silo_notification_profile_id"
+        /** The saved account on that server; absent on notifications from before accounts. */
+        const val EXTRA_ACCOUNT_ID = "silo_notification_account_id"
     }
 }
 
@@ -282,8 +328,11 @@ private data class PushNotificationContent(
     val route: String,
 )
 
-/** A notification's established issuer, or null when it cannot be attributed. */
-data class PushNotificationAttribution(val serverId: String, val profileId: String)
+/**
+ * A notification's established issuer, or null when it cannot be attributed.
+ * [accountId] is the saved account on [serverId] it was read as, when known.
+ */
+data class PushNotificationAttribution(val serverId: String, val profileId: String, val accountId: String? = null)
 
 /**
  * Establishes who a notification belongs to — completely, or not at all.
