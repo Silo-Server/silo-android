@@ -36,7 +36,7 @@ internal fun TvItemCollectionsRowSection(
     previewItems: List<SectionItem>,
     /** Opens a collection; the return key names the card that did, for [onCardFocused]. */
     onCollectionClick: (SectionCollectionCard, returnKey: String) -> Unit,
-    onItemClick: (contentId: String, collection: SectionCollectionCard) -> Unit,
+    onItemClick: (contentId: String) -> Unit,
     onReturnToHero: (() -> Boolean)?,
     restoreFocusIndex: Int,
     restoreFocusRequester: FocusRequester?,
@@ -59,7 +59,7 @@ internal fun TvItemCollectionsRowSection(
                     title = row.collection.title,
                     showHeader = false,
                     items = previewItems,
-                    onItemClick = { contentId -> onItemClick(contentId, row.collection) },
+                    onItemClick = onItemClick,
                     style = TvRowStyle.Poster,
                     horizontalPadding = TvDetailHorizontalInset,
                     itemSpacing = TvItemCollectionsRowSpacing,

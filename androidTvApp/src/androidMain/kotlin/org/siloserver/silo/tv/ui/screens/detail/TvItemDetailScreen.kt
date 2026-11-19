@@ -261,8 +261,11 @@ fun TvItemDetailScreen(
     onBoxSetMovie: (contentId: String, libraryId: String) -> Unit = { contentId, _ -> onItemDetail(contentId) },
     /** Opens a collection from the collections row. */
     onOpenCollection: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit = {},
-    /** Opens a title from a collection's preview, scoped to the collection's library when it has one. */
-    onCollectionItem: (contentId: String, libraryId: Int?) -> Unit = { contentId, _ -> onItemDetail(contentId) },
+    /**
+     * Opens a title from a collection's preview, with no library: a
+     * collection's titles can live in other libraries, as on its own page.
+     */
+    onCollectionItem: (contentId: String) -> Unit = onItemDetail,
     // Plays the first pick of a shuffle started from the More menu.
     onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvItemDetailViewModel = koinViewModel(
@@ -440,7 +443,7 @@ private fun TvDetailContent(
     onOpenBoxSet: (boxSetId: String, libraryId: String) -> Unit,
     onBoxSetMovie: (contentId: String, libraryId: String) -> Unit,
     onOpenCollection: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit,
-    onCollectionItem: (contentId: String, libraryId: Int?) -> Unit,
+    onCollectionItem: (contentId: String) -> Unit,
     shuffleLauncher: org.siloserver.silo.common.ui.ShuffleLauncher,
 ) {
     val resources = localizedResources()
@@ -1001,9 +1004,9 @@ private fun TvDetailContent(
                 recordReturn(TvDetailReturnRail.Collections, returnKey)
                 onOpenCollection(card)
             },
-            onItemClick = { clickedContentId, card ->
+            onItemClick = { clickedContentId ->
                 recordReturn(TvDetailReturnRail.Collections, clickedContentId)
-                onCollectionItem(clickedContentId, card.libraryIdInt)
+                onCollectionItem(clickedContentId)
             },
             onReturnToHero = onReturnToHero,
             restoreFocusIndex = collectionsRestoreIndex,

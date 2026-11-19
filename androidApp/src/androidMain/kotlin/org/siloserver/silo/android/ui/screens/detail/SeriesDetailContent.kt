@@ -65,7 +65,7 @@ fun SeriesDetailContent(
     /** The collections row; null shows none. */
     collectionsRow: org.siloserver.silo.viewmodel.ItemCollectionsRow? = null,
     onCollectionClick: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit = {},
-    onCollectionItemClick: (org.siloserver.silo.model.catalog.BrowseItem, org.siloserver.silo.model.section.SectionCollectionCard) -> Unit = { _, _ -> },
+    onCollectionItemClick: (org.siloserver.silo.model.catalog.BrowseItem) -> Unit = {},
     seasons: List<Season>,
     selectedSeasonNumber: Int,
     episodes: List<EpisodeListItem>,

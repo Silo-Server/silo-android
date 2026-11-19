@@ -36,7 +36,7 @@ import org.siloserver.silo.viewmodel.ItemCollectionsRow
 internal fun ItemCollectionsRail(
     row: ItemCollectionsRow,
     onCollectionClick: (SectionCollectionCard) -> Unit,
-    onItemClick: (item: BrowseItem, collection: SectionCollectionCard) -> Unit,
+    onItemClick: (BrowseItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val cardWidth = 120.dp * LocalCardPresentation.current.posterSize.posterScale
@@ -62,7 +62,7 @@ internal fun ItemCollectionsRail(
                             progress = null,
                             onClick = {
                                 DetailSeeds.offer(item)
-                                onItemClick(item, row.collection)
+                                onItemClick(item)
                             },
                             overlay = OverlayDataExtractor.fromBrowseItem(item),
                             sharedContentId = item.contentId,

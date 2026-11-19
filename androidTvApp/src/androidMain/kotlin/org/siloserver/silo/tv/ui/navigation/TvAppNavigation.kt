@@ -1690,8 +1690,8 @@ fun TvAppNavigation(
                         ) { launchSingleTop = true }
                     }
                 },
-                onCollectionItem = { itemContentId, collectionLibraryId ->
-                    navController.navigateToTvItemDetail(itemContentId, libraryId = collectionLibraryId)
+                onCollectionItem = { itemContentId ->
+                    navController.navigateToTvItemDetail(itemContentId)
                 },
             )
         }
