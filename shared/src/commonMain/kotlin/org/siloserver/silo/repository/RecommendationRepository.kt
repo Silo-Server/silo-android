@@ -9,9 +9,10 @@ import org.siloserver.silo.network.api.RecommendationApi
 
 class RecommendationRepository(
     private val recommendationApi: RecommendationApi,
+    private val artwork: ArtworkSizing = ArtworkSizing.None,
 ) {
     suspend fun getDiscover(owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<DiscoverResponse> =
-        recommendationApi.getDiscover(owner)
+        recommendationApi.getDiscover(owner, artwork.request(ArtworkSurface.DISCOVER))
 
     suspend fun captureDiscoverAuthority() = recommendationApi.captureDiscoverAuthority()
     suspend fun isDiscoverAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = recommendationApi.isDiscoverAuthorityCurrent(owner)
@@ -26,7 +27,7 @@ class RecommendationRepository(
         stillCurrent: () -> Boolean, publish: (List<org.siloserver.silo.model.catalog.BrowseItem>) -> Unit) {
         if (!currentCoroutineContext().isActive || !stillCurrent()) return
         // getSimilar guards the owner before and after the exchange.
-        val result = recommendationApi.getSimilar(contentId, 12, owner)
+        val result = recommendationApi.getSimilar(contentId, 12, owner, artwork.request(ArtworkSurface.SIMILAR))
         if (!isSimilarAuthorityCurrent(owner) || !currentCoroutineContext().isActive || !stillCurrent()) return
         publish((result as? ApiResult.Success)?.data.orEmpty())
     }

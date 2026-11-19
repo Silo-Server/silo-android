@@ -14,28 +14,29 @@ package org.siloserver.silo.repository.port
  * Android impl bound in the platform module; default no-op keeps non-Android /
  * tests network-only (delete stays server-first there).
  *
- * Keyed by `(serverId, profileId, recordId)` — not recordId alone — so clearing a
+ * Keyed by `(serverId, accountId, profileId, recordId)` — not recordId alone — so clearing a
  * tombstone after one scope's list confirms absence can never drop another scope's
  * pending delete (recordIds are server-unique, but the *clear* decision is
  * scope-local). [mediaFileId] is carried so a crash between enqueue and on-device
  * byte deletion can be finished idempotently on the next launch.
  */
 interface DownloadDeletionPort {
-    suspend fun enqueue(serverId: String, profileId: String, recordId: String, mediaFileId: Int?) {}
+    suspend fun enqueue(serverId: String, accountId: String, profileId: String, recordId: String, mediaFileId: Int?) {}
 
     /** Every pending tombstone's recordId, across all scopes — used to filter ghosts
      *  out of any refresh (recordIds are globally unique, so this is always safe). */
     suspend fun allPendingRecordIds(): Set<String> = emptySet()
 
     /** Pending tombstones for one scope — used for scope-local reconcile + clear. */
-    suspend fun pendingForScope(serverId: String, profileId: String): List<PendingDownloadDeletion> = emptyList()
+    suspend fun pendingForScope(serverId: String, accountId: String, profileId: String): List<PendingDownloadDeletion> = emptyList()
 
-    suspend fun remove(serverId: String, profileId: String, recordId: String) {}
+    suspend fun remove(serverId: String, accountId: String, profileId: String, recordId: String) {}
 }
 
 /** A queued download-record deletion awaiting server reconciliation. */
 data class PendingDownloadDeletion(
     val serverId: String,
+    val accountId: String,
     val profileId: String,
     val recordId: String,
     val mediaFileId: Int?,

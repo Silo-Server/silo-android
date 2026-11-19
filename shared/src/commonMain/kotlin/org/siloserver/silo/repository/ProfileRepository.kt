@@ -1,5 +1,6 @@
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.profile.CreateProfileRequest
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.ProfilesResponse
@@ -38,17 +39,38 @@ open class ProfileRepository(
     private val requestsRepository: RequestsRepository? = null,
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
 ) {
-    /** Lists all profiles for the current user. */
+    /**
+     * Lists all profiles for the current user, and keeps the open account's
+     * profile limit, which arrives with the list (the profile menu's row
+     * reads it).
+     */
     open suspend fun listProfiles(): ApiResult<List<Profile>> =
         listHousehold().map { it.profiles }
 
     /**
-     * The profiles plus the server's household feature flags, for the profile
+     * The profiles plus the server's household flags, for the profile
      * editors: they show and send `requests_allowed` only when
      * [ProfilesResponse.requestsAllowedSupported].
      */
-    open suspend fun listHousehold(): ApiResult<ProfilesResponse> =
-        profileApi.listProfiles()
+    open suspend fun listHousehold(): ApiResult<ProfilesResponse> {
+        val accountId = serverRegistry?.activeAccountId?.value
+        // A remote-playback handoff identity lists its own profile with no
+        // limit; that is not the open account's answer.
+        val handoff = tokenManager.hasTemporaryScope()
+        val result = profileApi.listProfiles()
+        if (result is ApiResult.Success && !handoff && !tokenManager.hasTemporaryScope()) {
+            rememberProfileLimit(accountId, result.data.maxProfiles)
+        }
+        return result
+    }
+
+    /** Stores [maxProfiles] for [accountId] while it is still the open account. */
+    private suspend fun rememberProfileLimit(accountId: String?, maxProfiles: Int?) {
+        val registry = serverRegistry ?: return
+        if (accountId == null || registry.activeAccountId.value != accountId) return
+        if (registry.activeAccount.value?.maxProfiles == maxProfiles) return
+        registry.setMaxProfiles(accountId, maxProfiles)
+    }
 
     /**
      * The picker's manage mode: management calls act as the household's primary
@@ -77,6 +99,10 @@ open class ProfileRepository(
             )
         return profileApi.updateProfile(profileId, request)
     }
+
+    /** The account's libraries, for the profile forms' library allowlist. */
+    open suspend fun listAssignableLibraries(): ApiResult<List<UserLibrary>> =
+        profileApi.listAssignableLibraries()
 
     /** Deletes a profile by ID, as the household manager while manage mode is on. */
     suspend fun deleteProfile(id: String): ApiResult<Unit> =

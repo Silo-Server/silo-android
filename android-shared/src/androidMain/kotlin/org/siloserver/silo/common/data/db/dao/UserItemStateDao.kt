@@ -19,25 +19,26 @@ interface UserItemStateDao {
 
     @Query(
         "SELECT * FROM user_item_state " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId AND fileId = :fileId",
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId AND fileId = :fileId",
     )
-    suspend fun get(serverId: String, profileId: String, contentId: String, fileId: Int): UserItemStateEntity?
+    suspend fun get(serverId: String, accountId: String, profileId: String, contentId: String, fileId: Int): UserItemStateEntity?
 
     /** All file-level rows for a content item (e.g. every version/track). */
     @Query(
         "SELECT * FROM user_item_state " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId",
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId",
     )
-    suspend fun getByContent(serverId: String, profileId: String, contentId: String): List<UserItemStateEntity>
+    suspend fun getByContent(serverId: String, accountId: String, profileId: String, contentId: String): List<UserItemStateEntity>
 
     /** Clears resume state without discarding per-file playback or reading preferences. */
     @Query(
         "UPDATE user_item_state SET positionSeconds = 0, clientUpdatedAtMs = :updatedAtMs, positionUpdatedAtMs = :updatedAtMs " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId " +
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId " +
             "AND positionSeconds <> 0",
     )
     suspend fun clearPlaybackProgress(
         serverId: String,
+        accountId: String,
         profileId: String,
         contentId: String,
         updatedAtMs: Long,
@@ -48,9 +49,9 @@ interface UserItemStateDao {
      * Rows written before positionUpdatedAtMs existed fall back to clientUpdatedAtMs.
      */
     @Query("UPDATE user_item_state SET positionSeconds = 0, clientUpdatedAtMs = :updatedAtMs, positionUpdatedAtMs = :updatedAtMs " +
-        "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId " +
+        "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId " +
         "AND COALESCE(positionUpdatedAtMs, clientUpdatedAtMs) < :admittedAtMs")
-    suspend fun clearPlaybackProgressBefore(serverId: String, profileId: String, contentId: String, admittedAtMs: Long, updatedAtMs: Long)
+    suspend fun clearPlaybackProgressBefore(serverId: String, accountId: String, profileId: String, contentId: String, admittedAtMs: Long, updatedAtMs: Long)
 
     /**
      * Restore a reset resume row only while it is still the untouched reset.
@@ -58,11 +59,12 @@ interface UserItemStateDao {
      */
     @Query(
         "UPDATE user_item_state SET positionSeconds = :positionSeconds, clientUpdatedAtMs = CASE WHEN clientUpdatedAtMs = :clearedAtMs THEN :previousUpdatedAtMs ELSE clientUpdatedAtMs END, positionUpdatedAtMs = :previousPositionUpdatedAtMs " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId " +
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId " +
             "AND fileId = :fileId AND positionSeconds = 0 AND COALESCE(positionUpdatedAtMs, clientUpdatedAtMs) = :clearedAtMs",
     )
     suspend fun restorePlaybackProgressIfUnchanged(
         serverId: String,
+        accountId: String,
         profileId: String,
         contentId: String,
         fileId: Int,
@@ -72,15 +74,53 @@ interface UserItemStateDao {
         clearedAtMs: Long,
     )
 
+    /**
+     * Marks resume rows as sent once the server has, or may have, the sample
+     * taken at [sampledAtMs] from [fileId]: that file's row while it still holds
+     * that sample, and the item's other files' rows sampled no later. Online,
+     * the server's answer then stands over them; offline they remain the resume
+     * point. A newer sample clears the mark.
+     */
+    @Query(
+        "UPDATE user_item_state SET serverUpdatedAtMs = :sampledAtMs " +
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId " +
+            "AND positionSeconds > 0 AND (CASE WHEN fileId = :fileId THEN positionUpdatedAtMs = :sampledAtMs " +
+            "ELSE COALESCE(positionUpdatedAtMs, clientUpdatedAtMs) <= :sampledAtMs END)",
+    )
+    suspend fun markPlaybackProgressSent(
+        serverId: String,
+        accountId: String,
+        profileId: String,
+        contentId: String,
+        fileId: Int,
+        sampledAtMs: Long,
+    )
+
+    /**
+     * Download playback positions still waiting to reach the server: a v2
+     * `SET_POSITION` op is queued or in flight for that exact file. Only these
+     * may override the server's answer; once acknowledged the server is the truth.
+     * Without [includeSent], a position already sent once without an answer
+     * doesn't count: it may have arrived, and newer progress from another
+     * device would then win. Offline, with no server answer to compare,
+     * callers include it.
+     */
     @Query(
         "SELECT * FROM user_item_state " +
-            "WHERE serverId = :serverId AND profileId = :profileId " +
-            "AND contentId IN (:contentIds) AND positionSeconds > 0",
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId " +
+            "AND contentId IN (:contentIds) AND positionSeconds > 0 " +
+            "AND (:includeSent OR serverUpdatedAtMs IS NULL) " +
+            "AND EXISTS (SELECT 1 FROM dirty_operations o WHERE o.opKind = 'SET_POSITION' AND o.opVersion >= 2 " +
+            "AND o.state IN ('pending', 'in_flight') AND o.serverId = user_item_state.serverId " +
+            "AND o.accountId = user_item_state.accountId AND o.profileId = user_item_state.profileId " +
+            "AND o.targetContentId = user_item_state.contentId AND o.targetFileId = user_item_state.fileId)",
     )
-    suspend fun progressForContentIds(
+    suspend fun pendingProgressForContentIds(
         serverId: String,
+        accountId: String,
         profileId: String,
         contentIds: List<String>,
+        includeSent: Boolean,
     ): List<UserItemStateEntity>
 
     /**
@@ -89,14 +129,14 @@ interface UserItemStateDao {
      */
     @Query(
         "SELECT * FROM user_item_state " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND positionSeconds > 0 " +
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND positionSeconds > 0 " +
             "ORDER BY clientUpdatedAtMs DESC LIMIT :limit",
     )
-    suspend fun recentlyPlayed(serverId: String, profileId: String, limit: Int): List<UserItemStateEntity>
+    suspend fun recentlyPlayed(serverId: String, accountId: String, profileId: String, limit: Int): List<UserItemStateEntity>
 
     @Query(
         "DELETE FROM user_item_state " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId AND fileId = :fileId",
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId AND fileId = :fileId",
     )
-    suspend fun delete(serverId: String, profileId: String, contentId: String, fileId: Int)
+    suspend fun delete(serverId: String, accountId: String, profileId: String, contentId: String, fileId: Int)
 }

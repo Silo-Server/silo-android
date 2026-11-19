@@ -68,6 +68,38 @@ class TvAutoSubtitleFallbackTest {
     }
 
     @Test
+    fun theFallbackJudgesTheAudioThePlaybackWillPlayNotTheFilesDefault() {
+        // Dual Audio: German is the file's default and still selected in the
+        // first snapshot; the plan chose English. English audio with an
+        // English/Auto profile and forced on means the forced track only.
+        fun row(index: Int, label: String, language: String, forced: Boolean = false) = PlayerSubtitleInfo(
+            index = index, language = language, codec = "subrip", label = label, source = "embedded",
+            forced = forced, url = "https://silo.example/stream/s1/subtitles/$index.vtt",
+            catalogLabel = label, catalogSource = "embedded",
+        )
+        val full = row(0, "English SRT", "en")
+        val forced = row(1, "English Forced", "en", forced = true)
+        val german = row(2, "German SRT", "de")
+        val firstSnapshot = listOf(
+            PlayerTrackEntry(index = 0, label = "deu", language = "de", isSelected = true),
+            PlayerTrackEntry(index = 1, label = "eng", language = "en", isSelected = false),
+        )
+        fun resolve(intended: String?) = resolveTvAutoSubtitleIdentity(
+            audioTracks = firstSnapshot,
+            subtitleTracks = emptyList(),
+            subtitleRows = listOf(full, forced, german),
+            preferredLanguage = "en",
+            subtitleMode = "auto",
+            showForced = true,
+            intendedAudioLanguage = intended,
+        )
+
+        assertEquals(tvSubtitleIdentity(forced), resolve("eng"))
+        // Unknown intent still reads the mounted selection, as before.
+        assertEquals(tvSubtitleIdentity(full), resolve(null))
+    }
+
+    @Test
     fun theFallbackPrefersAPlainEmbeddedPgsTrackOverAnExternalSrt() {
         // Android renders embedded PGS itself, so with nothing else to tell
         // them apart the file's own track beats the sidecar.

@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.i18n.displayUppercase
 
 /**
  * Editorial section header used below the detail hero. Mirrors the tvOS
@@ -38,7 +39,7 @@ internal fun TvDetailSectionHeader(
     ) {
         if (!eyebrow.isNullOrBlank()) {
             Text(
-                text = eyebrow.uppercase(),
+                text = eyebrow.displayUppercase(),
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,

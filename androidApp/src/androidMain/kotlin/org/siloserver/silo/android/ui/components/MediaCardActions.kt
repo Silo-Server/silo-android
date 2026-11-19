@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.BookmarkRemove
@@ -23,13 +25,16 @@ data class MediaCardActions(
     val onSetWatched: ((watched: Boolean) -> Unit)? = null,
     val onToggleFavorite: ((favorite: Boolean) -> Unit)? = null,
     val onToggleWatchlist: ((inWatchlist: Boolean) -> Unit)? = null,
-    val onRemoveFromContinueWatching: (() -> Unit)? = null,
+    /** Removes the card from its Home row; [removeFromHomeLabel] names the list it leaves. */
+    val onRemoveFromHome: (() -> Unit)? = null,
+    /** Null names Continue Watching. */
+    val removeFromHomeLabel: String? = null,
 ) {
     val isEmpty: Boolean
         get() = onSetWatched == null &&
             onToggleFavorite == null &&
             onToggleWatchlist == null &&
-            onRemoveFromContinueWatching == null
+            onRemoveFromHome == null
 }
 
 /**
@@ -54,7 +59,7 @@ fun MediaCardContextMenu(
     ) {
         actions.onSetWatched?.let { setWatched ->
             MenuRow(
-                text = if (isPlayed) "Mark as Unwatched" else "Mark as Watched",
+                text = stringResource(if (isPlayed) CommonR.string.menu_card_markUnwatched else CommonR.string.menu_card_markWatched),
                 icon = if (isPlayed) Icons.Default.VisibilityOff else Icons.Default.Check,
                 onClick = {
                     setWatched(!isPlayed)
@@ -64,7 +69,7 @@ fun MediaCardContextMenu(
         }
         actions.onToggleFavorite?.let { toggle ->
             MenuRow(
-                text = if (isFavorite) "Remove from Favorites" else "Add to Favorites",
+                text = stringResource(if (isFavorite) CommonR.string.detail_more_removeFavorite else CommonR.string.detail_more_addFavorite),
                 icon = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                 onClick = {
                     toggle(!isFavorite)
@@ -74,7 +79,7 @@ fun MediaCardContextMenu(
         }
         actions.onToggleWatchlist?.let { toggle ->
             MenuRow(
-                text = if (isInWatchlist) "Remove from Watchlist" else "Add to Watchlist",
+                text = stringResource(if (isInWatchlist) CommonR.string.personal_watchlist_remove else CommonR.string.cardMenu_addWatchlist),
                 icon = if (isInWatchlist) Icons.Default.BookmarkRemove else Icons.Default.BookmarkAdd,
                 onClick = {
                     toggle(!isInWatchlist)
@@ -82,9 +87,9 @@ fun MediaCardContextMenu(
                 },
             )
         }
-        actions.onRemoveFromContinueWatching?.let { remove ->
+        actions.onRemoveFromHome?.let { remove ->
             MenuRow(
-                text = "Remove from Continue Watching",
+                text = actions.removeFromHomeLabel ?: stringResource(CommonR.string.cardMenu_removeContinueWatching),
                 icon = Icons.Default.Close,
                 onClick = {
                     remove()

@@ -43,6 +43,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import org.siloserver.silo.tv.ui.focus.tvFocusSuppressed
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.pluralStringResource
 
 /**
  * Five-button audiobook transport, D-pad navigable. Mirrors the video player's
@@ -77,7 +80,7 @@ fun TvAudiobookTransportRow(
     ) {
         TransportIconButton(
             icon = Icons.Filled.SkipPrevious,
-            description = "Previous chapter",
+            description = stringResource(CommonR.string.audiobook_transport_previousChapterTv),
             enabled = chaptersEnabled,
             focusSuppressed = focusSuppressed,
             buttonSize = buttonSize,
@@ -86,14 +89,18 @@ fun TvAudiobookTransportRow(
         TransportIconButton(
             icon = null,
             seekGlyph = false to skipBackSeconds,
-            description = "Skip back $skipBackSeconds seconds",
+            description = pluralStringResource(CommonR.plurals.player_audio_skipBack, skipBackSeconds, skipBackSeconds),
             focusSuppressed = focusSuppressed,
             buttonSize = buttonSize,
             onClick = onSkipBack,
         )
         TransportIconButton(
             icon = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-            description = if (isPlaying) "Pause" else "Play",
+            description = if (isPlaying) {
+                stringResource(CommonR.string.player_audio_pause)
+            } else {
+                stringResource(CommonR.string.player_audio_play)
+            },
             isPrimary = true,
             focusRequester = playPauseFocus,
             focusSuppressed = focusSuppressed,
@@ -105,14 +112,14 @@ fun TvAudiobookTransportRow(
         TransportIconButton(
             icon = null,
             seekGlyph = true to skipForwardSeconds,
-            description = "Skip forward $skipForwardSeconds seconds",
+            description = pluralStringResource(CommonR.plurals.player_audio_skipForward, skipForwardSeconds, skipForwardSeconds),
             focusSuppressed = focusSuppressed,
             buttonSize = buttonSize,
             onClick = onSkipForward,
         )
         TransportIconButton(
             icon = Icons.Filled.SkipNext,
-            description = "Next chapter",
+            description = stringResource(CommonR.string.audiobook_transport_nextChapterTv),
             enabled = chaptersEnabled,
             focusSuppressed = focusSuppressed,
             buttonSize = buttonSize,
@@ -143,11 +150,11 @@ private fun TransportIconButton(
     val buttonHeight = if (isPrimary) primaryButtonHeight else buttonSize
     val buttonShape = RoundedCornerShape(buttonHeight / 2)
     val symbolSize = if (isPrimary) (buttonHeight * 0.44f) else (buttonSize * 0.40f)
-    val focusBg = if (isFocused) Color(0xFFE8F5F7) else Color(0xFF173137).copy(alpha = 0.92f)
+    val focusBg = if (isFocused) TvAudiobookControlFocusedFill else TvAudiobookControlFill
     val iconTint = when {
         !enabled -> Color.White.copy(alpha = 0.30f)
         isFocused -> Color.Black
-        else -> Color(0xFF23A8F2)
+        else -> Color.White
     }
     val scale by animateFloatAsState(
         targetValue = if (isFocused) 1.025f else 1f,
@@ -163,7 +170,7 @@ private fun TransportIconButton(
             .background(focusBg)
             .border(
                 width = if (isFocused) 0.dp else 1.dp,
-                color = if (isFocused) Color.Transparent else Color.White.copy(alpha = 0.06f),
+                color = Color.Transparent,
                 shape = buttonShape,
             )
             .let { mod -> if (focusRequester != null) mod.focusRequester(focusRequester) else mod }

@@ -77,9 +77,31 @@ class PairingProtocolGoldenFramesTest {
             ),
     )
 
+    /**
+     * The multi-account frames from the shared contract
+     * (`companion-multi` contract §D), identical in silo-apple.
+     */
+    private val multiAccountFrames: List<Pair<String, PairingMessage>> = listOf(
+        (
+            """{"type":"pushServer","v":1,"serverURL":"https://home.example.org","serverName":"Home",""" +
+                """"serverIdentity":"5f0c8a1e-2d4b-4c3a-9e7f-1a2b3c4d5e6f","accountName":"sam"}"""
+            ) to PairingMessage.PushServer(
+            serverURL = "https://home.example.org",
+            serverName = "Home",
+            serverIdentity = "5f0c8a1e-2d4b-4c3a-9e7f-1a2b3c4d5e6f",
+            accountName = "sam",
+        ),
+        """{"type":"serverResult","v":1,"serverURL":"https://home.example.org","status":"failed","error":"limit_reached"}""" to
+            PairingMessage.ServerResult(
+                serverURL = "https://home.example.org",
+                status = PairingServerStatus.Failed,
+                error = PairingFailureCode.LimitReached.wire,
+            ),
+    )
+
     @Test
     fun literalFramesDecodeAndEncodeExactly() {
-        for ((frame, message) in appleFrames + androidFrames) {
+        for ((frame, message) in appleFrames + androidFrames + multiAccountFrames) {
             assertEquals(message, PairingMessageCodec.decode(frame), frame)
             assertEquals(json(frame), json(PairingMessageCodec.encode(message)), frame)
         }
@@ -118,6 +140,17 @@ class PairingProtocolGoldenFramesTest {
         val endpoint = (full["endpoints"] as kotlinx.serialization.json.JsonArray)[0].jsonObject
         assertEquals("\"https://media.overlay.example\"", endpoint["url"].toString())
         assertEquals("\"provider\"", endpoint["kind"].toString())
+    }
+
+    @Test
+    fun accountNameIsOptionalOnTheWire() {
+        val legacy = PairingMessageCodec.decode(
+            """{"type":"pushServer","v":1,"serverURL":"https://media.example.com","serverName":"Home"}""",
+        ) as PairingMessage.PushServer
+        assertNull(legacy.accountName)
+        assertNull(json(PairingMessageCodec.encode(PairingMessage.PushServer(url, "Home")))["accountName"])
+        // limit_reached is known; an older build's unknown-code rule reads it as auth_failed.
+        assertEquals(PairingFailureCode.LimitReached, PairingFailureCode.fromWire("limit_reached"))
     }
 
     @Test

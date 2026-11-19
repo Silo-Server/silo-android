@@ -556,14 +556,14 @@ internal fun pending(purpose: NativeSignInPurpose) = PendingNativeSignIn(
 class CompanionConfirmCopyTest {
     @Test
     fun confirmationCopyMatchesTheIphoneApp() {
-        val strings = File("src/androidMain/res/values/strings.xml").readText()
+        val strings = File("../android-shared/src/androidMain/res/values/strings_catalog.xml").readText()
         listOf(
-            "companion_confirm_yes\">Yes, this matches<",
-            "sign_in_tv_profiles_note\">Anyone using this TV can pick from your profiles. Profiles with a PIN stay locked.<",
-            "sign_in_tv_warning\">Only approve a TV that\\'s in front of you right now.<",
-            "sign_in_tv_server_account\">You\\'ll sign it in to %1\$s as %2\$s.<",
-            "companion_offer_signin_body\">A TV nearby named “%1\$s” says it\\'s on its sign-in screen. You\\'ll check its code before approving.<",
-            "companion_confirm_older_tv\">Older TV apps show %1\$s instead.<",
+            "companion_confirmYes\">Yes, this matches<",
+            "signInTv_profilesNote\">Anyone using this TV can pick from your profiles. Profiles with a PIN stay locked.<",
+            "signInTv_warning\">Only approve a TV that\\'s in front of you right now.<",
+            "signInTv_serverAccount\">You\\'ll sign it in to %1\$s as %2\$s.<",
+            "companion_offerSigninBody\">A TV nearby named “%1\$s” says it\\'s on its sign-in screen. You\\'ll check its code before approving.<",
+            "companion_confirmOlderTv\">Older TV apps show %1\$s instead.<",
         ).forEach { assertTrue(strings.contains(it), it) }
     }
 }

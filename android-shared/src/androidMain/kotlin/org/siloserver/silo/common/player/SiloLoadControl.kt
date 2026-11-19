@@ -1,8 +1,10 @@
 package org.siloserver.silo.common.player
 
+import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.LoadControl
@@ -38,9 +40,70 @@ class SiloLoadControl(
     false,
 ) {
     @Volatile private var depthMs: Int = policy.minBufferMs
+    @Volatile private var targetBytes: Int = policy.targetBufferBytes
+    @Volatile private var isPlaying: Boolean = false
+
+    private val stalledStartGuard = StalledStartLoadGuard()
+
+    /**
+     * Mirrors [Player.isPlaying] onto the playback thread. Paused, buffering
+     * and focus-suppressed playback all read false, so none of them can count
+     * as a stalled start; this is the same condition Media3's stuck-playing
+     * detector uses.
+     */
+    val playingListener: Player.Listener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            this@SiloLoadControl.isPlaying = isPlaying
+        }
+    }
 
     /** The forward buffer the memory budget currently affords, in ms. */
     internal fun currentDepthMs(): Int = depthMs
+
+    /**
+     * Keeps loading past the byte target while the player reports playing but
+     * its position does not move.
+     *
+     * The byte target can stop the loader before a renderer holds enough to
+     * start. A Shield passing DTS-HD through to HDMI is the measured case:
+     * Media3 sizes that AudioTrack at one second of the format's 18 Mbps peak
+     * (2.25 MB), and AudioFlinger does not start a compressed direct track
+     * until the buffer is full. At DTS-HD MA's real ~3.7 Mbps that is about
+     * five seconds of audio. A 91 Mbps Dolby Vision remux under the halved
+     * Dolby Vision target holds about 4.4 seconds of muxed media, so the
+     * loader stopped with the AudioTrack at 2.04 MB, audio never started, the
+     * position never moved, nothing drained the buffer, and Media3 failed the
+     * session as stuck ten seconds later. HDR10 from the same file, with the
+     * full budget, crossed the threshold and played.
+     *
+     * The override only applies while the time rule still wants more media,
+     * and stops at [stalledStartCeilingBytes], well inside the heap headroom
+     * the Dolby Vision halving protects. Once the position moves, the ordinary
+     * target applies again and the buffer drains back below it.
+     */
+    override fun shouldContinueLoading(parameters: LoadControl.Parameters): Boolean {
+        if (super.shouldContinueLoading(parameters)) {
+            stalledStartGuard.reset()
+            return true
+        }
+        val stalled = stalledStartGuard.isStalled(
+            nowMs = SystemClock.elapsedRealtime(),
+            isPlaying = isPlaying,
+            playbackPositionUs = parameters.playbackPositionUs,
+        )
+        if (!stalled || parameters.bufferedDurationUs >= policy.minBufferMs * 1_000L) return false
+        val ceilingBytes = stalledStartCeilingBytes(targetBytes, policy.targetBufferBytes)
+        val allocatedBytes = getAllocator(parameters.playerId).totalBytesAllocated
+        if (allocatedBytes >= ceilingBytes) return false
+        if (stalledStartGuard.markLogged()) {
+            Log.i(
+                TAG,
+                "stalled_start_load allocated_bytes=$allocatedBytes ceiling_bytes=$ceilingBytes " +
+                    "buffered_ms=${parameters.bufferedDurationUs / 1_000}",
+            )
+        }
+        return true
+    }
 
     override fun calculateTargetBufferBytes(
         parameters: LoadControl.Parameters,
@@ -83,6 +146,7 @@ class SiloLoadControl(
                 unknownBitrateFallbackBytes = fallback,
             )
         depthMs = result.depth.ms
+        targetBytes = result.target.bytes
         Log.d(
             TAG,
             "target_bytes=${result.target.bytes} budget_bytes=$budgetBytes " +
@@ -96,6 +160,56 @@ class SiloLoadControl(
         internal const val MIN_TARGET_BUFFER_BYTES = 16 * 1024 * 1024
     }
 }
+
+/**
+ * Tracks whether a playing player's position has stopped moving for
+ * [stallMs]. Called on the playback thread by [SiloLoadControl].
+ */
+internal class StalledStartLoadGuard(
+    private val stallMs: Long = STALLED_START_LOAD_AFTER_MS,
+) {
+    private var lastPositionUs: Long = C.TIME_UNSET
+    private var stalledSinceMs: Long? = null
+    private var logged = false
+
+    fun reset() {
+        lastPositionUs = C.TIME_UNSET
+        stalledSinceMs = null
+        logged = false
+    }
+
+    fun isStalled(nowMs: Long, isPlaying: Boolean, playbackPositionUs: Long): Boolean {
+        if (!isPlaying || playbackPositionUs != lastPositionUs) {
+            lastPositionUs = playbackPositionUs
+            stalledSinceMs = if (isPlaying) nowMs else null
+            logged = false
+            return false
+        }
+        val stalledSince = stalledSinceMs ?: nowMs.also { stalledSinceMs = it }
+        return nowMs - stalledSince >= stallMs
+    }
+
+    /** True the first time it is called during a stall, so the override logs once. */
+    fun markLogged(): Boolean {
+        if (logged) return false
+        logged = true
+        return true
+    }
+}
+
+/** Long enough to skip ordinary start-up gaps, far inside Media3's 10 s stuck-playing timeout. */
+internal const val STALLED_START_LOAD_AFTER_MS = 1_000L
+
+/**
+ * How far a stalled start may load: halfway from the byte target to the
+ * undivided device budget. On a Shield that lets a Dolby Vision start grow
+ * from 48 to 72 MiB, short of the 96 MiB that exhausted its heap. A route
+ * whose target is already the full budget gets no extension. Media3 only
+ * consults this before starting a load, so one chunk may land past it:
+ * about 1 MiB for progressive streams, a whole segment for HLS.
+ */
+internal fun stalledStartCeilingBytes(targetBytes: Int, budgetBytes: Int): Int =
+    targetBytes + (budgetBytes - targetBytes).coerceAtLeast(0) / 2
 
 internal fun isDolbyVisionBufferTrack(
     sampleMimeType: String?,

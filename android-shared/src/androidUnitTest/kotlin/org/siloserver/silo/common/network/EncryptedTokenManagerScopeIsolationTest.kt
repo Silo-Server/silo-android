@@ -24,7 +24,7 @@ class EncryptedTokenManagerScopeIsolationTest {
         registry.switchTo(serverId)
         val tokens = EncryptedTokenManagerImpl(prefs, registry)
         tokens.switchActiveServer(serverId)
-        tokens.saveTokens("persistent-access", "persistent-refresh", 3600)
+        tokens.replaceAccountSession(serverId = serverId, accessToken = "persistent-access", refreshToken = "persistent-refresh", expiresIn = 3600)
         tokens.setProfileId("tv-profile")
         tokens.setProfileToken("tv-profile-token")
         val persistentScope = requireNotNull(tokens.snapshotCurrentScope())

@@ -6,9 +6,11 @@ import androidx.test.core.app.ApplicationProvider
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.network.ArtworkWidths
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionKind
+import org.siloserver.silo.repository.ArtworkSizing
 import org.siloserver.silo.repository.port.HomeCacheWriteLease
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -51,6 +53,43 @@ class RoomHomeCacheRepositoryTest {
         assertNull(repo.getCachedHomeV2(scope!!))
         scope = owner.copy(credentialEpoch = 2)
         assertNull(repo.getCachedHomeV2(scope!!))
+    }
+
+    @Test
+    fun homeIsKeyedByTheWidthsItIsDrawnAt() = runTest {
+        val owner = scope!!
+        var widths = ArtworkWidths(poster = 176, backdrop = 1344, logo = 880)
+        val sized = RoomHomeCacheRepository(db = db, snapshotProvider = { scope }, now = { 1000L },
+            artwork = ArtworkSizing({ _, _ -> widths }, null))
+        val rows = listOf(section("row", "item"))
+        sized.cacheHomeV2(rows, owner)
+        assertEquals(rows, sized.getCachedHomeV2(owner)?.sections)
+        assertNull(repo.getCachedHomeV2(owner))
+        widths = ArtworkWidths(poster = 117, backdrop = 895, logo = 586)
+        assertNull(sized.getCachedHomeV2(owner))
+
+        // A write keeps the fingerprint its read captured, even after the layout changed.
+        val captured = sized.artworkFingerprint()
+        widths = ArtworkWidths(poster = 176, backdrop = 1344, logo = 880)
+        val refreshed = listOf(section("row", "other"))
+        sized.cacheHomeV2(refreshed, owner, captured)
+        assertEquals(rows, sized.getCachedHomeV2(owner)?.sections)
+        widths = ArtworkWidths(poster = 117, backdrop = 895, logo = 586)
+        assertEquals(refreshed, sized.getCachedHomeV2(owner)?.sections)
+    }
+
+    @Test
+    fun homeCachedBeforeArtworkWidthsIsReadUntilReplaced() = runTest {
+        val owner = scope!!
+        val before = listOf(section("row", "before"))
+        repo.cacheHomeV2(before, owner)
+        val sized = RoomHomeCacheRepository(db = db, snapshotProvider = { scope }, now = { 1000L },
+            artwork = ArtworkSizing({ _, _ -> ArtworkWidths(poster = 176) }, null))
+        assertEquals(before, sized.getCachedHomeV2(owner)?.sections)
+        val after = listOf(section("row", "after"))
+        sized.cacheHomeV2(after, owner)
+        assertEquals(after, sized.getCachedHomeV2(owner)?.sections)
+        assertNull(repo.getCachedHomeV2(owner))
     }
 
     @Test

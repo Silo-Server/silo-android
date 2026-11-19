@@ -3,6 +3,8 @@ package org.siloserver.silo.tv.ui.screens.player
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -51,7 +53,12 @@ internal object TvPlayerChrome {
  * uppercase eyebrow above titles and sections, and the SDH/FORCED chips.
  */
 internal object TvPlayerType {
-    private val base = TextStyle(fontFamily = InterFamily, color = TvPlayerChrome.Paper)
+    private val base = TextStyle(
+        fontFamily = InterFamily,
+        color = TvPlayerChrome.Paper,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
+    )
 
     val Eyebrow = base.copy(
         fontSize = 11.sp,

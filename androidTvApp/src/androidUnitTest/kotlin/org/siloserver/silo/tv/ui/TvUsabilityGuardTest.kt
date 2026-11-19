@@ -47,18 +47,21 @@ class TvUsabilityGuardTest {
             "src/androidMain/kotlin/org/siloserver/silo/tv/ui/shell/TvMediaDestinations.kt",
         ).readText()
 
-        // Skyline content-type-first roots: Home, per-type tabs, Calendar.
+        // Skyline content-type-first roots: Home, per-type tabs, For You,
+        // Calendar (tvOS and Roku parity). Search sits left of the tabs, and
+        // Requests and the other utility surfaces live in the profile menu.
         assertTrue(destinations.contains("TvRootDestination.Home"))
         assertTrue(destinations.contains("TvRootDestination.LibraryType"))
-        assertTrue(destinations.contains("TvRootDestination.Calendar"))
-        // For You IS a root tab again (QA 2026-07-08, tvOS .recommendations
-        // parity, with its Watchlist/Favorites dropdown), and so is Requests
-        // while the server enables it (tvOS `.requests`). Search stays a
-        // trailing icon, and secondary utility surfaces never become tabs.
         assertTrue(destinations.contains("TvRootDestination.ForYou"))
-        assertTrue(destinations.contains("if (requestsEnabled) add(TvRootDestination.Requests)"))
+        assertTrue(destinations.contains("TvRootDestination.Calendar"))
+        assertFalse(destinations.contains("TvRootDestination.Requests"))
         assertFalse(destinations.contains("TvRootDestination.Search"))
         assertFalse(destinations.contains("TvRootDestination.Settings"))
+
+        val shell = File(
+            "src/androidMain/kotlin/org/siloserver/silo/tv/ui/shell/TvMainShell.kt",
+        ).readText()
+        assertTrue(shell.contains("ProfileDropdownRow(label = stringResource(CommonR.string.menu_requests)"))
     }
 
     @Test
@@ -74,6 +77,6 @@ class TvUsabilityGuardTest {
         assertTrue(shell.contains("exit = { FocusRequester.Cancel }"))
         assertTrue(shell.contains(".zIndex(2f)"))
         assertTrue(shell.contains("ev.key == Key.Back || ev.key == Key.Escape"))
-        assertTrue(shell.contains("label = \"Sign Out\""))
+        assertTrue(shell.contains("label = stringResource(CommonR.string.menu_signOut)"))
     }
 }

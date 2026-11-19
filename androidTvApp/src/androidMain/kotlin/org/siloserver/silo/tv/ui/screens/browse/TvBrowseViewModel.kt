@@ -1,10 +1,17 @@
 package org.siloserver.silo.tv.ui.screens.browse
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.detailedErrorText
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.catalog.sort.CatalogSortField
+import org.siloserver.silo.catalog.sort.CatalogSortRelevance
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,23 +21,17 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * Sort options for the global Browse surface. Mirrors the phone Browse defaults
- * (`added_at` desc) while exposing the same wire values the catalog API accepts.
+ * Sort fields for the global Browse surface, in the web client's order. Browse
+ * spans libraries, so it lists every field, as the web's cross-library catalog
+ * does. [current] stays listed while it is the active sort.
  */
-enum class TvBrowseSortOption(val label: String, val wireValue: String) {
-    DateAdded("Date Added", "added_at"),
-    Title("Title", "title"),
-    // Server sorts release date by "year" (matches the phone + the person
-    // filmography endpoint); "release_date" was unsupported and silently
-    // fell back to the default order.
-    ReleaseDate("Release Year", "year"),
-    Rating("Rating", "rating_imdb");
-
-    companion object {
-        fun fromWire(value: String): TvBrowseSortOption =
-            entries.firstOrNull { it.wireValue == value } ?: DateAdded
-    }
-}
+fun tvBrowseSortOptions(shownRatingSources: Set<String>, current: String?): List<CatalogSortField> =
+    CatalogSortField.options(
+        relevance = CatalogSortRelevance.Any,
+        includePersonalized = true,
+        shownRatingSources = shownRatingSources,
+        keep = CatalogSortField.fromWire(current),
+    )
 
 /**
  * Active filter selections for the global Browse surface. Unlike the library
@@ -41,7 +42,7 @@ enum class TvBrowseSortOption(val label: String, val wireValue: String) {
 data class TvBrowseFilter(
     val genre: String? = null,
     val contentRating: String? = null,
-    val sort: String = TvBrowseSortOption.DateAdded.wireValue,
+    val sort: String = CatalogSortField.DateAdded.wireValue,
     val order: String = "desc",
 )
 
@@ -65,7 +66,7 @@ class TvBrowseViewModel(
         val hasMore: Boolean = false,
         val loading: Boolean = true,
         val loadingMore: Boolean = false,
-        val error: String? = null,
+        val error: UiText? = null,
         val genres: List<String> = emptyList(),
         val contentRatings: List<String> = emptyList(),
         val filtersLoading: Boolean = true,
@@ -92,8 +93,11 @@ class TvBrowseViewModel(
         updateFilter(_uiState.value.filter.copy(contentRating = contentRating))
     }
 
-    fun onSortChanged(sort: TvBrowseSortOption) {
-        updateFilter(_uiState.value.filter.copy(sort = sort.wireValue))
+    /** A newly picked sort starts in its own default direction; the Order chips flip it. */
+    fun onSortChanged(sort: CatalogSortField) {
+        val filter = _uiState.value.filter
+        if (filter.sort == sort.wireValue) return
+        updateFilter(filter.copy(sort = sort.wireValue, order = sort.defaultOrder))
     }
 
     /** Sort direction — "desc" or "asc" (phone parity). */
@@ -197,14 +201,14 @@ class TvBrowseViewModel(
                     it.copy(
                         loading = false,
                         loadingMore = false,
-                        error = result.message.ifBlank { "Failed to load catalog" },
+                        error = result.errorText(CommonR.string.library_error_loadCatalog),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
                     it.copy(
                         loading = false,
                         loadingMore = false,
-                        error = "Network error: ${result.exception.message ?: "unknown"}",
+                        error = result.detailedErrorText(),
                     )
                 }
             }

@@ -9,6 +9,7 @@ import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
 import org.siloserver.silo.tv.data.preferences.TvHomeSectionPreferences
 import org.siloserver.silo.tv.data.preferences.TvLibrarySelectionStore
 import org.siloserver.silo.common.network.AndroidDeviceMetadataProvider
+import org.siloserver.silo.common.pairing.TvDeviceName
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.DataStoreCleartextConsentStore
@@ -19,7 +20,7 @@ import org.siloserver.silo.network.EncryptedTokenManagerImpl
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.createSecureSharedPrefs
-import org.siloserver.silo.tv.ui.screens.servers.TvServerListViewModel
+import org.siloserver.silo.tv.ui.screens.servers.TvAccountsViewModel
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.AudioTrackManager
 import org.siloserver.silo.common.player.AndroidSubtitlePresentation
@@ -27,7 +28,6 @@ import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
 import org.siloserver.silo.tv.ui.screens.settings.TvSettingsViewModel
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsViewModel
-import org.siloserver.silo.common.player.SiloPlayerFactory
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.audio.PassthroughSuppressionScope
 import org.siloserver.silo.common.di.AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER
@@ -37,6 +37,8 @@ import org.siloserver.silo.common.cast.SiloCastNsdAdvertiser
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
+import org.siloserver.silo.tv.cast.SiloCastNowPlayingMetadataResolver
+import org.siloserver.silo.tv.cast.RemotePlaybackCandidatePolicy
 import org.siloserver.silo.tv.cast.RemotePlaybackIdentityManager
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerLaunchArgs
 import org.siloserver.silo.tv.ui.screens.auth.TvLoginViewModel
@@ -79,7 +81,8 @@ import org.koin.dsl.module
  * TV-specific Koin module.
  *
  * Provides the TV flavor of player infrastructure (currently a duplicate of the
- * phone module — see the TODO on [SiloPlayerFactory]) and the TV ViewModels.
+ * phone module — see the TODO on
+ * [SiloPlayerFactory][org.siloserver.silo.common.player.SiloPlayerFactory]) and the TV ViewModels.
  * The shared [org.siloserver.silo.di.sharedModules] is added alongside this one in
  * [org.siloserver.silo.tv.SiloTvApplication].
  */
@@ -126,12 +129,27 @@ val androidTvModule = module {
             syncScheduler = get(),
         )
     }
+    single<org.siloserver.silo.repository.ArtworkLayout> {
+        val resources = androidContext().resources
+        val scope = this
+        org.siloserver.silo.tv.ui.theme.TvArtworkLayout(
+            displayDensity = { resources.displayMetrics.density },
+            // The saved card size, seeded from its local cache before the
+            // first reads (startup's Home warm-up runs before the UI loads it).
+            posterScale = {
+                val cards = scope.get<org.siloserver.silo.common.settings.CardPresentationStore>()
+                cards.seedFromCache()
+                cards.state.value.presentation.posterSize.posterScale
+            },
+        )
+    }
     single<org.siloserver.silo.repository.port.HomeCachePort> {
         val tokenManager: TokenManager = get()
         org.siloserver.silo.common.data.repository.RoomHomeCacheRepository(
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
             identityTransitions = get(),
+            artwork = get(),
         )
     }
     single<org.siloserver.silo.repository.port.CatalogCachePort> {
@@ -140,6 +158,7 @@ val androidTvModule = module {
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
             identityTransitions = get(),
+            artwork = get(),
         )
     }
     single<org.siloserver.silo.repository.port.DownloadDeletionPort> {
@@ -199,21 +218,6 @@ val androidTvModule = module {
     }
     single { AudioCapabilityManager(androidContext()) }
     single { PlaybackCapabilityDetector(androidContext(), get(), get(), get()) }
-    single {
-        SiloPlayerFactory(
-            context = androidContext(),
-            tokenManager = get(),
-            subtitleManager = get(),
-            httpDataSourceFactory = get(org.siloserver.silo.common.di.PLAYER_HTTP_DATA_SOURCE_FACTORY_QUALIFIER),
-            mediaAuthSession = get(),
-            bandwidthMeter = get(),
-            delayProcessor = get(),
-            subtitleOffsetHolder = get(),
-            libassBridge = get(),
-            playbackAnalytics = get(),
-        )
-    }
-    single { PlaybackSessionManager(get(), get(), get()) }
     single(AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER) {
         PlaybackSessionManager(
             playbackRepository = get(),
@@ -232,6 +236,7 @@ val androidTvModule = module {
             sessionLifecycle = get(),
             reachabilityMonitor = get(),
             userItemStatePort = get(),
+            seriesTrackChoiceWriter = get(),
         )
     }
     factory {
@@ -276,6 +281,7 @@ val androidTvModule = module {
             bookmarksStore = get(),
             userItemStatePort = get(),
             outboxSyncScheduler = get(),
+            finalPlaybackPositionWriter = get(),
             serverRegistry = get(),
             profileRepository = get(),
             offlineMediaResolver = get(),
@@ -366,7 +372,15 @@ val androidTvModule = module {
     single {
         val identityApi = get<org.siloserver.silo.network.api.ServerIdentityApi>()
         org.siloserver.silo.common.pairing.PairingReceiver(
-            authPort = org.siloserver.silo.common.pairing.RegistryPairingAuthPort(get(), get(), get(), get()),
+            authPort = org.siloserver.silo.common.pairing.RegistryPairingAuthPort(
+                get(),
+                get(),
+                get(),
+                get(),
+                // An older server's approval names no user: read /me with the
+                // new token before committing, so a refresh isn't a duplicate.
+                accountOf = get<org.siloserver.silo.network.api.UnsavedSessionAccountReader>()::read,
+            ),
             // Its own device-login state machine: the sign-in screen runs its
             // own device code while it advertises, and the two must not share
             // one repository's state.
@@ -375,12 +389,23 @@ val androidTvModule = module {
             ),
             identityProvider = {
                 org.siloserver.silo.common.pairing.PairingDeviceIdentity(
-                    name = tvDeviceName(),
+                    name = TvDeviceName.current(androidContext()),
                     deviceId = org.siloserver.silo.common.pairing.PairingDeviceId
                         .stable(androidContext()),
                 )
             },
             identityProbe = { url -> identityApi.probeIdentity(url) },
+            cleartextConsent = get<CleartextConsentStore>(),
+        )
+    }
+    // Silo servers on the local network, for server setup. One per screen visit.
+    single { org.siloserver.silo.common.discovery.LanServerProbe() }
+    factory {
+        val probe = get<org.siloserver.silo.common.discovery.LanServerProbe>()
+        org.siloserver.silo.common.discovery.LanServerDiscovery(
+            browser = org.siloserver.silo.common.discovery.NsdLanServiceBrowser(androidContext()),
+            probeIdentity = probe::identity,
+            fetchName = probe::name,
         )
     }
     // The advertised state comes from the screen that starts it: server setup
@@ -394,21 +419,31 @@ val androidTvModule = module {
     }
     single { SiloCastNsdAdvertiser(androidContext()) }
     single {
+        val identityApi = get<org.siloserver.silo.network.api.ServerIdentityApi>()
+        val registry = get<ServerRegistry>()
+        val cleartextConsent = get<CleartextConsentStore>()
         RemotePlaybackIdentityManager(
             deviceLoginApi = get(),
             tokenManager = get(),
-            deviceNameProvider = ::tvDeviceName,
+            deviceNameProvider = { TvDeviceName.current(androidContext()) },
+            identityProbe = { url -> identityApi.probeIdentity(url) },
+            savedUrlsFor = { identity ->
+                RemotePlaybackCandidatePolicy.savedUrls(registry.entries.value, registry.activeServerId.value, identity)
+            },
+            cleartextApproved = { url -> cleartextConsent.isApproved(url) },
         )
     }
     single {
         val playbackLifecycle = get<org.siloserver.silo.common.player.PlaybackSessionLifecycle>()
+        val activeProfiles = get<org.siloserver.silo.model.profile.ActiveProfileStore>()
+        val serverIdentities = get<org.siloserver.silo.repository.ServerIdentityRepository>()
         TvSiloCastReceiver(
             advertiser = get(),
             serverRegistry = get(),
             tokenManager = get(),
             identityTransitions = get(),
             identityManager = get(),
-            deviceNameProvider = ::tvDeviceName,
+            deviceNameProvider = { TvDeviceName.current(androidContext()) },
             deviceIdProvider = {
                 org.siloserver.silo.common.pairing.PairingDeviceId.stable(androidContext())
             },
@@ -416,6 +451,9 @@ val androidTvModule = module {
             inWatchParty = {
                 get<org.siloserver.silo.repository.WatchTogetherRepository>().roomSnapshot.value != null
             },
+            ownProfileNameProvider = { activeProfiles.activeProfile.value?.name },
+            nowPlayingMetadataLoader = SiloCastNowPlayingMetadataResolver.catalogLoader(get()),
+            recordServerIdentity = { entry -> serverIdentities.identityOf(entry) },
         )
     }
 
@@ -436,13 +474,21 @@ val androidTvModule = module {
             serverIdentities = get(),
             sessionExpired = params.getOrNull<Boolean>() ?: false,
             externalSignIn = get(),
+            deviceName = { TvDeviceName.current(androidContext()) },
             // st=login rollout gate (silo-apple PairingProtocol.advertisesSignInTVs):
-            // debug builds only until both phone apps that accept login TVs ship.
-            advertisesSignIn = BuildConfig.DEBUG,
+            // on in every build, since both phone apps that accept login TVs shipped.
+            advertisesSignIn = true,
         )
     }
     viewModel {
-        TvProfileSelectionViewModel(get(), get(), profileVerificationRecovery = getOrNull(), launchPreferences = get())
+        TvProfileSelectionViewModel(
+            get(),
+            get(),
+            profileVerificationRecovery = getOrNull(),
+            launchPreferences = get(),
+            serverRegistry = get(),
+            profilesRefresher = get(),
+        )
     }
     viewModel { org.siloserver.silo.tv.ui.screens.profiles.TvCreateProfileViewModel(get()) }
     viewModel { params ->
@@ -451,7 +497,62 @@ val androidTvModule = module {
             profileId = params.get(),
         )
     }
-    viewModel { TvServerListViewModel(get(), get(), get(), get(), get()) }
+    viewModel {
+        TvAccountsViewModel(
+            serverRegistry = get(),
+            authRepository = get(),
+            resolver = get(),
+            tvSignOut = get(),
+            profileReset = get(),
+            tokenManager = get(),
+        )
+    }
+    viewModel {
+        org.siloserver.silo.tv.ui.screens.servers.TvChangeAccountViewModel(
+            serverRegistry = get(),
+            authRepository = get(),
+            profileReset = get(),
+            profilesRefresher = get(),
+        )
+    }
+    single {
+        val profileReset = get<TvActiveProfileReset>()
+        org.siloserver.silo.tv.ui.screens.servers.TvServerResolver(
+            get(), get(), get(), get(), get(),
+            clearActiveProfile = profileReset::clearActiveProfile,
+        )
+    }
+    single {
+        val profileReset = get<TvActiveProfileReset>()
+        val activeProfiles = get<org.siloserver.silo.model.profile.ActiveProfileStore>()
+        val requests = get<org.siloserver.silo.model.feature.RequestsFeatureStore>()
+        val metadataAi = get<org.siloserver.silo.model.feature.MetadataAiFeatureStore>()
+        val playerSettings = get<org.siloserver.silo.common.settings.PlayerSettingsStore>()
+        val playbackLifecycle = get<org.siloserver.silo.common.player.PlaybackSessionLifecycle>()
+        val identityManager = get<RemotePlaybackIdentityManager>()
+        org.siloserver.silo.tv.auth.TvSignOut(
+            authRepository = get(),
+            tokenManager = get(),
+            serverRegistry = get(),
+            resolver = get(),
+            // Outlives the screen that asked, so the sign-out always finishes.
+            // Main, where the screens ran it before: the caches it clears are UI state.
+            scope = kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate,
+            ),
+            flushPendingSettings = playerSettings::flushPendingDeviceSettings,
+            awaitPlaybackStop = playbackLifecycle::awaitPendingStop,
+            borrowedIdentity = { identityManager.activeIdentity?.generationId },
+            endBorrowedIdentity = { identityManager.end(it) },
+            clearProfileCaches = {
+                profileReset.clearProfileCaches()
+                // As the phone's sign-out (SignOutTeardown) drops them too.
+                activeProfiles.reset()
+                requests.reset()
+                metadataAi.reset()
+            },
+        )
+    }
 
     viewModel { params ->
         org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get(), featureStore = get())
@@ -466,7 +567,8 @@ val androidTvModule = module {
     }
 
     // Content ViewModels
-    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get()) }
+    // Starts hidden: the screens that show its rows report when they are on screen.
+    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get(), startShown = false) }
     viewModel { org.siloserver.silo.tv.ui.screens.home.TvUpcomingViewModel(get()) }
     viewModel { RecommendationsViewModel(get(), catalogLanguage = get()) }
     // The Requests page loads its view models when it composes.
@@ -474,7 +576,7 @@ val androidTvModule = module {
         RequestsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true)
     }
     viewModel { RequestSearchViewModel(get()) }
-    viewModel { params -> MyRequestsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true) }
+    viewModel { params -> MyRequestsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true, featureStore = get()) }
     // Platform supplies "today" and the IANA timezone; the shared ViewModel's
     // week math stays deterministic in commonTest (no Clock.System default).
     viewModel {
@@ -501,6 +603,8 @@ val androidTvModule = module {
             reachability = get<org.siloserver.silo.common.network.ServerReachabilityMonitor>().state,
         )
     }
+    // Box set id, then its library id.
+    viewModel { params -> org.siloserver.silo.viewmodel.BoxSetViewModel(get(), params[0], params[1]) }
     viewModel { params ->
         TvLibraryDetailViewModel(
             sectionRepository = get(),
@@ -524,8 +628,15 @@ val androidTvModule = module {
             collectionSource = params.values.getOrNull(4) as? String ?: "library_collection",
         )
     }
+    // TV never shows reading items, so a row's page drops them as the row does.
+    viewModel { params ->
+        org.siloserver.silo.viewmodel.SectionBrowseViewModel(get(), params.get()) { item ->
+            !org.siloserver.silo.tv.ui.util.isTvHiddenMediaType(item.type)
+        }
+    }
     viewModel { TvSearchViewModel(get(), get(), get()) }
     viewModel { params ->
+        val playbackLifecycle = get<org.siloserver.silo.common.player.PlaybackSessionLifecycle>()
         TvItemDetailViewModel(
             libraryId = params.getOrNull<Int>(),
             catalogRepository = get(),
@@ -541,6 +652,8 @@ val androidTvModule = module {
             tokenManager = get(),
             identityTransitions = get(),
             capabilityDetector = get(),
+            seriesTrackChoiceWriter = get(),
+            awaitPlaybackSettled = playbackLifecycle::awaitPendingStop,
         )
     }
     // Watch Party: the shared hub, lobby (keyed per room; roomId is the
@@ -602,6 +715,13 @@ val androidTvModule = module {
             launchArgs = params.get<TvPlayerLaunchArgs>(),
             shuffleFeatureStore = get(),
             sectionRepository = get(),
+            // The process-wide monitor (PlayerModule): the buffering-quality
+            // adapter treats a wait while offline as an outage.
+            networkEvidence = get(),
+            throughputMeter = get(),
+            seriesTrackChoiceWriter = get(),
+            trickplayManifests = get(),
+            identityTransitions = get(),
         )
     }
 
@@ -635,8 +755,6 @@ val androidTvModule = module {
             tokenManager = get(),
             serverRegistry = get(),
             playerSettingsStore = get(),
-            libraryPlaybackPrefsStore = get(),
-            overlayPrefsStore = get(),
             cardPresentationStore = get(),
             legacyTvPrefsMigration = get(),
             profileSettings = get(),
@@ -646,10 +764,10 @@ val androidTvModule = module {
             audiobookSettingsStore = get(),
             profileLaunchPreferences = get(),
             watchNextSeeder = get(),
+            playbackConnection = get(),
+            bandwidthProbe = get(),
         )
     }
     viewModel { TvDiagnosticsViewModel(get()) }
 }
 
-private fun tvDeviceName(): String =
-    android.os.Build.MODEL?.trim()?.ifBlank { null } ?: "Android TV"

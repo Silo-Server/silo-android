@@ -103,10 +103,16 @@ data class UpdateProfileRequest(
 data class ProfilesResponse(
     val profiles: List<Profile>,
     /**
+     * How many profiles the account may have. Null when the server did not
+     * say: an older server, a remote-playback handoff session, or a server
+     * that could not read the limit.
+     */
+    @SerialName("max_profiles") val maxProfiles: Int? = null,
+    /**
      * The server stores a per-profile requests switch and accepts
      * `requests_allowed` on create and update. Older servers reject the member.
      */
-    val requestsAllowedSupported: Boolean = false,
+    @SerialName("requests_allowed_supported") val requestsAllowedSupported: Boolean = false,
 )
 
 @Serializable
@@ -144,23 +150,3 @@ fun VerifyPinResponse.authorizedProfileToken(): String? =
  */
 fun List<Profile>.householdPrimary(): Profile? =
     firstOrNull { it.isPrimary } ?: singleOrNull()
-
-/** Label and help text for the per-profile requests switch, matching the web profile editor. */
-const val PROFILE_REQUESTS_ALLOWED_LABEL = "Allow requests"
-const val PROFILE_REQUESTS_ALLOWED_HELP =
-    "Lets this profile browse titles that are not in the library and request them. " +
-        "The content rating limits those titles by their US rating only, and the " +
-        "advisory-age limit does not apply to them."
-
-/**
- * The requests switch after the Child Profile toggle changes to [isChild],
- * matching the web Kids preset. Request discovery browses titles outside the
- * library, where parental controls reach only partly, so turning Child Profile
- * on turns requests off unless the manager already set the switch by hand
- * ([touched]). Turning it off turns requests back on; callers reset [touched].
- */
-fun requestsAllowedAfterChildToggle(isChild: Boolean, requestsAllowed: Boolean, touched: Boolean): Boolean = when {
-    !isChild -> true
-    touched -> requestsAllowed
-    else -> false
-}

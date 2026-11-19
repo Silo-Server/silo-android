@@ -1,5 +1,9 @@
 package org.siloserver.silo.common.diagnostics
 
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSourceException
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.Locale
@@ -178,9 +182,29 @@ object DiagnosticsPlaybackLogger {
 
     fun audioUnderrun() = SiloLog.w(DiagnosticsLogCategory.PLAYBACK, "Media3Analytics", "audio underrun")
 
-    fun playerError() = SiloLog.e(DiagnosticsLogCategory.PLAYBACK, "Media3Analytics", "player error")
+    fun playerError(error: PlaybackException) = SiloLog.e(
+        DiagnosticsLogCategory.PLAYBACK, "Media3Analytics", "player error ${failureDetails(error, error.errorCodeName)}",
+    )
 
-    fun loadError() = SiloLog.w(DiagnosticsLogCategory.PLAYBACK, "Media3Analytics", "media load error")
+    @UnstableApi
+    fun loadError(error: IOException) = SiloLog.w(
+        DiagnosticsLogCategory.PLAYBACK, "Media3Analytics", "media load error ${failureDetails(error)}",
+    )
+
+    // Keep class names and Media3 codes in the message so hosted reports retain them.
+    // Exception messages may contain stream URLs or request headers.
+    @androidx.annotation.OptIn(UnstableApi::class)
+    private fun failureDetails(error: Throwable, playerCode: String? = null): String {
+        val causes = generateSequence(error) { it.cause }.take(8).toList()
+        val code = playerCode ?: causes.filterIsInstance<DataSourceException>().firstOrNull()?.let {
+            PlaybackException.getErrorCodeName(it.reason)
+        }
+        return buildString {
+            if (code != null) append("code=$code ")
+            append("causes=")
+            causes.joinTo(this, separator = " > ") { it.javaClass.name }
+        }
+    }
 
     // Seek and state lines carry their meaning in the message, not attributes:
     // the hosted collector strips position_ms and reason. Reason codes come from

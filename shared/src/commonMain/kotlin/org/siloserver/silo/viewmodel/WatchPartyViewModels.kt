@@ -14,6 +14,8 @@ import org.siloserver.silo.model.watchtogether.RoomSelectionMode
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.model.watchtogether.SetSelectionRequest
 import org.siloserver.silo.model.watchtogether.Suggestion
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.WatchPartyEnded
 import org.siloserver.silo.repository.WatchPartyPendingAction
@@ -35,7 +37,7 @@ import org.siloserver.silo.watchtogether.newWatchPartyId
 import org.siloserver.silo.watchtogether.parseWatchPartyInvite
 import org.siloserver.silo.watchtogether.watchPartyDestination
 import org.siloserver.silo.watchtogether.watchPartyEligibility
-import org.siloserver.silo.watchtogether.watchPartyErrorMessage
+import org.siloserver.silo.watchtogether.watchPartyErrorText
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
@@ -90,7 +92,7 @@ class WatchPartyHubViewModel(
         val recent: RecentWatchParty? = null,
         val ended: WatchPartyEnded? = null,
         val busy: WatchPartyPendingAction? = null,
-        val error: String? = null,
+        val error: UiText? = null,
         /** A create whose outcome is unknown can be retried with the same identity. */
         val createRetryable: Boolean = false,
         val destination: WatchPartyDestination? = null,
@@ -172,7 +174,7 @@ class WatchPartyHubViewModel(
         if (_uiState.value.busy != null) return
         val features = (availability.availability.value as? WatchPartyAvailability.Available)?.features
         if (features?.stagedSelection != true) {
-            fail("This server can't host a Watch Party. Update the server to host one.")
+            fail(SharedString.WatchPartyErrorCannotHost)
             return
         }
         // A different mode is a different draft; the same mode reuses an uncertain one.
@@ -195,7 +197,7 @@ class WatchPartyHubViewModel(
                 is ApiResult.NetworkError -> {
                     _uiState.update {
                         it.copy(
-                            error = "Couldn't confirm the party was created. Try again.",
+                            error = UiText.Key(SharedString.WatchPartyErrorCreateUnconfirmed),
                             createRetryable = true,
                         )
                     }
@@ -203,11 +205,11 @@ class WatchPartyHubViewModel(
                 is ApiResult.Error -> {
                     if (created.error == "invalid_response") {
                         _uiState.update {
-                            it.copy(error = watchPartyErrorMessage(created, CREATE_FAILED), createRetryable = true)
+                            it.copy(error = watchPartyErrorText(created, SharedString.WatchPartyErrorCreate), createRetryable = true)
                         }
                     } else {
                         pendingCreate = null
-                        fail(watchPartyErrorMessage(created, CREATE_FAILED))
+                        fail(watchPartyErrorText(created, SharedString.WatchPartyErrorCreate))
                     }
                 }
             }
@@ -219,14 +221,14 @@ class WatchPartyHubViewModel(
             SetSelectionRequest(contentId = item.contentId, fileId = item.fileId, libraryId = item.libraryId),
         )
         if (staged !is ApiResult.Success) {
-            fail("The party is ready, but ${item.title} couldn't be added. Add it from the lobby.")
+            fail(SharedString.WatchPartyErrorAddAfterCreate, item.title)
         }
     }
 
     /** Join by typed code or pasted invitation. */
     fun join(input: String) {
         when (val invite = parseWatchPartyInvite(input)) {
-            null -> fail("Enter the 8-character party code or paste an invitation link.")
+            null -> fail(SharedString.WatchPartyErrorCodeInvalid)
             else -> joinInvite(invite)
         }
     }
@@ -234,27 +236,27 @@ class WatchPartyHubViewModel(
     fun joinInvite(invite: WatchPartyInvite) {
         if (_uiState.value.busy != null) return
         if (repository.roomSnapshot.value != null) {
-            fail("You're already in a Watch Party. Leave it first to join a different one.")
+            fail(SharedString.WatchPartyErrorAlreadyInParty)
             return
         }
         val request = when (invite) {
             is WatchPartyInvite.Code -> JoinRoomRequest(code = invite.code)
             is WatchPartyInvite.Link -> {
                 if (!isCurrentServer(invite.serverUrl)) {
-                    fail("This invitation is for a different Silo server. Sign in to that server to join.")
+                    fail(SharedString.WatchPartyErrorOtherServer)
                     return
                 }
                 JoinRoomRequest(joinToken = invite.token)
             }
         }
-        launchJoin(request, "Couldn't join. Check the code and try again.")
+        launchJoin(request, SharedString.WatchPartyErrorJoin)
     }
 
     /** Explicit rejoin of the recent party: a fresh join by code. */
     fun rejoinRecent() {
         val recent = _uiState.value.recent ?: return
         if (_uiState.value.busy != null) return
-        launchJoin(JoinRoomRequest(code = recent.code), "Couldn't rejoin. The party may have ended.") { failure ->
+        launchJoin(JoinRoomRequest(code = recent.code), SharedString.WatchPartyErrorRejoin) { failure ->
             if (failure is ApiResult.Error && (failure.code == 404 || failure.code == 409)) {
                 recents.forget(recent.roomId)
                 _uiState.update { it.copy(recent = null) }
@@ -270,7 +272,7 @@ class WatchPartyHubViewModel(
 
     private fun launchJoin(
         request: JoinRoomRequest,
-        fallback: String,
+        fallback: SharedString,
         onFailure: suspend (ApiResult<RoomResponse>) -> Unit = {},
     ) {
         _uiState.update { it.copy(error = null) }
@@ -281,11 +283,11 @@ class WatchPartyHubViewModel(
                     onFailure(joined)
                     fail(
                         when {
-                            joined is ApiResult.Error && joined.code == 404 -> "No Watch Party uses that code."
+                            joined is ApiResult.Error && joined.code == 404 -> UiText.Key(SharedString.WatchPartyErrorNoPartyWithCode)
                             // None of the ordinary conflicts apply to joining,
                             // so a join 409 is a party that has ended.
-                            joined is ApiResult.Error && joined.code == 409 -> "That Watch Party has ended."
-                            else -> watchPartyErrorMessage(joined, fallback)
+                            joined is ApiResult.Error && joined.code == 409 -> UiText.Key(SharedString.WatchPartyErrorJoinEnded)
+                            else -> watchPartyErrorText(joined, fallback)
                         },
                     )
                 }
@@ -298,16 +300,14 @@ class WatchPartyHubViewModel(
         _uiState.update { it.copy(destination = watchPartyDestination(room), error = null) }
     }
 
-    private fun fail(message: String) {
+    private fun fail(message: UiText) {
         _uiState.update { it.copy(error = message) }
     }
 
+    private fun fail(message: SharedString, vararg args: Any) = fail(UiText.Key(message, args.toList()))
+
     fun consumeDestination() = _uiState.update { it.copy(destination = null) }
     fun clearError() = _uiState.update { it.copy(error = null, createRetryable = false) }
-
-    private companion object {
-        const val CREATE_FAILED = "Couldn't create the party. Try again."
-    }
 }
 
 /** How the room socket is doing, for the reconnect notice. */
@@ -373,32 +373,32 @@ class WatchPartyLobbyViewModel(
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    private val _messages = MutableSharedFlow<UiText>(extraBufferCapacity = 8, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     /** One-shot notices for failed actions. */
-    val messages: SharedFlow<String> = _messages.asSharedFlow()
+    val messages: SharedFlow<UiText> = _messages.asSharedFlow()
 
     init {
         roomSession.adopt(roomId)
         viewModelScope.launch { availability.refresh() }
-        viewModelScope.launch { repository.errors.collect { _messages.tryEmit(it) } }
+        viewModelScope.launch { repository.errors.collect { _messages.tryEmit(UiText.Raw(it)) } }
     }
 
-    fun stage(item: WatchPartyItem) = act("Couldn't add ${item.title}.") {
+    fun stage(item: WatchPartyItem) = act(SharedString.WatchPartyErrorAddTitle, item.title) {
         repository.stageSelection(SetSelectionRequest(item.contentId, item.fileId, item.libraryId))
     }
 
-    fun start() = act("Couldn't start. Check the room and try again.") { repository.startPlayback() }
+    fun start() = act(SharedString.WatchPartyErrorStart) { repository.startPlayback() }
 
-    fun setMode(mode: RoomSelectionMode) = act("Couldn't switch modes.") { repository.setSelectionMode(mode) }
+    fun setMode(mode: RoomSelectionMode) = act(SharedString.WatchPartyErrorMode) { repository.setSelectionMode(mode) }
 
-    fun setGuestPolicy(policy: GuestControlPolicy) = act("Couldn't change who can play and pause.") {
+    fun setGuestPolicy(policy: GuestControlPolicy) = act(SharedString.WatchPartyErrorPolicy) {
         repository.updatePolicy(policy)
     }
 
     fun setLobbyReady(ready: Boolean) {
         viewModelScope.launch {
-            if (!repository.setLobbyReady(ready)) _messages.tryEmit("Reconnecting to the party…")
+            if (!repository.setLobbyReady(ready)) _messages.tryEmit(UiText.Key(SharedString.WatchPartyReconnecting))
         }
     }
 
@@ -440,27 +440,27 @@ class WatchPartyLobbyViewModel(
                 is ApiResult.Success -> if (draftIsMineOrEmpty()) suggestionDraft.value = null
                 is ApiResult.NetworkError -> {
                     suggestionDraft.value = request to item
-                    _messages.tryEmit("Couldn't confirm your suggestion. Try again.")
+                    _messages.tryEmit(UiText.Key(SharedString.WatchPartyErrorSuggestionUnconfirmed))
                 }
                 is ApiResult.Error -> {
                     if (draftIsMineOrEmpty()) suggestionDraft.value = (request to item).takeIf { result.error == "invalid_response" }
-                    _messages.tryEmit(watchPartyErrorMessage(result, "Couldn't suggest ${item.title}."))
+                    _messages.tryEmit(watchPartyErrorText(result, SharedString.WatchPartyErrorSuggestTitle, item.title))
                 }
             }
         }
     }
 
-    fun vote(suggestion: Suggestion) = act("Couldn't vote.") {
+    fun vote(suggestion: Suggestion) = act(SharedString.WatchPartyErrorVote) {
         if (suggestion.votedByMe) repository.unvote(suggestion.id) else repository.vote(suggestion.id)
     }
 
     fun remove(suggestion: Suggestion) {
         if (!canRemoveSuggestion(repository.roomSnapshot.value, suggestion)) return
-        act("Couldn't remove the suggestion.") { repository.deleteSuggestion(suggestion.id) }
+        act(SharedString.WatchPartyErrorRemoveSuggestion) { repository.deleteSuggestion(suggestion.id) }
     }
 
     /** Vote rooms: start a suggestion now (host). */
-    fun promote(suggestion: Suggestion) = act("Couldn't start ${suggestion.title}.") {
+    fun promote(suggestion: Suggestion) = act(SharedString.WatchPartyErrorStartTitle, suggestion.title) {
         repository.promoteSuggestion(suggestion.id)
     }
 
@@ -489,10 +489,10 @@ class WatchPartyLobbyViewModel(
 
     fun leave() = roomSession.depart(closeRoom = false)
 
-    private fun <T> act(fallback: String, operation: suspend () -> ApiResult<T>): Job =
+    private fun <T> act(fallback: SharedString, vararg args: Any, operation: suspend () -> ApiResult<T>): Job =
         viewModelScope.launch {
             val result = operation()
-            if (result !is ApiResult.Success) _messages.tryEmit(watchPartyErrorMessage(result, fallback))
+            if (result !is ApiResult.Success) _messages.tryEmit(watchPartyErrorText(result, fallback, *args))
         }
 }
 
@@ -521,7 +521,7 @@ class WatchPartyPickerViewModel(
         val query: String = "",
         val results: List<BrowseItem> = emptyList(),
         val searching: Boolean = false,
-        val error: String? = null,
+        val error: UiText? = null,
     )
 
     private val _state = MutableStateFlow(PickerState())
@@ -558,7 +558,7 @@ class WatchPartyPickerViewModel(
                     it.copy(rows = result.data.playableOnly(), rowsLoading = false, error = null)
                 }
                 else -> _state.update {
-                    it.copy(rowsLoading = false, error = watchPartyErrorMessage(result, "Couldn't load suggestions."))
+                    it.copy(rowsLoading = false, error = watchPartyErrorText(result, SharedString.WatchPartyErrorLoadSuggestions))
                 }
             }
         }
@@ -585,7 +585,7 @@ class WatchPartyPickerViewModel(
             is ApiResult.Success -> _state.update {
                 it.copy(results = result.data.filter { item -> item.type in PLAYABLE_TYPES }, searching = false, error = null)
             }
-            else -> _state.update { it.copy(searching = false, error = watchPartyErrorMessage(result, "Search failed.")) }
+            else -> _state.update { it.copy(searching = false, error = watchPartyErrorText(result, SharedString.WatchPartyErrorSearch)) }
         }
     }
 

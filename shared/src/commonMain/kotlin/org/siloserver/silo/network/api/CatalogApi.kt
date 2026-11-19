@@ -3,6 +3,7 @@ package org.siloserver.silo.network.api
 import io.ktor.client.*
 import org.siloserver.silo.model.catalog.*
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ArtworkWidths
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.map
@@ -21,7 +22,8 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         continuation: CatalogContinuationV2? = null, limit: Int? = null,
         namePrefix: String? = null, yearMin: Int? = null, yearMax: Int? = null,
         queryGroups: List<CatalogQueryGroup> = emptyList(), match: String? = null,
-        skipTotal: Boolean = false,
+        skipTotal: Boolean = false, widths: ArtworkWidths? = null, seek: Int? = null,
+        windowCursor: String? = null,
     ): ApiResult<CatalogResponse> {
         val groups = queryGroups.toV2Groups().toMutableList()
         val implicit = buildList {
@@ -39,9 +41,21 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         }
         return v2.browse(CatalogQueryV2(source = source ?: "query", q = query, type = mediaType,
             libraryId = libraryId?.toString(), sort = sort, order = order, limit = limit ?: 50,
-            namePrefix = namePrefix, groups = groups, match = match, skipTotal = skipTotal), continuation)
+            namePrefix = namePrefix, groups = groups, match = match, skipTotal = skipTotal), continuation, widths = widths, seek = seek, windowCursor = windowCursor)
             .map { it.toCatalogResponse() }
     }
+
+    /**
+     * Where each letter starts in a title-ordered browse of [libraryId], in
+     * [order]; null from a server without a letter index.
+     */
+    suspend fun getCatalogLetters(
+        libraryId: Int?, mediaType: String?, order: String?,
+        queryGroups: List<CatalogQueryGroup>, match: String?,
+    ): ApiResult<CatalogLettersV2?> = v2.letters(CatalogLettersQueryV2(
+        libraryId = libraryId?.toString(), type = mediaType, match = match,
+        groups = queryGroups.toV2Groups(), order = order,
+    ))
 
     suspend fun getAudiobookGroups(libraryId: Int, groupBy: String, sort: String = "name",
         continuation: CatalogContinuationV2? = null, limit: Int? = null, query: String? = null,
@@ -63,7 +77,8 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
 
     suspend fun searchCapabilities() = v2.searchCapabilities()
 
-    suspend fun getItemDetail(id: String, libraryId: Int? = null): ApiResult<ItemDetail> = v2.itemDetail(id, libraryId)
+    suspend fun getItemDetail(id: String, libraryId: Int? = null, widths: ArtworkWidths? = null): ApiResult<ItemDetail> =
+        v2.itemDetail(id, libraryId, widths)
 
     suspend fun getItemVersions(id: String, libraryId: Int? = null): ApiResult<List<FileVersion>> = v2.itemVersions(id, libraryId)
 
@@ -75,7 +90,8 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         seriesId: String,
         seasonNumber: Int,
         libraryId: Int? = null,
-    ): ApiResult<EpisodesResponse> = v2.seasonEpisodes(seriesId, seasonNumber, libraryId)
+        widths: ArtworkWidths? = null,
+    ): ApiResult<EpisodesResponse> = v2.seasonEpisodes(seriesId, seasonNumber, libraryId, widths)
 
     suspend fun captureWatchAuthority() = watchDetail.capture()
     suspend fun isWatchAuthorityCurrent(owner: AuthScopeSnapshot) = watchDetail.current(owner)
@@ -88,6 +104,14 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         return watchDetail.detail(id, owner, libraryId)
     }
 
+    suspend fun getBoxSet(id: String, libraryId: String, widths: ArtworkWidths? = null): ApiResult<CatalogBoxSetDetail> =
+        v2.boxSet(id, libraryId, widths)
+
+    suspend fun getItemBoxSet(id: String, libraryId: Int? = null, widths: ArtworkWidths? = null): ApiResult<CatalogBoxSetDetail?> =
+        v2.itemBoxSet(id, libraryId, widths)
+
+    suspend fun searchBoxSets(query: String, limit: Int = 5): ApiResult<List<CatalogBoxSet>> = v2.searchBoxSets(query, limit)
+
     suspend fun searchPeople(query: String? = null, mediaScope: String? = null): ApiResult<List<Person>> =
         v2.people(query, mediaScope = mediaScope)
 
@@ -98,18 +122,27 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
     suspend fun refreshPerson(id: Long, owner: AuthScopeSnapshot): ApiResult<Unit> = personRefresh.refresh(id, owner)
 
     suspend fun getPersonItems(personId: Long, mediaType: String? = null,
-        continuation: CatalogContinuationV2? = null, limit: Int? = null): ApiResult<CatalogResponse> =
+        continuation: CatalogContinuationV2? = null, limit: Int? = null, widths: ArtworkWidths? = null): ApiResult<CatalogResponse> =
         v2.browse(CatalogQueryV2(source = "person", personId = personId.toString(), type = mediaType,
-            sort = "year", order = "desc", limit = limit ?: 50), continuation).map { it.toCatalogResponse() }
+            sort = "year", order = "desc", limit = limit ?: 50), continuation, widths = widths).map { it.toCatalogResponse() }
 }
 
 internal fun List<CatalogQueryGroup>.toV2Groups() = map { group ->
     CatalogRuleGroupV2(group.match, group.rules.map { rule ->
-        CatalogRuleV2(rule.field, rule.op, if (rule.values.isNotEmpty()) JsonArray(rule.values.map(::JsonPrimitive)) else JsonPrimitive(rule.value))
+        val value = when {
+            rule.values.isNotEmpty() -> JsonArray(rule.values.map(::JsonPrimitive))
+            // The server rejects flag rules whose value is not a JSON boolean (iOS CatalogQueryBuilder).
+            rule.field in BOOLEAN_RULE_FIELDS -> JsonPrimitive(rule.value.content == "true")
+            else -> rule.value
+        }
+        CatalogRuleV2(rule.field, rule.op, value)
     })
 }
+
+private val BOOLEAN_RULE_FIELDS = setOf("hdr", "dolby_vision", "watched", "in_progress", "favorited", "in_watchlist")
 
 internal fun CatalogPageV2<BrowseItem>.toCatalogResponse() = CatalogResponse(
     total = total, totalExact = totalExact, hasMore = continuation != null, items = items,
     effectiveSort = effectiveSort, continuation = continuation, searchDiagnostics = searchDiagnostics,
+    windowCursor = windowCursor,
 )

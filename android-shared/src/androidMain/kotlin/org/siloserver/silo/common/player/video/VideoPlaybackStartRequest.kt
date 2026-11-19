@@ -50,4 +50,23 @@ data class VideoPlaybackStartRequest(
      * version, and pin the file through every replan.
      */
     val room: WatchPartyPlaybackContext? = null,
-)
+    /**
+     * The viewer chose [preferredFileId] (a version picker or the player's
+     * version switch), so no replan may swap it for another version.
+     */
+    val versionChosen: Boolean = false,
+    /**
+     * Audio and subtitle the viewer picked earlier in this player session,
+     * laid over the target's effective tracks when it is the same series.
+     */
+    val carriedTrackChoices: org.siloserver.silo.model.playback.CarriedSeriesTrackChoices? = null,
+) {
+    /**
+     * `allow_alternate_versions` for this start. False pins the file: a Watch
+     * Party room, or a version the viewer chose. A renewal keeps what its
+     * original start sent. Null leaves a default play free to move to another
+     * version, as Auto does under a bandwidth budget.
+     */
+    fun allowAlternateVersions(): Boolean? =
+        if (room != null || versionChosen) false else recoveryStartParams?.allowAlternateVersions
+}

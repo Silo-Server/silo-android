@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.search
 
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.model.catalog.CatalogBoxSet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,11 +31,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.SiloTopBar
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.navigation.MediaMode
 import org.siloserver.silo.model.navigation.MediaModeCapabilities
 import org.siloserver.silo.model.navigation.mobileMediaModeCapabilities
@@ -58,6 +62,7 @@ import org.siloserver.silo.network.AccessChangeSignals
 @Composable
 fun SearchScreen(
     onItemClick: (String) -> Unit,
+    onBoxSetClick: (CatalogBoxSet) -> Unit,
     onPersonClick: (Long) -> Unit,
     onRequestMediaClick: (mediaType: String, tmdbId: Int) -> Unit,
     onRequestLibraryItemClick: (String) -> Unit,
@@ -89,7 +94,10 @@ fun SearchScreen(
         viewerAccessKey,
     ) {
         value = when (val result = personalDataRepository.listUserLibraries()) {
-            is ApiResult.Success -> result.data.mobileMediaModeCapabilities().mobileModes()
+            is ApiResult.Success -> {
+                viewModel.setBoxSetsAvailable(result.data.any { it.boxSetsEnabled })
+                result.data.mobileMediaModeCapabilities().mobileModes()
+            }
             else -> value
         }
     }
@@ -106,7 +114,7 @@ fun SearchScreen(
         topBar = {
             if (onBackClick != null) {
                 SiloTopBar(
-                    title = "Search",
+                    title = stringResource(CommonR.string.nav_search),
                     onBackClick = onBackClick,
                 )
             }
@@ -148,7 +156,7 @@ fun SearchScreen(
                                 index = index,
                                 count = state.availableMediaTypes.size,
                             ),
-                            label = { Text(type.label) },
+                            label = { Text(stringResource(type.label)) },
                         )
                     }
                 }
@@ -209,7 +217,7 @@ fun SearchScreen(
                 // until both have, so a person-only match does not flash it.
                 // A title error is final and shows at once with its Retry.
                 (state.isSearching || (state.isLoadingPeople && state.error == null)) &&
-                    state.results.isEmpty() && state.people.isEmpty() -> {
+                    state.results.isEmpty() && state.people.isEmpty() && state.boxSets.isEmpty() -> {
                     // Sits in the top part of the content area, matching the
                     // empty state's offset, so it stays visible above the IME
                     // instead of being centred in the space the keyboard covers.
@@ -223,7 +231,7 @@ fun SearchScreen(
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = "Searching…",
+                            text = stringResource(CommonR.string.search_searching),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -231,12 +239,11 @@ fun SearchScreen(
                 }
                 !state.hasSearched && state.query.isBlank() -> {
                     SearchEmptyState(
-                        text = "Search Silo",
+                        text = stringResource(CommonR.string.search_initial),
                         subtitle = if (voiceAvailable) {
-                            "Find movies, shows, books, audio, and people. " +
-                                "Tap the mic to search by voice."
+                            stringResource(CommonR.string.search_initialBodyVoice)
                         } else {
-                            "Find movies, shows, books, audio, and people."
+                            stringResource(CommonR.string.search_initialBodyPhone)
                         },
                     )
                 }
@@ -256,24 +263,25 @@ fun SearchScreen(
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = state.error ?: "Search failed",
+                                text = state.error?.text().orEmpty(),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             FilledTonalButton(onClick = { viewModel.retry() }) {
-                                Text("Retry")
+                                Text(stringResource(CommonR.string.common_retry))
                             }
                         }
                     }
                 }
-                state.hasSearched && state.results.isEmpty() && state.people.isEmpty() && !state.isSearching -> {
+                state.hasSearched && state.results.isEmpty() && state.people.isEmpty() &&
+                    state.boxSets.isEmpty() && !state.isSearching -> {
                     Column(modifier = Modifier.fillMaxSize()) {
                         Box(modifier = Modifier.weight(1f)) {
                             SearchEmptyState(
-                                text = "No results",
-                                subtitle = "Try a different search term",
+                                text = stringResource(CommonR.string.search_empty),
+                                subtitle = stringResource(CommonR.string.search_emptyBody),
                             )
                         }
                         RequestSearchFooter()
@@ -282,12 +290,14 @@ fun SearchScreen(
                 else -> {
                     SearchResults(
                         results = state.results,
+                        boxSets = state.boxSets,
                         people = state.people,
                         total = state.total,
                         totalExact = state.totalExact,
                         isSearching = state.isSearching,
                         hasMore = state.hasMore,
                         onItemClick = onItemClick,
+                        onBoxSetClick = onBoxSetClick,
                         onPersonClick = onPersonClick,
                         onLoadMore = { viewModel.loadMore() },
                         modifier = Modifier.fillMaxSize(),

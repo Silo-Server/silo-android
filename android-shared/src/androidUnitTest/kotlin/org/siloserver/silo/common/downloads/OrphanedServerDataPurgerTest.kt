@@ -66,6 +66,7 @@ class OrphanedServerDataPurgerTest {
         db.downloadDao().upsert(
             DownloadEntity(
                 serverId = serverId,
+                accountId = "",
                 profileId = "p1",
                 mediaFileId = mediaFileId,
                 recordId = recordId,
@@ -100,6 +101,7 @@ class OrphanedServerDataPurgerTest {
             DirtyOperationEntity(
                 opKind = OutboxOperation.SET_WATCHED,
                 serverId = serverId,
+                accountId = "",
                 profileId = "p1",
                 targetContentId = "c$mediaFileId",
                 targetFileId = null,
@@ -142,12 +144,12 @@ class OrphanedServerDataPurgerTest {
             cancelled,
             "a live DownloadWorker rewrites its row on every progress tick",
         )
-        assertNull(db.downloadDao().get("orphan-server", "p1", 2))
-        assertTrue(db.dirtyOperationDao().dueBatch("orphan-server", "p1", 1L, 10).isEmpty())
+        assertNull(db.downloadDao().get("orphan-server", "", "p1", 2))
+        assertTrue(db.dirtyOperationDao().dueBatch("orphan-server", "", "p1", 1L, 10).isEmpty())
 
         // The registered server is untouched.
-        assertEquals("rec-keep", db.downloadDao().get(keptId, "p1", 1)?.recordId)
-        assertEquals(1, db.dirtyOperationDao().dueBatch(keptId, "p1", 1L, 10).size)
+        assertEquals("rec-keep", db.downloadDao().get(keptId, "", "p1", 1)?.recordId)
+        assertEquals(1, db.dirtyOperationDao().dueBatch(keptId, "", "p1", 1L, 10).size)
     }
 
     @Test
@@ -174,10 +176,10 @@ class OrphanedServerDataPurgerTest {
         assertEquals(emptyList(), cancelled)
         assertEquals(
             "rec-precious",
-            db.downloadDao().get("server-with-data", "p1", 7)?.recordId,
+            db.downloadDao().get("server-with-data", "", "p1", 7)?.recordId,
             "downloads must survive a registry that could not be read",
         )
-        assertEquals(1, db.dirtyOperationDao().dueBatch("server-with-data", "p1", 1L, 10).size)
+        assertEquals(1, db.dirtyOperationDao().dueBatch("server-with-data", "", "p1", 1L, 10).size)
     }
 
     @Test
@@ -189,11 +191,11 @@ class OrphanedServerDataPurgerTest {
         val purged = purger(registry, activeFileId = 42).purgeOnce()
 
         assertEquals(emptySet(), purged)
-        assertEquals("rec-playing", db.downloadDao().get("orphan-server", "p1", 42)?.recordId)
+        assertEquals("rec-playing", db.downloadDao().get("orphan-server", "", "p1", 42)?.recordId)
 
         // Once playback ends the next pass collects it — nothing is stranded.
         assertEquals(setOf("orphan-server"), purger(registry).purgeOnce())
-        assertNull(db.downloadDao().get("orphan-server", "p1", 42))
+        assertNull(db.downloadDao().get("orphan-server", "", "p1", 42))
     }
 
     @Test
@@ -230,11 +232,11 @@ class OrphanedServerDataPurgerTest {
 
         val purge = backgroundScope.async { purger.purgeOnce() }
         cancellationStarted.await()
-        assertNotNull(db.downloadDao().get("orphan-server", "p1", 8))
+        assertNotNull(db.downloadDao().get("orphan-server", "", "p1", 8))
 
         cancellationAcknowledged.complete(Unit)
         assertEquals(setOf("orphan-server"), purge.await())
-        assertNull(db.downloadDao().get("orphan-server", "p1", 8))
+        assertNull(db.downloadDao().get("orphan-server", "", "p1", 8))
     }
 
     @Test
@@ -255,11 +257,11 @@ class OrphanedServerDataPurgerTest {
         )
 
         assertEquals(emptySet(), purger.purgeOnce())
-        assertNotNull(db.downloadDao().get("orphan-server", "p1", 12))
+        assertNotNull(db.downloadDao().get("orphan-server", "", "p1", 12))
 
         cancellationFails = false
         assertEquals(setOf("orphan-server"), purger.purgeOnce())
-        assertNull(db.downloadDao().get("orphan-server", "p1", 12))
+        assertNull(db.downloadDao().get("orphan-server", "", "p1", 12))
     }
 
     @Test
@@ -281,11 +283,11 @@ class OrphanedServerDataPurgerTest {
         )
 
         assertEquals(emptySet(), purger.purgeOnce())
-        assertNotNull(db.downloadDao().get("orphan-server", "p1", 13))
+        assertNotNull(db.downloadDao().get("orphan-server", "", "p1", 13))
 
         deletionFails = false
         assertEquals(setOf("orphan-server"), purger.purgeOnce())
-        assertNull(db.downloadDao().get("orphan-server", "p1", 13))
+        assertNull(db.downloadDao().get("orphan-server", "", "p1", 13))
     }
 
     @Test
@@ -302,10 +304,11 @@ class OrphanedServerDataPurgerTest {
             progress = 0.25,
             updatedAtMs = 1L,
         )
-        ebook.writeProgress(orphanId, "p1", "book", snapshot)
-        ebook.writeProgress(registeredId, "p1", "book", snapshot)
+        ebook.writeProgress(orphanId, null, "p1", "book", snapshot)
+        ebook.writeProgress(registeredId, null, "p1", "book", snapshot)
         audiobook.add(
             orphanId,
+            null,
             "p1",
             "audio",
             AudiobookBookmark(
@@ -327,9 +330,9 @@ class OrphanedServerDataPurgerTest {
         )
 
         assertEquals(emptySet(), purger.purgeOnce(), "JSON-only state has no Room server id")
-        assertNull(ebook.readProgress(orphanId, "p1", "book"))
-        assertTrue(audiobook.list(orphanId, "p1", "audio").isEmpty())
-        assertEquals(snapshot, ebook.readProgress(registeredId, "p1", "book"))
+        assertNull(ebook.readProgress(orphanId, null, "p1", "book"))
+        assertTrue(audiobook.list(orphanId, null, "p1", "audio").isEmpty())
+        assertEquals(snapshot, ebook.readProgress(registeredId, null, "p1", "book"))
     }
 
     @Test
@@ -361,7 +364,7 @@ class OrphanedServerDataPurgerTest {
 
         assertTrue(purge.isCancelled)
         assertNull(
-            db.downloadDao().get("orphan-server", "p1", 9),
+            db.downloadDao().get("orphan-server", "", "p1", 9),
             "once file deletion has begun, cancellation must not leave the Room half behind",
         )
     }
@@ -416,15 +419,15 @@ class OrphanedServerDataPurgerTest {
             initialRowsPurged.await()
             secondPurgeStarted.await()
             assertTrue(observer.isActive, "purge observer stopped: $observerFailure")
-            assertNull(db.downloadDao().get("preexisting-orphan", "p1", 11))
+            assertNull(db.downloadDao().get("preexisting-orphan", "", "p1", 11))
             assertTrue(
-                db.downloadDao().get(serverId, "p1", 10) != null,
+                db.downloadDao().get(serverId, "", "p1", 10) != null,
                 "second-pass deletion must remain gated until the snapshot assertion completes",
             )
 
             allowSecondPurge.complete(Unit)
             rowsPurged.await()
-            assertNull(db.downloadDao().get(serverId, "p1", 10))
+            assertNull(db.downloadDao().get(serverId, "", "p1", 10))
         } finally {
             withContext(NonCancellable) {
                 finishInitialPurge.complete(Unit)

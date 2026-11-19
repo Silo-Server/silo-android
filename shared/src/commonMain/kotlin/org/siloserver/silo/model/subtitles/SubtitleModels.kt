@@ -120,9 +120,13 @@ data class SubtitleAiQuota(
 /**
  * Input for subtitle AI creation. The v2 adapter emits required strings and a string file ID.
  *
- * Deliberately has NO `session_id` field: the web sends one to receive live
- * cue streaming over the playback websocket; Android polls the job instead
- * (web/src/player/.../usePlaybackSession.ts vs. SubtitlesRepository.pollJob).
+ * [sessionId] is the playback session the job was started from. The server
+ * runs a new job with a session as a foreground job: transcription extracts
+ * audio from the playhead in short chunks, so progress moves with each chunk.
+ * Without one, it extracts the whole file first and sends long chunks (ten
+ * minutes by default). A job already running for the same source keeps its
+ * mode. The server also streams live cues to that session; Android ignores
+ * them and polls the job to completion (SubtitlesRepository.pollJob).
  *
  * [sourceIndex] is the combined subtitle index for `translate`, and the audio
  * track index for the transcribe kinds. [targetLanguage] is optional only for
@@ -136,6 +140,7 @@ data class SubtitleTranslateRequest(
     @SerialName("source_language") val sourceLanguage: String? = null,
     @SerialName("target_language") val targetLanguage: String? = null,
     @SerialName("start_position") val startPosition: Double? = null,
+    @SerialName("session_id") val sessionId: String? = null,
 )
 
 @Serializable

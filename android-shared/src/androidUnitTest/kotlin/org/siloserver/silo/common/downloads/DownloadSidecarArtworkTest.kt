@@ -31,7 +31,7 @@ class DownloadSidecarArtworkTest {
             seriesPosterThumbhash = "SERIES",
         )
 
-        val entity = withArtwork.toEntity("srv", "prof")
+        val entity = withArtwork.toEntity("srv", "acct", "prof")
         assertEquals("/data/download-assets/srv/prof/42/artwork/poster", entity.offlinePosterPath)
         assertEquals("/data/download-assets/srv/prof/42/artwork/series_poster", entity.offlineSeriesPosterPath)
         assertEquals("SERIES", entity.seriesPosterThumbhash)
@@ -40,7 +40,7 @@ class DownloadSidecarArtworkTest {
 
     @Test
     fun rowsWithoutArtworkStillLoad() {
-        val restored = sidecar.toEntity("srv", "prof").toSidecar()
+        val restored = sidecar.toEntity("srv", "acct", "prof").toSidecar()
 
         assertNull(restored.offlinePosterPath)
         assertNull(restored.offlineSeriesPosterPath)

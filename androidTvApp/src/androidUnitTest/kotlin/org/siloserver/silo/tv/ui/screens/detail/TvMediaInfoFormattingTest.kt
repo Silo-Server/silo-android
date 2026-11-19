@@ -1,5 +1,10 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import kotlin.test.Test
@@ -7,10 +12,15 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = Application::class)
 class TvMediaInfoFormattingTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
     @Test
     fun subtitleSummaryUsesHumanLabelsInsteadOfRawFilenames() {
         val summary = tvMediaInfoSubtitleSummary(
+            resources,
             SubtitleTrack(
                 index = 4,
                 codec = "srt",
@@ -29,6 +39,7 @@ class TvMediaInfoFormattingTest {
     @Test
     fun audioSummarySplitsPrimaryAndAttributes() {
         val summary = tvMediaInfoAudioSummary(
+            resources,
             AudioTrack(
                 index = 1,
                 codec = "dts",
@@ -48,9 +59,11 @@ class TvMediaInfoFormattingTest {
     @Test
     fun subtitleSummaryUsesTheSharedAccessibilityClassifier() {
         val closedCaptions = tvMediaInfoSubtitleSummary(
+            resources,
             SubtitleTrack(index = 1, codec = "srt", language = "en", title = "English CC"),
         )
         val unrelatedHearingText = tvMediaInfoSubtitleSummary(
+            resources,
             SubtitleTrack(index = 2, codec = "srt", language = "en", title = "Hearing Aid Commentary"),
         )
 

@@ -141,7 +141,12 @@ class TvLoginScreenNetworkSignInTest {
             serverRegistry = OneServer,
             externalSignIn = ExternalSignInRepository(Providers(providers)),
         )
-        val receiver = PairingReceiver(NoPairing, DeviceLoginRepositoryPort(deviceLogin), { PairingDeviceIdentity("TV", "tv-1") })
+        val receiver = PairingReceiver(
+            NoPairing,
+            DeviceLoginRepositoryPort(deviceLogin),
+            { PairingDeviceIdentity("TV", "tv-1") },
+            cleartextConsent = NoCleartextApprovals,
+        )
         composeRule.setContent {
             SiloTvTheme {
                 TvLoginScreen(
@@ -185,6 +190,12 @@ class TvLoginScreenNetworkSignInTest {
             scope: AuthScopeSnapshot, installationId: String, password: String, username: String, directoryPassword: String,
         ) = error("unused")
         override suspend fun linkWithNetwork(scope: AuthScopeSnapshot, installationId: String, password: String) = error("unused")
+    }
+
+    private object NoCleartextApprovals : org.siloserver.silo.common.network.CleartextConsentStore {
+        override suspend fun isApproved(origin: String) = false
+
+        override suspend fun approve(origin: String) = Unit
     }
 
     private object NoPairing : PairingAuthPort {

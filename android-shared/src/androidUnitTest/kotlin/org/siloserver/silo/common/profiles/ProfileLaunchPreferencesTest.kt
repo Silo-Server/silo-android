@@ -170,6 +170,40 @@ class ProfileLaunchPreferencesTest {
     }
 
     @Test
+    fun `a required choice starts at Change Account once several accounts are saved`() {
+        data class Case(
+            val required: Boolean,
+            val accounts: Int,
+            val onlyProfile: Boolean,
+            val expected: ProfileSelectionPrompt,
+        )
+        listOf(
+            // Not required (Automatic, or a timed choice still running): the
+            // profile stays, however many accounts are saved.
+            Case(required = false, accounts = 1, onlyProfile = false, expected = ProfileSelectionPrompt.None),
+            Case(required = false, accounts = 3, onlyProfile = true, expected = ProfileSelectionPrompt.None),
+            // One account: its only profile without a PIN stays open;
+            // otherwise the picker asks.
+            Case(required = true, accounts = 1, onlyProfile = true, expected = ProfileSelectionPrompt.None),
+            Case(required = true, accounts = 1, onlyProfile = false, expected = ProfileSelectionPrompt.WhoIsWatching),
+            // Several accounts: Change Account, even when the open one has a
+            // single profile without a PIN.
+            Case(required = true, accounts = 2, onlyProfile = true, expected = ProfileSelectionPrompt.ChangeAccount),
+            Case(required = true, accounts = 3, onlyProfile = false, expected = ProfileSelectionPrompt.ChangeAccount),
+        ).forEach { case ->
+            assertEquals(
+                case.expected,
+                profileSelectionPrompt(
+                    selectionRequired = case.required,
+                    savedAccounts = case.accounts,
+                    onlyProfileNeedsNoChoice = case.onlyProfile,
+                ),
+                case.toString(),
+            )
+        }
+    }
+
+    @Test
     fun `Cast that stops while Silo is hidden starts the away clock, so Every Time asks`() {
         val store = ProfileLaunchPreferences(InMemoryPrefs()) { start }
         store.setBehavior(ProfileLaunchBehavior.EveryTime)

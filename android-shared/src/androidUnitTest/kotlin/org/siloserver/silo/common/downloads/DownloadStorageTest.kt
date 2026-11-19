@@ -23,7 +23,7 @@ class DownloadStorageTest {
     @Test
     fun `prepareWrite uses original filename as display name`() {
         val storage = newStorage()
-        val target = storage.prepareWrite("srv1", "profA", 42, fileName = "The Book.epub")
+        val target = storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 42, fileName = "The Book.epub")
 
         assertEquals("The Book.epub", target.displayName)
     }
@@ -31,10 +31,10 @@ class DownloadStorageTest {
     @Test
     fun `file backed download uris encode paths with spaces and uri reserved characters`() {
         val storage = newStorage()
-        val target = storage.prepareWrite("srv1", "profA", 42, fileName = "The #1 Book.epub")
+        val target = storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 42, fileName = "The #1 Book.epub")
         target.writeTargetBytes(ByteArray(10))
 
-        assertEquals("The #1 Book.epub", storage.locateLocalMedia("srv1", "profA", 42)?.displayName)
+        assertEquals("The #1 Book.epub", storage.locateLocalMedia("srv1", PRE_ACCOUNT, "profA", 42)?.displayName)
         assertTrue(target.uriString.startsWith("file://"))
         assertTrue(target.uriString.contains("The%20%231%20Book.epub"))
         assertFalse(target.uriString.contains("The #1 Book.epub"))
@@ -43,7 +43,7 @@ class DownloadStorageTest {
     @Test
     fun `prepareWrite falls back to container extension when filename is unavailable`() {
         val storage = newStorage()
-        val target = storage.prepareWrite("srv1", "profA", 42, container = "m4b")
+        val target = storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 42, container = "m4b")
 
         assertEquals("42.m4b", target.displayName)
     }
@@ -51,7 +51,7 @@ class DownloadStorageTest {
     @Test
     fun `prepareWrite sanitizes unsupported filename characters but keeps extension`() {
         val storage = newStorage()
-        val target = storage.prepareWrite("srv1", "profA", 42, fileName = "../bad:name?.pdf")
+        val target = storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 42, fileName = "../bad:name?.pdf")
 
         assertEquals("bad_name_.pdf", target.displayName)
     }
@@ -61,6 +61,7 @@ class DownloadStorageTest {
         val storage = newStorage()
         val target = storage.prepareWrite(
             serverId = "srv1",
+            accountId = PRE_ACCOUNT,
             profileId = "profA",
             fileId = 42,
             fileName = "Movie.mkv",
@@ -75,6 +76,7 @@ class DownloadStorageTest {
         val storage = newStorage()
         val target = storage.prepareWrite(
             serverId = "srv1",
+            accountId = PRE_ACCOUNT,
             profileId = "profA",
             fileId = 42,
             fileName = "Book.m4b",
@@ -89,6 +91,7 @@ class DownloadStorageTest {
         val storage = newStorage()
         val target = storage.prepareWrite(
             serverId = "srv1",
+            accountId = PRE_ACCOUNT,
             profileId = "profA",
             fileId = 42,
             fileName = "Book.epub",
@@ -114,9 +117,9 @@ class DownloadStorageTest {
             ),
         )
 
-        val movie = storage.prepareWrite("srv1", "profA", 10, fileName = "Movie.mkv", mediaType = DownloadMediaType.Movie.wire)
-        val audiobook = storage.prepareWrite("srv1", "profA", 11, fileName = "Book.m4b", mediaType = DownloadMediaType.Audiobook.wire)
-        val ebook = storage.prepareWrite("srv1", "profA", 12, fileName = "Book.epub", mediaType = DownloadMediaType.Ebook.wire)
+        val movie = storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 10, fileName = "Movie.mkv", mediaType = DownloadMediaType.Movie.wire)
+        val audiobook = storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 11, fileName = "Book.m4b", mediaType = DownloadMediaType.Audiobook.wire)
+        val ebook = storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 12, fileName = "Book.epub", mediaType = DownloadMediaType.Ebook.wire)
 
         assertTrue(movie.uriString.contains(moviesRoot.name))
         assertFalse(movie.uriString.contains(downloadsRoot.name))
@@ -128,11 +131,11 @@ class DownloadStorageTest {
     @Test
     fun `locateLocalFile finds original-format download only`() {
         val storage = newStorage()
-        val target = storage.prepareWrite("srv1", "profA", 42, fileName = "The Book.epub")
+        val target = storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 42, fileName = "The Book.epub")
         target.writeTargetBytes(ByteArray(10))
         storage.completeWrite(target.uriString)
 
-        assertEquals("The Book.epub", storage.locateLocalFile("srv1", "profA", 42)?.name)
+        assertEquals("The Book.epub", storage.locateLocalFile("srv1", PRE_ACCOUNT, "profA", 42)?.name)
     }
 
     @Test
@@ -145,7 +148,7 @@ class DownloadStorageTest {
                 onFileCompleted = { completedFile = it },
             ),
         )
-        val target = storage.prepareWrite("srv1", "profA", 42, fileName = "The Book.epub")
+        val target = storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 42, fileName = "The Book.epub")
         target.writeTargetBytes(ByteArray(10))
 
         storage.completeWrite(target.uriString)
@@ -160,7 +163,7 @@ class DownloadStorageTest {
             baseDir = tmp.newFolder("first-files"),
             publicStore = FileBackedPublicDownloadStore(publicRoot),
         )
-        val target = firstStorage.prepareWrite("srv1", "profA", 42, fileName = "The Book.epub")
+        val target = firstStorage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 42, fileName = "The Book.epub")
         target.writeTargetBytes(ByteArray(10))
 
         val recreatedStorage = DownloadStorage(
@@ -179,28 +182,28 @@ class DownloadStorageTest {
         val storage = newStorage()
 
         assertFailsWith<IllegalArgumentException> {
-            storage.prepareWrite("srv1", "profA", 7)
+            storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 7)
         }
     }
 
     @Test
     fun `prepareWrite validation failure keeps existing downloaded bytes`() {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 7, fileName = "Existing.mkv")
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 7, fileName = "Existing.mkv")
             .writeTargetBytes(ByteArray(10))
 
         assertFailsWith<IllegalArgumentException> {
-            storage.prepareWrite("srv1", "profA", 7)
+            storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 7)
         }
 
-        assertTrue(storage.exists("srv1", "profA", 7))
-        assertEquals("Existing.mkv", storage.locateLocalMedia("srv1", "profA", 7)?.displayName)
+        assertTrue(storage.exists("srv1", PRE_ACCOUNT, "profA", 7))
+        assertEquals("Existing.mkv", storage.locateLocalMedia("srv1", PRE_ACCOUNT, "profA", 7)?.displayName)
     }
 
     @Test
     fun `prepareWrite creates parent directories and returns target when original container is known`() {
         val storage = newStorage()
-        val target = storage.prepareWrite("srv1", "profA", 7, container = "epub")
+        val target = storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 7, container = "epub")
         assertTrue(target.uriString.startsWith("file://"))
         assertEquals("7.epub", target.displayName)
     }
@@ -208,63 +211,63 @@ class DownloadStorageTest {
     @Test
     fun `exists round-trips with a real write`() {
         val storage = newStorage()
-        assertFalse(storage.exists("srv1", "profA", 1))
-        val f = storage.prepareWrite("srv1", "profA", 1, fileName = "Movie.mkv")
+        assertFalse(storage.exists("srv1", PRE_ACCOUNT, "profA", 1))
+        val f = storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 1, fileName = "Movie.mkv")
         f.writeTargetBytes(ByteArray(256))
-        assertTrue(storage.exists("srv1", "profA", 1))
+        assertTrue(storage.exists("srv1", PRE_ACCOUNT, "profA", 1))
     }
 
     @Test
     fun `locateLocalMedia resolves bytes by file id`() {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 42, fileName = "Recovered.epub").writeTargetBytes(ByteArray(10))
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 42, fileName = "Recovered.epub").writeTargetBytes(ByteArray(10))
 
-        assertEquals("Recovered.epub", storage.locateLocalMedia("srv1", "profA", 42)?.displayName)
+        assertEquals("Recovered.epub", storage.locateLocalMedia("srv1", PRE_ACCOUNT, "profA", 42)?.displayName)
     }
 
     @Test
     fun `delete removes only the targeted file`() {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 1, fileName = "One.mkv").writeTargetBytes(ByteArray(10))
-        storage.prepareWrite("srv1", "profA", 2, fileName = "Two.mkv").writeTargetBytes(ByteArray(10))
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 1, fileName = "One.mkv").writeTargetBytes(ByteArray(10))
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 2, fileName = "Two.mkv").writeTargetBytes(ByteArray(10))
 
-        assertTrue(storage.delete("srv1", "profA", 1))
-        assertFalse(storage.exists("srv1", "profA", 1))
-        assertTrue(storage.exists("srv1", "profA", 2))
+        assertTrue(storage.delete("srv1", PRE_ACCOUNT, "profA", 1))
+        assertFalse(storage.exists("srv1", PRE_ACCOUNT, "profA", 1))
+        assertTrue(storage.exists("srv1", PRE_ACCOUNT, "profA", 2))
         // Re-delete returns false (nothing to remove).
-        assertFalse(storage.delete("srv1", "profA", 1))
+        assertFalse(storage.delete("srv1", PRE_ACCOUNT, "profA", 1))
     }
 
     @Test
     fun `deleteAllForProfile isolates other profiles on the same server`() {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 1, fileName = "One.mkv", mediaType = DownloadMediaType.Movie.wire)
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 1, fileName = "One.mkv", mediaType = DownloadMediaType.Movie.wire)
             .writeTargetBytes(ByteArray(10))
-        storage.prepareWrite("srv1", "profA", 2, fileName = "Two.m4b", mediaType = DownloadMediaType.Audiobook.wire)
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 2, fileName = "Two.m4b", mediaType = DownloadMediaType.Audiobook.wire)
             .writeTargetBytes(ByteArray(10))
-        storage.prepareWrite("srv1", "profB", 3, fileName = "Three.epub", mediaType = DownloadMediaType.Ebook.wire)
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profB", 3, fileName = "Three.epub", mediaType = DownloadMediaType.Ebook.wire)
             .writeTargetBytes(ByteArray(10))
 
-        assertTrue(storage.deleteAllForProfile("srv1", "profA"))
-        assertFalse(storage.exists("srv1", "profA", 1))
-        assertFalse(storage.exists("srv1", "profA", 2))
-        assertTrue(storage.exists("srv1", "profB", 3))  // untouched
+        assertTrue(storage.deleteAllForProfile("srv1", PRE_ACCOUNT, "profA"))
+        assertFalse(storage.exists("srv1", PRE_ACCOUNT, "profA", 1))
+        assertFalse(storage.exists("srv1", PRE_ACCOUNT, "profA", 2))
+        assertTrue(storage.exists("srv1", PRE_ACCOUNT, "profB", 3))  // untouched
     }
 
     @Test
     fun `deleteAllForServer wipes everything under a server`() {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 1, fileName = "One.mkv", mediaType = DownloadMediaType.Movie.wire)
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 1, fileName = "One.mkv", mediaType = DownloadMediaType.Movie.wire)
             .writeTargetBytes(ByteArray(10))
-        storage.prepareWrite("srv1", "profB", 2, fileName = "Two.m4b", mediaType = DownloadMediaType.Audiobook.wire)
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profB", 2, fileName = "Two.m4b", mediaType = DownloadMediaType.Audiobook.wire)
             .writeTargetBytes(ByteArray(10))
-        storage.prepareWrite("srv2", "profA", 3, fileName = "Three.epub", mediaType = DownloadMediaType.Ebook.wire)
+        storage.prepareWrite("srv2", PRE_ACCOUNT, "profA", 3, fileName = "Three.epub", mediaType = DownloadMediaType.Ebook.wire)
             .writeTargetBytes(ByteArray(10))
 
         assertTrue(storage.deleteAllForServer("srv1"))
-        assertFalse(storage.exists("srv1", "profA", 1))
-        assertFalse(storage.exists("srv1", "profB", 2))
-        assertTrue(storage.exists("srv2", "profA", 3))
+        assertFalse(storage.exists("srv1", PRE_ACCOUNT, "profA", 1))
+        assertFalse(storage.exists("srv1", PRE_ACCOUNT, "profB", 2))
+        assertTrue(storage.exists("srv2", PRE_ACCOUNT, "profA", 3))
     }
 
     @Test
@@ -275,9 +278,9 @@ class DownloadStorageTest {
             publicStore = FileBackedPublicDownloadStore(downloadsRoot),
         )
 
-        val target = storage.prepareWrite("../server", "profile/name", 9, fileName = "Book.epub")
+        val target = storage.prepareWrite("../server", PRE_ACCOUNT, "profile/name", 9, fileName = "Book.epub")
         target.writeTargetBytes(ByteArray(10))
-        val file = storage.locateLocalFile("../server", "profile/name", 9)
+        val file = storage.locateLocalFile("../server", PRE_ACCOUNT, "profile/name", 9)
 
         assertTrue(file != null)
         assertTrue(file.canonicalPath.startsWith(downloadsRoot.canonicalPath + File.separator))
@@ -296,7 +299,7 @@ class DownloadStorageTest {
         )
 
         assertFalse(storage.deleteAllForServer(".."))
-        assertFalse(storage.deleteAllForProfile("..", "."))
+        assertFalse(storage.deleteAllForProfile("..", PRE_ACCOUNT, "."))
         assertTrue(sentinel.isFile)
         assertEquals("keep", sentinel.readText())
     }
@@ -343,17 +346,17 @@ class DownloadStorageTest {
             publicStore = FileBackedPublicDownloadStore(downloadsRoot),
         )
 
-        assertEquals(legacyFile.canonicalFile, storage.locateLocalFile("server id", "profile%id", 42)?.canonicalFile)
+        assertEquals(legacyFile.canonicalFile, storage.locateLocalFile("server id", PRE_ACCOUNT, "profile%id", 42)?.canonicalFile)
 
-        val target = storage.prepareWrite("server id", "profile%id", 42, fileName = "Updated.epub")
+        val target = storage.prepareWrite("server id", PRE_ACCOUNT, "profile%id", 42, fileName = "Updated.epub")
         target.writeTargetBytes(ByteArray(11))
         assertTrue(legacyFile.isFile)
 
         storage.completeWrite(target.uriString)
 
         assertFalse(legacyDir.exists())
-        assertEquals("Updated.epub", storage.locateLocalFile("server id", "profile%id", 42)?.name)
-        assertEquals(11L, storage.locateLocalFile("server id", "profile%id", 42)?.length())
+        assertEquals("Updated.epub", storage.locateLocalFile("server id", PRE_ACCOUNT, "profile%id", 42)?.name)
+        assertEquals(11L, storage.locateLocalFile("server id", PRE_ACCOUNT, "profile%id", 42)?.length())
     }
 
     @Test
@@ -361,6 +364,7 @@ class DownloadStorageTest {
         val storage = newStorage()
         val old = storage.prepareWrite(
             "srv1",
+            PRE_ACCOUNT,
             "profA",
             42,
             fileName = "Old.mkv",
@@ -368,10 +372,11 @@ class DownloadStorageTest {
         )
         old.writeTargetBytes(ByteArray(7))
         storage.completeWrite(old.uriString)
-        val oldFile = checkNotNull(storage.locateLocalFile("srv1", "profA", 42))
+        val oldFile = checkNotNull(storage.locateLocalFile("srv1", PRE_ACCOUNT, "profA", 42))
 
         val replacement = storage.prepareWrite(
             "srv1",
+            PRE_ACCOUNT,
             "profA",
             42,
             fileName = "New.epub",
@@ -383,7 +388,7 @@ class DownloadStorageTest {
         storage.completeWrite(replacement.uriString)
 
         assertFalse(oldFile.exists())
-        assertEquals("New.epub", storage.locateLocalFile("srv1", "profA", 42)?.name)
+        assertEquals("New.epub", storage.locateLocalFile("srv1", PRE_ACCOUNT, "profA", 42)?.name)
     }
 
     @Test
@@ -395,25 +400,25 @@ class DownloadStorageTest {
             baseDir = tmp.newFolder("filesDir"),
             publicStore = FileBackedPublicDownloadStore(downloadsRoot),
         )
-        storage.prepareWrite("server id", "profile%id", 42, fileName = "Updated.epub")
+        storage.prepareWrite("server id", PRE_ACCOUNT, "profile%id", 42, fileName = "Updated.epub")
             .writeTargetBytes(ByteArray(11))
 
-        assertTrue(storage.delete("server id", "profile%id", 42))
+        assertTrue(storage.delete("server id", PRE_ACCOUNT, "profile%id", 42))
         assertFalse(legacyDir.exists())
-        assertFalse(storage.exists("server id", "profile%id", 42))
+        assertFalse(storage.exists("server id", PRE_ACCOUNT, "profile%id", 42))
     }
 
     @Test
     fun `raw reserved namespace identity cannot read size or delete encoded sibling`() {
         val storage = newStorage()
-        storage.prepareWrite("?", "prof", 42, fileName = "Question.epub")
+        storage.prepareWrite("?", PRE_ACCOUNT, "prof", 42, fileName = "Question.epub")
             .writeTargetBytes(ByteArray(13))
 
-        assertFalse(storage.exists("~Pw", "prof", 42))
-        assertEquals(0L, storage.totalBytesUsed("~Pw", "prof"))
-        assertFalse(storage.delete("~Pw", "prof", 42))
-        assertTrue(storage.exists("?", "prof", 42))
-        assertEquals(13L, storage.totalBytesUsed("?", "prof"))
+        assertFalse(storage.exists("~Pw", PRE_ACCOUNT, "prof", 42))
+        assertEquals(0L, storage.totalBytesUsed("~Pw", PRE_ACCOUNT, "prof"))
+        assertFalse(storage.delete("~Pw", PRE_ACCOUNT, "prof", 42))
+        assertTrue(storage.exists("?", PRE_ACCOUNT, "prof", 42))
+        assertEquals(13L, storage.totalBytesUsed("?", PRE_ACCOUNT, "prof"))
     }
 
     @Test
@@ -424,7 +429,7 @@ class DownloadStorageTest {
             baseDir = tmp.newFolder("filesDir"),
             publicStore = FileBackedPublicDownloadStore(publicRoot),
         )
-        val target = storage.prepareWrite("server", "profile", 42, fileName = "Book.epub")
+        val target = storage.prepareWrite("server", PRE_ACCOUNT, "profile", 42, fileName = "Book.epub")
         val intendedFinal = File(publicRoot, "Downloads/server/profile/42/Book.epub")
         val sentinel = File(parent, "sentinel.txt").apply { writeText("keep") }
         Files.createSymbolicLink(intendedFinal.toPath(), sentinel.toPath())
@@ -440,20 +445,20 @@ class DownloadStorageTest {
     @Test
     fun `totalBytesUsed sums every downloaded file under the root`() {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 1, fileName = "One.mkv").writeTargetBytes(ByteArray(100))
-        storage.prepareWrite("srv1", "profB", 2, fileName = "Two.mkv").writeTargetBytes(ByteArray(250))
-        storage.prepareWrite("srv2", "profA", 3, fileName = "Three.mkv").writeTargetBytes(ByteArray(50))
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 1, fileName = "One.mkv").writeTargetBytes(ByteArray(100))
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profB", 2, fileName = "Two.mkv").writeTargetBytes(ByteArray(250))
+        storage.prepareWrite("srv2", PRE_ACCOUNT, "profA", 3, fileName = "Three.mkv").writeTargetBytes(ByteArray(50))
         assertEquals(400L, storage.totalBytesUsed())
     }
 
     @Test
     fun `scoped totalBytesUsed sums only one server profile`() {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 1, fileName = "One.mkv").writeTargetBytes(ByteArray(100))
-        storage.prepareWrite("srv1", "profB", 2, fileName = "Two.mkv").writeTargetBytes(ByteArray(250))
-        storage.prepareWrite("srv2", "profA", 3, fileName = "Three.mkv").writeTargetBytes(ByteArray(50))
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profA", 1, fileName = "One.mkv").writeTargetBytes(ByteArray(100))
+        storage.prepareWrite("srv1", PRE_ACCOUNT, "profB", 2, fileName = "Two.mkv").writeTargetBytes(ByteArray(250))
+        storage.prepareWrite("srv2", PRE_ACCOUNT, "profA", 3, fileName = "Three.mkv").writeTargetBytes(ByteArray(50))
 
-        assertEquals(100L, storage.totalBytesUsed("srv1", "profA"))
+        assertEquals(100L, storage.totalBytesUsed("srv1", PRE_ACCOUNT, "profA"))
     }
 
     @Test
@@ -470,7 +475,7 @@ class DownloadStorageTest {
         // downloads failed permanently on API 29+ while the test stayed green.
         assertEquals(
             "Download/Silo/srv1/profA/42/",
-            mediaStoreRelativePath(PublicDownloadCollection.Downloads, "srv1", "profA", 42),
+            mediaStoreRelativePath(PublicDownloadCollection.Downloads, listOf("srv1", "profA"), 42),
         )
     }
 
@@ -478,8 +483,7 @@ class DownloadStorageTest {
     fun `media store relative path encodes unsafe identity segments`() {
         val path = mediaStoreRelativePath(
             PublicDownloadCollection.Downloads,
-            "../server",
-            "profile/name",
+            listOf("../server", "profile/name"),
             42,
         )
 
@@ -495,8 +499,7 @@ class DownloadStorageTest {
 
         val pattern = mediaStoreRelativePathPrefix(
             PublicDownloadCollection.Downloads,
-            serverId = "_",
-            profileId = "profile_name",
+            listOf("_", "profile_name"),
         )
         assertEquals("Download/Silo/\\_/profile\\_name/%", pattern)
     }
@@ -505,13 +508,18 @@ class DownloadStorageTest {
     fun `unsafe media store prefix contains encoded not raw identity`() {
         val pattern = mediaStoreRelativePathPrefix(
             PublicDownloadCollection.Downloads,
-            serverId = "server%",
-            profileId = "profile\\name",
+            listOf("server%", "profile\\name"),
         )
 
         assertFalse(pattern.contains("server%"))
         assertFalse(pattern.contains("profile\\name"))
         assertNotEquals("Download/Silo/server\\%/profile\\\\name/%", pattern)
+    }
+
+    private companion object {
+        // The empty account id is the pre-account layout `<server>/<profile>/<fileId>`,
+        // which the path assertions here describe.
+        const val PRE_ACCOUNT = ""
     }
 
     private fun DownloadTarget.writeTargetBytes(bytes: ByteArray) {

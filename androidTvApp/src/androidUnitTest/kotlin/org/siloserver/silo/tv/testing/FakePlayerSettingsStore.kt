@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.testing
 
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,8 +19,11 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
     var flushCount = 0
 
     override val introSkipModeFlow = MutableStateFlow(IntroSkipMode.ASK)
+    override val bufferingQualityModeFlow = MutableStateFlow(BufferingQualityMode.Default)
     override val autoSkipCreditsFlow = MutableStateFlow(false)
     override val autoPlayNextFlow = MutableStateFlow(true)
+    override val themeMusicEnabledFlow = MutableStateFlow(false)
+    override val themeMusicLoopFlow = MutableStateFlow(false)
     override val hdrEnabledFlow = MutableStateFlow(true)
     override val dvProfile7HDR10FallbackFlow = MutableStateFlow(false)
     override val dolbyVisionEnabledFlow = MutableStateFlow(true)
@@ -51,11 +55,20 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
     override suspend fun setIntroSkipMode(value: IntroSkipMode) {
         setterCalls += "setIntroSkipMode"; introSkipModeFlow.value = value
     }
+    override suspend fun setBufferingQualityMode(value: BufferingQualityMode) {
+        setterCalls += "setBufferingQualityMode"; bufferingQualityModeFlow.value = value
+    }
     override suspend fun setAutoSkipCredits(value: Boolean) {
         setterCalls += "setAutoSkipCredits"; autoSkipCreditsFlow.value = value
     }
     override suspend fun setAutoPlayNext(value: Boolean) {
         setterCalls += "setAutoPlayNext"; autoPlayNextFlow.value = value
+    }
+    override suspend fun setThemeMusicEnabled(value: Boolean) {
+        setterCalls += "setThemeMusicEnabled"; themeMusicEnabledFlow.value = value
+    }
+    override suspend fun setThemeMusicLoop(value: Boolean) {
+        setterCalls += "setThemeMusicLoop"; themeMusicLoopFlow.value = value
     }
     override suspend fun setHdrEnabled(value: Boolean) {
         setterCalls += "setHdrEnabled"; hdrEnabledFlow.value = value
@@ -118,7 +131,11 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
     override suspend fun setPreferredQuality(value: String) {
         setterCalls += "setPreferredQuality"; preferredQualityFlow.value = value
     }
-    override suspend fun setQuality(resolution: String, bitrateKbps: Int?) {
+    override suspend fun setMaxBitrateKbps(value: Int?) {
+        setterCalls += "setMaxBitrateKbps"; maxBitrateKbpsFlow.value = value
+    }
+    /** Both quality axes at once, as the legacy import writes them. */
+    suspend fun setQuality(resolution: String, bitrateKbps: Int?) {
         setterCalls += "setQuality"
         preferredQualityFlow.value = resolution
         maxBitrateKbpsFlow.value = bitrateKbps

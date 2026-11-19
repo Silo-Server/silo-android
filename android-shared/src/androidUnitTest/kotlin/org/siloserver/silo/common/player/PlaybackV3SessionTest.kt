@@ -71,6 +71,36 @@ class PlaybackV3SessionTest {
     }
 
     @Test
+    fun tracksNoRouteCanShowStayInTheirPlacesMarkedUnplayable() {
+        // An MKV's S_TEXT/WEBVTT track that FFmpeg did not recognize: a server
+        // with the `unplayable` field marks it; an older one only stores it
+        // with no codec. A downloaded track without a codec still plays.
+        val inventory = SiloJson.decodeFromString<List<PlaybackSubtitleInventoryItemV3>>(
+            """
+            [
+              {"track_id": "external", "combined_index": 0, "source": "external", "codec": "srt",
+               "delivery": "sidecar", "url": "/subtitles/0.vtt"},
+              {"track_id": "flagged", "combined_index": 1, "source": "embedded", "codec": "hdmv_text",
+               "delivery": "burn_in_only", "unplayable": true},
+              {"track_id": "uncoded", "combined_index": 2, "source": "embedded", "delivery": "burn_in_only"},
+              {"track_id": "provider", "combined_index": 3, "source": "downloaded", "delivery": "sidecar",
+               "url": "/subtitles/3.vtt"}
+            ]
+            """.trimIndent(),
+        )
+        val response = plan(
+            mode = PlaybackSubtitleModeV3.OFF,
+            format = "",
+            url = "",
+            inventory = inventory,
+        ).toSessionResponse("session", "profile", 482)
+
+        val rows = response.subtitleUrls.orEmpty()
+        assertEquals(listOf(0, 1, 2, 3), rows.map(PlayerSubtitleInfo::index))
+        assertEquals(listOf(false, true, true, false), rows.map(PlayerSubtitleInfo::unplayable))
+    }
+
+    @Test
     fun unknownSubtitleDeliveriesStayOutOfTheNativePicker() {
         val response = plan(
             mode = PlaybackSubtitleModeV3.OFF,

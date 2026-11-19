@@ -13,6 +13,7 @@ import org.siloserver.silo.model.request.RequestReason
 import org.siloserver.silo.model.request.RequestState
 import org.siloserver.silo.model.request.RequestUserState
 import org.siloserver.silo.model.request.requestInstantKey
+import org.siloserver.silo.model.request.without
 import org.siloserver.silo.network.ApiResult
 
 /**
@@ -69,6 +70,13 @@ class RequestDetailCache(
         ownRecords = if (record.outcome == RequestOutcome.Cancelled) ownRecords - key else ownRecords + (key to record)
     }
 
+    /** The server deleted [record]: forget it, and leave its title requestable wherever the cache shows it. */
+    fun removeOwnRecord(record: MediaRequest) {
+        val key = record.cacheKey()
+        if (ownRecords[key]?.id == record.id) ownRecords = ownRecords - key
+        patchRequestState(key) { it.without(record) }
+    }
+
     /** Patches the title's request state wherever the cache holds it, so the next first frame agrees. */
     fun patchRequestState(key: Key, transform: (RequestState) -> RequestState) {
         details[key]?.let { details[key] = it.copy(request = transform(it.request)) }
@@ -114,13 +122,6 @@ class RequestDetailCache(
                 val result = loader(key)
                 if (session != generation) return@launch
                 if (result is ApiResult.Success) store(result.data)
-                // A refusal means the profile lost access or requests went
-                // off, so the rest of the queue would be refused too, each
-                // re-reading the capability.
-                if (result is ApiResult.Error && (result.code == 403 || isRequestsRefusal(result))) {
-                    prefetchQueue.clear()
-                    break
-                }
             }
             if (session == generation) prefetchJob = null
         }

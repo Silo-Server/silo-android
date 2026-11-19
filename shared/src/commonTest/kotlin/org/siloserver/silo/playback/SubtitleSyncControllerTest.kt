@@ -14,6 +14,7 @@ import org.siloserver.silo.model.subtitles.SubtitleTiming
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.SubtitleSyncSource
 import kotlin.test.Test
+import org.siloserver.silo.common.i18n.english
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -116,7 +117,7 @@ class SubtitleSyncControllerTest {
         advanceTimeBy(3_001)
         val done = sync.state.value.entries.getValue(sidecar)
         assertEquals(SubtitleSyncJob.SYNCED, done.state.sync?.status)
-        assertEquals("Synced −3.0 s", done.statusLabel)
+        assertEquals("Synced −3.0 s", done.statusLabel?.english())
         assertEquals(listOf(sidecar), changes)
 
         // The realtime event that follows reads the same timing: no second reload.
@@ -128,7 +129,7 @@ class SubtitleSyncControllerTest {
         sync.resetTiming(sidecar)
         runCurrent()
         assertEquals(listOf(sidecar, sidecar), changes)
-        assertEquals("Original timing", sync.state.value.entries.getValue(sidecar).statusLabel)
+        assertEquals("Original timing", sync.state.value.entries.getValue(sidecar).statusLabel?.english())
     }
 
     @Test
@@ -144,7 +145,7 @@ class SubtitleSyncControllerTest {
 
         source.reads.clear()
         sync.syncUpdated(update(job.copy(status = SubtitleSyncJob.RUNNING, phase = "analyzing", progress = 0.6)))
-        assertEquals("Syncing… 60%", sync.state.value.entries.getValue(sidecar).statusLabel)
+        assertEquals("Syncing… 60%", sync.state.value.entries.getValue(sidecar).statusLabel?.english())
         advanceTimeBy(3_001)
         assertTrue(source.reads.isEmpty(), "a fresh push makes the poll redundant")
 
@@ -233,7 +234,7 @@ class SubtitleSyncControllerTest {
         sync.timingChanged(sidecar)
         runCurrent()
         assertEquals(listOf(sidecar), changes)
-        assertEquals("Timing adjusted +0.5 s", sync.state.value.entries.getValue(sidecar).statusLabel)
+        assertEquals("Timing adjusted +0.5 s", sync.state.value.entries.getValue(sidecar).statusLabel?.english())
         assertNull(sync.state.value.watchedEntry())
 
         // A server without the read (or a lost subtitle) still reloads on the event.
@@ -262,7 +263,7 @@ class SubtitleSyncControllerTest {
         runCurrent()
         val unsupported = assertNotNull(sync.state.value.timingActionsFor(stored))
         assertFalse(unsupported.canSync)
-        assertEquals("This format can't be synced.", unsupported.error)
+        assertEquals("This format can't be synced.", unsupported.error?.english())
     }
 
     @Test
@@ -284,7 +285,7 @@ class SubtitleSyncControllerTest {
         sync.bind(1, setOf(sidecar, stored))
         advanceTimeBy(3_001)
         assertEquals("a1", sync.state.value.entries.getValue(stored).watchedJobId)
-        assertEquals("Syncing… 20%", sync.state.value.entries.getValue(stored).statusLabel)
+        assertEquals("Syncing… 20%", sync.state.value.entries.getValue(stored).statusLabel?.english())
     }
 
     @Test

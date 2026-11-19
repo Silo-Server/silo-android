@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -42,7 +44,7 @@ fun ErrorView(
     ) {
         Icon(
             imageVector = Icons.Outlined.ErrorOutline,
-            contentDescription = "Error",
+            contentDescription = stringResource(CommonR.string.shell_errorView_icon),
             modifier = Modifier.size(64.dp),
             tint = MaterialTheme.colorScheme.error,
         )
@@ -50,7 +52,7 @@ fun ErrorView(
         Spacer(modifier = Modifier.height(16.dp))
 
         Text(
-            text = "Something went wrong",
+            text = stringResource(CommonR.string.status_errorGeneric),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
@@ -75,7 +77,7 @@ fun ErrorView(
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                 ),
             ) {
-                Text("Retry")
+                Text(stringResource(CommonR.string.common_retry))
             }
         }
     }

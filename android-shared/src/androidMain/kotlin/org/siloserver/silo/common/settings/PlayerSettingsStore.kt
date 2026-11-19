@@ -1,6 +1,8 @@
 package org.siloserver.silo.common.settings
 
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
+import org.siloserver.silo.model.settings.CellularQuality
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -42,6 +44,21 @@ interface PlayerSettingsStore {
      */
     val introSkipModeFlow: Flow<IntroSkipMode>
 
+    /**
+     * What the player does on Auto when playback keeps buffering —
+     * `playback.buffering_quality_mode`. See the server's
+     * `docs/design/2026-10-17-buffering-quality.md`. The default (`always`)
+     * against a server whose manifest lacks the setting.
+     */
+    val bufferingQualityModeFlow: Flow<BufferingQualityMode>
+
+    /**
+     * True once the active server's manifest is known to define
+     * `playback.buffering_quality_mode`: Settings shows its row only then.
+     */
+    val bufferingQualityModeSupportedFlow: Flow<Boolean>
+        get() = flowOf(true)
+
     // Booleans
     /**
      * The deprecated boolean, projected from [introSkipModeFlow] rather than
@@ -56,6 +73,12 @@ interface PlayerSettingsStore {
         get() = introSkipModeFlow.map { it == IntroSkipMode.ALWAYS }
     val autoSkipCreditsFlow: Flow<Boolean>
     val autoPlayNextFlow: Flow<Boolean>
+
+    /** `ui.theme_music_enabled` as this device resolves it; off by default. */
+    val themeMusicEnabledFlow: Flow<Boolean>
+
+    /** `ui.theme_music_loop` as this device resolves it; off by default. */
+    val themeMusicLoopFlow: Flow<Boolean>
     val hdrEnabledFlow: Flow<Boolean>
     val dvProfile7HDR10FallbackFlow: Flow<Boolean>
     val dolbyVisionEnabledFlow: Flow<Boolean>
@@ -110,6 +133,18 @@ interface PlayerSettingsStore {
      */
     val maxBitrateKbpsFlow: Flow<Int?>
 
+    /**
+     * The phone's cellular pair, sent instead of [preferredQualityFlow] and
+     * [maxBitrateKbpsFlow] on mobile data or a metered network. Defaults to
+     * the 720p preset. Kept and applied locally against a server too old to
+     * store it; see [CellularQuality].
+     */
+    val cellularPreferredQualityFlow: Flow<String>
+        get() = flowOf(CellularQuality.DEFAULT_RESOLUTION)
+    /** null is uncapped, as for [maxBitrateKbpsFlow]. */
+    val cellularMaxBitrateKbpsFlow: Flow<Int?>
+        get() = flowOf(CellularQuality.DEFAULT_MAX_BITRATE_KBPS)
+
     // Strings
     val preferredQualityFlow: Flow<String>
     val audioLanguageFlow: Flow<String>
@@ -123,12 +158,20 @@ interface PlayerSettingsStore {
         get() = subtitleAppearanceFlow
 
     /**
-     * Whether the user has enabled a device-scoped subtitle-appearance
-     * override (mirrors iOS `subtitleUsesDeviceAppearanceOverride`).
-     * When false, the effective subtitle appearance comes from the
-     * user-level setting; when true, the local override is in effect.
+     * "Only on This Device" for subtitles (mirrors iOS
+     * `subtitleUsesDeviceAppearanceOverride`). When false, subtitle appearance
+     * and timing edits save to the profile and apply on every device; when
+     * true, they are saved for this device only.
      */
     val subtitleUsesDeviceOverrideFlow: Flow<Boolean>
+
+    /**
+     * Whether a subtitle delay set now is saved for the profile on every
+     * device (false: on this device only — the toggle is on, or the server
+     * stores timing per device only).
+     */
+    val subtitleSyncSavedToProfileFlow: Flow<Boolean>
+        get() = subtitleUsesDeviceOverrideFlow.map { !it }
     /** tvOS "Match Device Settings": appearance follows OS captioning prefs. */
     val subtitleMatchesDeviceFlow: Flow<Boolean>
     /** iOS AppNavPreferences.showAudiobooks parity — audiobook surfaces are opt-in. */
@@ -155,6 +198,7 @@ interface PlayerSettingsStore {
 
     // Setters
     suspend fun setIntroSkipMode(value: IntroSkipMode)
+    suspend fun setBufferingQualityMode(value: BufferingQualityMode)
 
     /**
      * Deprecated shim for the boolean. Routes to [setIntroSkipMode] so a caller
@@ -165,6 +209,8 @@ interface PlayerSettingsStore {
         setIntroSkipMode(IntroSkipMode.fromLegacyBoolean(value))
     suspend fun setAutoSkipCredits(value: Boolean)
     suspend fun setAutoPlayNext(value: Boolean)
+    suspend fun setThemeMusicEnabled(value: Boolean)
+    suspend fun setThemeMusicLoop(value: Boolean)
     suspend fun setHdrEnabled(value: Boolean)
     suspend fun setDvProfile7HDR10Fallback(value: Boolean)
     suspend fun setDolbyVisionEnabled(value: Boolean)
@@ -190,14 +236,15 @@ interface PlayerSettingsStore {
 
     suspend fun setPreferredQuality(value: String)
 
+    /** The bitrate ceiling, independent of the resolution; null is uncapped. */
+    suspend fun setMaxBitrateKbps(value: Int?) = Unit
+
     /**
-     * Set both quality axes at once — the two values one picker preset
-     * decomposes into. Writing them together is what keeps the pair
-     * consistent: a resolution stored without its bitrate is a combination no
-     * preset covers, which the picker then has to render as "custom".
+     * Set both cellular axes at once — the two values one preset decomposes
+     * into, so the pair never holds a combination no preset covers.
      * [bitrateKbps] null is uncapped.
      */
-    suspend fun setQuality(resolution: String, bitrateKbps: Int?)
+    suspend fun setCellularQuality(resolution: String, bitrateKbps: Int?) = Unit
     suspend fun setAudioLanguage(value: String)
     suspend fun setVideoGravity(value: String)
     suspend fun setOrientationMode(value: String)
@@ -244,11 +291,11 @@ interface PlayerSettingsStore {
     suspend fun refreshFromServer()
 
     /**
-     * Toggle the device-level override for `subtitle_appearance`. When
-     * `enabled` is false, deletes the device override on the server and
-     * refetches the effective appearance from the user-level setting.
-     * When true, pushes the current local appearance up as a device
-     * override.
+     * Toggle "Only on This Device" for subtitles. When `enabled` is false,
+     * deletes this device's subtitle appearance (and, where the server stores
+     * timing per profile, its timing) and refetches the profile's values.
+     * When true, pins the appearance on screen to this device; later edits
+     * stay on this device.
      */
     suspend fun setSubtitleDeviceOverrideEnabled(enabled: Boolean)
     suspend fun setSubtitleMatchesDevice(enabled: Boolean)

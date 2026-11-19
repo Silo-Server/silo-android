@@ -55,13 +55,13 @@ object OverlayDataExtractor {
             ratingTmdb = item.ratingTmdb,
             ratingRtCritic = item.ratingRtCritic,
             ratingRtAudience = item.ratingRtAudience,
-            contentRating = item.contentRating,
+            contentRating = item.contentRating.nonEmpty(),
             year = item.year.takeIf { it > 0 },
             runtime = item.runtime?.takeIf { it > 0 },
             originalLanguage = item.originalLanguage,
             studio = firstNonEmpty(item.studios),
             network = firstNonEmpty(item.networks),
-            showStatus = item.showStatus,
+            showStatus = item.showStatus.nonEmpty(),
         )
     }
 
@@ -78,13 +78,13 @@ object OverlayDataExtractor {
             ratingTmdb = item.ratingTmdb,
             ratingRtCritic = item.ratingRtCritic,
             ratingRtAudience = item.ratingRtAudience,
-            contentRating = item.contentRating,
+            contentRating = item.contentRating.nonEmpty(),
             year = item.year.takeIf { it > 0 },
             runtime = item.runtime?.takeIf { it > 0 },
             originalLanguage = item.originalLanguage,
             studio = firstNonEmpty(item.studios),
             network = firstNonEmpty(item.networks),
-            showStatus = item.showStatus,
+            showStatus = item.showStatus.nonEmpty(),
         )
     }
 
@@ -98,13 +98,13 @@ object OverlayDataExtractor {
             ratingTmdb = detail.ratingTmdb,
             ratingRtCritic = detail.ratingRtCritic,
             ratingRtAudience = detail.ratingRtAudience,
-            contentRating = detail.contentRating,
+            contentRating = detail.contentRating.nonEmpty(),
             year = detail.year.takeIf { it > 0 },
             runtime = detail.runtime.takeIf { it > 0 },
             originalLanguage = detail.originalLanguage,
             studio = firstNonEmpty(detail.studios),
             network = firstNonEmpty(detail.networks),
-            showStatus = detail.showStatus,
+            showStatus = detail.showStatus.nonEmpty(),
         )
     }
 
@@ -210,6 +210,10 @@ object OverlayDataExtractor {
         else -> "${channels}ch"
     }
 
+    /** Web `firstNonEmpty`: the first value that is not blank, trimmed. */
     private fun firstNonEmpty(values: List<String>): String? =
-        values.firstOrNull { it.isNotBlank() }
+        values.firstNotNullOfOrNull { it.trim().ifEmpty { null } }
+
+    /** Web's `x || undefined`: an empty string is no value. */
+    private fun String?.nonEmpty(): String? = this?.ifEmpty { null }
 }

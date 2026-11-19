@@ -26,7 +26,9 @@ suspend fun hydrateHomeSections(
 ): HomeSectionHydration {
     require(maxConcurrency > 0) { "maxConcurrency must be positive" }
 
-    val unresolved = sections.filter { it.items.isEmpty() && it.totalCount > 0 }
+    // A row of collections arrives whole, its cards in `collections`, so its
+    // empty `items` never means "not inlined".
+    val unresolved = sections.filter { !it.isCollectionRow && it.items.isEmpty() && it.totalCount > 0 }
     val semaphore = Semaphore(maxConcurrency)
     val fallbackById = coroutineScope {
         unresolved.map { section ->
@@ -45,8 +47,8 @@ suspend fun hydrateHomeSections(
     return HomeSectionHydration(
         sections = sections.mapNotNull { section ->
             when {
-                section.items.isNotEmpty() -> section
-                section.totalCount == 0 -> null
+                section.hasCards -> section
+                section.isCollectionRow || section.totalCount == 0 -> null
                 else -> fallbackById[section.id]?.takeIf { it.items.isNotEmpty() }
             }
         },

@@ -576,6 +576,63 @@ class SubtitleManagerTrackSelectionTest {
     }
 
     @Test
+    fun bitmapSidecarWithoutAnExtensionTakesItsCodecsMime() {
+        fun mimeFor(codec: String): String? = SubtitleManager().buildSubtitleConfigurations(
+            subtitles = listOf(
+                PlayerSubtitleInfo(
+                    index = 2,
+                    codec = codec,
+                    source = "downloaded",
+                    url = "content://downloads/subtitle-2",
+                ),
+            ),
+            serverUrl = "https://silo.example",
+        ).single().mimeType
+
+        listOf("dvd_subtitle", "dvdsub", "vobsub").forEach { codec ->
+            assertEquals(MimeTypes.APPLICATION_VOBSUB, mimeFor(codec), codec)
+        }
+        listOf("dvb_subtitle", "dvbsub").forEach { codec ->
+            assertEquals(MimeTypes.APPLICATION_DVBSUBS, mimeFor(codec), codec)
+        }
+        assertEquals(MimeTypes.APPLICATION_PGS, mimeFor("hdmv_pgs_subtitle"))
+    }
+
+    @Test
+    fun nativeBitmapSelectionUsesTheMatroskaTrackNumberOnly() {
+        // MatroskaExtractor publishes S_HDMV/PGS, S_VOBSUB and S_DVBSUB with
+        // Format.id set to the TrackNumber; parsing during extraction turns
+        // them into Media3 cues that keep the source MIME in `codecs`.
+        fun bitmap(id: String, mime: String, selected: Boolean = false) = Tracks.Group(
+            TrackGroup(subtitle(null, "en", sampleMimeType = "application/x-media3-cues", codecs = mime, id = id)),
+            false, intArrayOf(C.FORMAT_HANDLED), booleanArrayOf(selected),
+        )
+        val tracks = Tracks(
+            listOf(
+                bitmap("4", MimeTypes.APPLICATION_PGS),
+                bitmap("5", MimeTypes.APPLICATION_VOBSUB, selected = true),
+                bitmap("6", MimeTypes.APPLICATION_DVBSUBS),
+            ),
+        )
+        for ((id, family) in listOf("4" to "pgs", "5" to "vobsub", "6" to "dvbsub")) {
+            val identity = SubtitleIdentity.Embedded(
+                serverIndex = 1,
+                media = SubtitleMediaIdentity(language = "en", codecFamily = family),
+                containerTrackId = id,
+            )
+            val selection = resolveSubtitleSelection(tracks, identity)
+            assertEquals(id, selection?.mediaTrackGroup?.getFormat(0)?.id)
+            assertEquals(id == "5", isSubtitleSelected(tracks, identity))
+        }
+        assertNull(
+            resolveSubtitleSelection(
+                tracks,
+                SubtitleIdentity.Embedded(1, SubtitleMediaIdentity(language = "en", codecFamily = "pgs"), "7"),
+            ),
+        )
+    }
+
+    @Test
     fun bitmapSubtitleClassificationCoversFfprobeAndMedia3Names() {
         // Apple's ApplePlaybackRoutePlanner token set (ffprobe names) plus the
         // Media3 mimes must all classify as bitmap regardless of separator
