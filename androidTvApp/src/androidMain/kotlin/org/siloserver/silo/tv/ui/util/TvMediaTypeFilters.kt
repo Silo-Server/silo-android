@@ -67,3 +67,17 @@ fun ItemCollectionsRow.visibleOnTv(): ItemCollectionsRow = when (this) {
         if (shown.isEmpty()) ItemCollectionsRow.AlsoIn(listOf(collection)) else copy(items = shown)
     }
 }
+
+/**
+ * The collections row with only the server collections whose library TV
+ * shows ([shownLibraryIds]; never an ebook library), as Home keeps them.
+ * Personal collections always stay. Null when none is left.
+ */
+fun ItemCollectionsRow.withTvShownCollections(shownLibraryIds: Set<Int>): ItemCollectionsRow? {
+    fun org.siloserver.silo.model.section.SectionCollectionCard.shown() =
+        isUserCollection || libraryIdInt in shownLibraryIds
+    return when (this) {
+        is ItemCollectionsRow.Preview -> takeIf { collection.shown() }
+        is ItemCollectionsRow.AlsoIn -> cards.filter { it.shown() }.takeIf { it.isNotEmpty() }?.let(ItemCollectionsRow::AlsoIn)
+    }
+}

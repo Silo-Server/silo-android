@@ -62,6 +62,7 @@ import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.tv.ui.util.isTvHiddenMediaType
 import org.siloserver.silo.tv.ui.util.visibleOnTv
+import org.siloserver.silo.tv.ui.util.withTvShownCollections
 import org.siloserver.silo.viewmodel.applyLocalPlaybackProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -145,6 +146,8 @@ data class TvItemDetailUiState(
     val collectionsRow: org.siloserver.silo.viewmodel.ItemCollectionsRow? = null,
     /** A [org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview]'s titles, as row cards. */
     val collectionPreviewItems: List<SectionItem> = emptyList(),
+    /** The type of each library a server collection in [collectionsRow] opens in. */
+    val collectionLibraryTypes: Map<Int, String> = emptyMap(),
     // --- Next-up episode (series / season detail only) ---
     // The episode the hero Play button targets: an in-progress episode if one
     // exists, else the first unwatched, else the first. Mirrors silo-apple's
@@ -895,7 +898,7 @@ class TvItemDetailViewModel(
         _uiState.update {
             it.copy(
                 moreLikeThis = emptyList(), moreLikeThisLoading = false, boxSet = null, boxSetItems = emptyList(),
-                collectionsRow = null, collectionPreviewItems = emptyList(),
+                collectionsRow = null, collectionPreviewItems = emptyList(), collectionLibraryTypes = emptyMap(),
             )
         }
         // A page that already knows it is a series, from its card or the
@@ -3056,15 +3059,45 @@ class TvItemDetailViewModel(
     private fun loadCollections(detail: ItemDetail) {
         val run = ++collectionsGeneration
         collectionsJob?.cancel()
+        // Whether this read still belongs to the page on screen.
+        fun isCurrent() = run == collectionsGeneration && _uiState.value.detail?.contentId == detail.contentId
         collectionsJob = viewModelScope.launch {
             val result = org.siloserver.silo.viewmodel.loadItemCollectionsRow(catalogRepository, detail, libraryId)
-            if (run != collectionsGeneration || _uiState.value.detail?.contentId != detail.contentId) return@launch
+            if (!isCurrent()) return@launch
             if (result !is ApiResult.Success) return@launch
+            val loaded = result.data
+            // Server collections show only from libraries TV shows, as on
+            // Home, so an ebook library's collection stays off TV. The same
+            // list gives each card's library type for its page.
+            val hasServerCollection = when (loaded) {
+                is org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview -> !loaded.collection.isUserCollection
+                is org.siloserver.silo.viewmodel.ItemCollectionsRow.AlsoIn -> loaded.cards.any { !it.isUserCollection }
+                null -> false
+            }
+            val shownLibraries = if (hasServerCollection) {
+                when (val libraries = personalDataRepository.listUserLibraries()) {
+                    is ApiResult.Success -> libraries.data.visibleOnTv()
+                    // Unverified cards could be an ebook library's: keep the
+                    // row already shown, as any failed read does.
+                    is ApiResult.Error, is ApiResult.NetworkError -> return@launch
+                }
+            } else {
+                emptyList()
+            }
+            if (!isCurrent()) return@launch
             // Book titles stay off TV, as in every other row.
-            val row = result.data?.visibleOnTv()
+            val row = loaded
+                ?.withTvShownCollections(shownLibraries.mapTo(mutableSetOf()) { it.id })
+                ?.visibleOnTv()
             val previewItems = (row as? org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview)?.items.orEmpty()
                 .map { it.toSectionItem() }
-            _uiState.update { it.copy(collectionsRow = row, collectionPreviewItems = previewItems) }
+            _uiState.update {
+                it.copy(
+                    collectionsRow = row,
+                    collectionPreviewItems = previewItems,
+                    collectionLibraryTypes = shownLibraries.associate { library -> library.id to library.type },
+                )
+            }
         }
     }
 

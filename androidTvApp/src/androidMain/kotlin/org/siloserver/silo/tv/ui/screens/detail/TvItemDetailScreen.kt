@@ -259,8 +259,8 @@ fun TvItemDetailScreen(
     onOpenBoxSet: (boxSetId: String, libraryId: String) -> Unit = { _, _ -> },
     /** Opens a movie from a box set row, scoped to the box set's library. */
     onBoxSetMovie: (contentId: String, libraryId: String) -> Unit = { contentId, _ -> onItemDetail(contentId) },
-    /** Opens a collection from the collections row. */
-    onOpenCollection: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit = {},
+    /** Opens a collection from the collections row, with its library's type (empty for a personal one). */
+    onOpenCollection: (org.siloserver.silo.model.section.SectionCollectionCard, libraryType: String) -> Unit = { _, _ -> },
     /**
      * Opens a title from a collection's preview, with no library: a
      * collection's titles can live in other libraries, as on its own page.
@@ -442,7 +442,7 @@ private fun TvDetailContent(
     onOpenPerson: (personId: Long) -> Unit,
     onOpenBoxSet: (boxSetId: String, libraryId: String) -> Unit,
     onBoxSetMovie: (contentId: String, libraryId: String) -> Unit,
-    onOpenCollection: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit,
+    onOpenCollection: (org.siloserver.silo.model.section.SectionCollectionCard, libraryType: String) -> Unit,
     onCollectionItem: (contentId: String) -> Unit,
     shuffleLauncher: org.siloserver.silo.common.ui.ShuffleLauncher,
 ) {
@@ -1002,7 +1002,7 @@ private fun TvDetailContent(
             previewItems = state.collectionPreviewItems,
             onCollectionClick = { card, returnKey ->
                 recordReturn(TvDetailReturnRail.Collections, returnKey)
-                onOpenCollection(card)
+                onOpenCollection(card, card.libraryIdInt?.let(state.collectionLibraryTypes::get).orEmpty())
             },
             onItemClick = { clickedContentId ->
                 recordReturn(TvDetailReturnRail.Collections, clickedContentId)

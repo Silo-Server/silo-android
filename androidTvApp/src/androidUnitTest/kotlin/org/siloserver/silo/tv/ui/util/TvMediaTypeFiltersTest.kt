@@ -126,4 +126,25 @@ class TvMediaTypeFiltersTest {
         val onlyBooks = org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview(collection, listOf(item("b1", "ebook")))
         assertEquals(org.siloserver.silo.viewmodel.ItemCollectionsRow.AlsoIn(listOf(collection)), onlyBooks.visibleOnTv())
     }
+
+    @Test
+    fun collectionsRowKeepsOnlyServerCollectionsOfLibrariesTvShows() {
+        fun card(id: String, source: String, libraryId: String? = null) =
+            org.siloserver.silo.model.section.SectionCollectionCard(id = id, source = source, title = id, libraryId = libraryId)
+        val movies = card("c-movies", "library", "1")
+        val books = card("c-books", "library", "2")
+        val mine = card("c-mine", "user")
+        val shown = setOf(1)
+
+        assertEquals(
+            org.siloserver.silo.viewmodel.ItemCollectionsRow.AlsoIn(listOf(movies, mine)),
+            org.siloserver.silo.viewmodel.ItemCollectionsRow.AlsoIn(listOf(movies, books, mine)).withTvShownCollections(shown),
+        )
+        assertNull(org.siloserver.silo.viewmodel.ItemCollectionsRow.AlsoIn(listOf(books)).withTvShownCollections(shown))
+        val preview = { collection: org.siloserver.silo.model.section.SectionCollectionCard ->
+            org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview(collection, listOf(BrowseItem(contentId = "m1", type = "movie", title = "m1")))
+        }
+        assertNull(preview(books).withTvShownCollections(shown))
+        assertEquals(preview(movies), preview(movies).withTvShownCollections(shown))
+    }
 }
