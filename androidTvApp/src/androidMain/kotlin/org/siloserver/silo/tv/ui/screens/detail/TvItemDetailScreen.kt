@@ -732,9 +732,7 @@ private fun TvDetailContent(
     val showsCastSection = !isAudiobook && detail.cast.isNotEmpty()
     // The collections row: below Cast & Crew on a series page, below the box
     // set row on a movie page (web).
-    val collectionsRow = state.collectionsRow.takeIf {
-        !isAudiobook && (it !is org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview || state.collectionPreviewItems.isNotEmpty())
-    }
+    val collectionsRow = state.collectionsRow.takeIf { !isAudiobook }
     val showsSeriesCollectionsRow = collectionsRow != null && detail.type == "series"
     val showsMovieCollectionsRow = collectionsRow != null && detail.type == "movie"
     val showsTrailersSection = !isAudiobook && trailerEntries.isNotEmpty()
@@ -992,9 +990,12 @@ private fun TvDetailContent(
     // The collections row, placed below Cast & Crew on a series page and
     // below the box set row on a movie page. Opening a card records it, so
     // Back lands on that card again, as the box set and More Like This rows do.
-    val collectionsSection: @Composable (onReturnToHero: (() -> Boolean)?) -> Unit = { onReturnToHero ->
+    val collectionsSection: @Composable (
+        row: org.siloserver.silo.viewmodel.ItemCollectionsRow,
+        onReturnToHero: (() -> Boolean)?,
+    ) -> Unit = { row, onReturnToHero ->
         TvItemCollectionsRowSection(
-            row = collectionsRow!!,
+            row = row,
             previewItems = state.collectionPreviewItems,
             onCollectionClick = { card, returnKey ->
                 recordReturn(TvDetailReturnRail.Collections, returnKey)
@@ -1436,7 +1437,7 @@ private fun TvDetailContent(
                         }
 
                         if (showsSeriesCollectionsRow) {
-                            collectionsSection(if (!hasEpisodeNavAbove && !showsCastSection) returnToHero else null)
+                            collectionsSection(collectionsRow!!, if (!hasEpisodeNavAbove && !showsCastSection) returnToHero else null)
                         }
 
                         if (showsTrailersSection) {
@@ -1526,7 +1527,7 @@ private fun TvDetailContent(
                         }
 
                         if (showsMovieCollectionsRow) {
-                            collectionsSection(if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) returnToHero else null)
+                            collectionsSection(collectionsRow!!, if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) returnToHero else null)
                         }
 
                         if (showsSimilarRail) {

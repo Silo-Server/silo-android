@@ -5,6 +5,7 @@ import org.siloserver.silo.model.catalog.ItemCollections
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.map
 import org.siloserver.silo.repository.CatalogRepository
 
 /** The collections row on a movie or series page. */
@@ -41,11 +42,7 @@ suspend fun loadItemCollectionsRow(
         is ApiResult.NetworkError -> return capabilities
     }
     if (!supported) return ApiResult.Success(null)
-    return when (val result = catalogRepository.getItemCollections(detail.contentId, libraryId)) {
-        is ApiResult.Success -> ApiResult.Success(itemCollectionsRow(result.data))
-        is ApiResult.Error -> result
-        is ApiResult.NetworkError -> result
-    }
+    return catalogRepository.getItemCollections(detail.contentId, libraryId).map(::itemCollectionsRow)
 }
 
 /** Titles a single collection's preview shows, as web does. */

@@ -19,6 +19,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -140,6 +145,8 @@ internal fun TvCollectionRow(
     restoreFocusRequest: Int = 0,
     /** Off where the host draws its own heading, as a title page does. */
     showHeader: Boolean = true,
+    /** Up from any card, as [TvMediaRow]'s: return true to consume it. */
+    onDirectionUp: (() -> Boolean)? = null,
 ) {
     if (collections.isEmpty()) return
     val rowState = rememberLazyListState()
@@ -182,6 +189,15 @@ internal fun TvCollectionRow(
                     )
                     .focusRestorer(
                         restoreFocusRequester ?: firstItemFocusRequester ?: FocusRequester.Default,
+                    )
+                    .then(
+                        if (onDirectionUp != null) {
+                            Modifier.onPreviewKeyEvent { event ->
+                                event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp && onDirectionUp()
+                            }
+                        } else {
+                            Modifier
+                        },
                     ),
                 horizontalArrangement = Arrangement.spacedBy(itemSpacing),
                 contentPadding = PaddingValues(

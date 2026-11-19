@@ -6,11 +6,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.common.R as CommonR
@@ -101,14 +96,7 @@ internal fun TvItemCollectionsRowSection(
                     restoreFocusIndex = restoreFocusIndex,
                     restoreFocusRequester = restoreFocusRequester,
                     restoreFocusRequest = restoreFocusRequest,
-                    // The row is one line of cards, so Up from any of them leaves it.
-                    modifier = if (onReturnToHero != null) {
-                        Modifier.onPreviewKeyEvent { event ->
-                            event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp && onReturnToHero()
-                        }
-                    } else {
-                        Modifier
-                    },
+                    onDirectionUp = onReturnToHero,
                 )
             }
         }
@@ -122,7 +110,7 @@ internal fun TvItemCollectionsRowSection(
 internal fun ItemCollectionsRow.returnIndex(previewItems: List<SectionItem>, returnKey: String): Int = when (this) {
     is ItemCollectionsRow.Preview ->
         if (returnKey == TvCollectionsExploreAllReturnKey) {
-            previewItems.size.takeIf { previewItems.isNotEmpty() } ?: -1
+            previewItems.size
         } else {
             previewItems.indexOfFirst { it.contentId == returnKey }
         }
