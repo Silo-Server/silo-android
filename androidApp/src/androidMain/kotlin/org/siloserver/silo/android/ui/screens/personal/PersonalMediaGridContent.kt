@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.personal
 
+import org.siloserver.silo.android.ui.components.cardArtworkAspectRatio
+import org.siloserver.silo.viewmodel.DetailSeeds
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 
@@ -333,6 +335,7 @@ fun MediaGridItem(
             onClick = {
                 heroHandoff?.pendingArtworkUrl = (item.backdropUrl ?: item.posterUrl).takeUnless { hideDetailArtwork }
                 heroHandoff?.pendingArtworkThumbhash = if (hideDetailArtwork) null else item.backdropThumbhash ?: item.posterThumbhash
+                DetailSeeds.offer(item)
                 onClick()
             },
             onLongClick = { menuExpanded = true },
@@ -342,7 +345,7 @@ fun MediaGridItem(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(2f / 3.3f)
+                .aspectRatio(cardArtworkAspectRatio(item.type))
                 .clip(RoundedCornerShape(8.dp)),
         ) {
             SpoilerImage(

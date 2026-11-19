@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -245,16 +244,6 @@ internal fun CatalogLetterRail(
                 },
             contentAlignment = Alignment.Center,
         ) {
-            // A capsule behind the letters while a finger is on them.
-            AnimatedVisibility(visible = touched != null, enter = fadeIn(), exit = fadeOut()) {
-                Box(
-                    modifier = Modifier
-                        .width(RailWidth + 6.dp)
-                        .height(railHeight)
-                        .clip(RoundedCornerShape(50))
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)),
-                )
-            }
             Column(
                 modifier = Modifier.width(RailWidth).height(railHeight),
                 horizontalAlignment = Alignment.CenterHorizontally,

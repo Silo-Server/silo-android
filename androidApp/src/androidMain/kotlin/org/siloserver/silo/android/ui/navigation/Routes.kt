@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.section.LibraryCollection
+import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.model.section.SectionItem
 
 /**
@@ -421,6 +422,29 @@ fun libraryCollectionDetailRoute(
         "library_collection"
     },
 ).route
+
+/**
+ * Opens a card of a row of collections. A personal collection opens as the
+ * Collections screen opens it; a server collection opens in [libraryId] (the
+ * card's library unless a library page passes its own) with [mediaScope].
+ * Null when a server collection has no library to open in.
+ */
+fun sectionCollectionCardRoute(
+    card: SectionCollectionCard,
+    libraryId: Int? = card.libraryIdInt,
+    mediaScope: String? = null,
+): String? = if (card.isUserCollection) {
+    Route.CollectionDetail(card.id).route
+} else {
+    libraryId?.let {
+        Route.CollectionDetail(
+            collectionId = card.id,
+            libraryId = it,
+            source = "library_collection",
+            mediaScope = mediaScope,
+        ).route
+    }
+}
 
 /**
  * Continue Watching episodes belong to the unified series detail surface.

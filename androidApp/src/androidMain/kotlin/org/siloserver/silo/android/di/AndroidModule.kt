@@ -723,9 +723,25 @@ val androidModule = module {
         org.siloserver.silo.common.ebook.EbookLocalStateStore(androidContext().filesDir)
     }
 
-    // Audiobook + book readers. SavedStateHandle is auto-injected via Koin's
-    // viewModel scope wiring so the contentId nav arg flows through.
+    // The phone's audiobook session, scoped to the activity. It creates the
+    // player view model itself, passing the route's arguments as the
+    // SavedStateHandle, so the book outlives its player route. The session
+    // ends when the signed-in server, account or profile changes.
     viewModel {
+        org.siloserver.silo.android.ui.screens.audiobook.AudiobookSessionViewModel(
+            identity = get<ServerRegistry>().activeEntry
+                .map { Triple(it?.url, it?.accountId, it?.profileId) }
+                .distinctUntilChanged(),
+            createPlayer = { savedStateHandle ->
+                get<org.siloserver.silo.common.player.AudiobookPlayerViewModel> {
+                    org.koin.core.parameter.parametersOf(savedStateHandle)
+                }
+            },
+        )
+    }
+    // Audiobook + book readers. Only AudiobookSessionViewModel creates the
+    // audiobook player, passing its SavedStateHandle as a parameter.
+    viewModel { params ->
         org.siloserver.silo.common.player.AudiobookPlayerViewModel(
             catalogRepository = get(),
             playbackSessionManager = get(AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER),
@@ -734,13 +750,14 @@ val androidModule = module {
             bookmarksStore = get(),
             userItemStatePort = get(),
             outboxSyncScheduler = get(),
+            finalPlaybackPositionWriter = get(),
             serverRegistry = get(),
             profileRepository = get(),
             offlineMediaResolver = get(),
             audiobookSettings = get(),
             seekIntervalStore = get(),
             audiobookSeekRouter = get(),
-            savedStateHandle = get(),
+            savedStateHandle = params.get(),
         )
     }
     viewModel {

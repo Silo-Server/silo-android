@@ -66,4 +66,21 @@ class BrowsePrefsStore(
             if (!enabled) remove("$key.state")
         }
     }
+
+    /**
+     * Whether the library had collections when they last loaded for this
+     * profile, so the phone Libraries dock opens with the right sections and
+     * never gains or loses one on screen (iOS `LibraryCollectionPresence`).
+     * Unknown libraries, and browsing without a profile, show Collections.
+     */
+    fun hasCollections(libraryId: Int): Boolean {
+        val key = base(libraryId) ?: return true
+        return prefs.getBoolean("$key.hasCollections", true)
+    }
+
+    fun rememberHasCollections(libraryId: Int, hasCollections: Boolean) {
+        val key = base(libraryId) ?: return
+        if (prefs.getBoolean("$key.hasCollections", true) == hasCollections) return
+        prefs.edit { putBoolean("$key.hasCollections", hasCollections) }
+    }
 }

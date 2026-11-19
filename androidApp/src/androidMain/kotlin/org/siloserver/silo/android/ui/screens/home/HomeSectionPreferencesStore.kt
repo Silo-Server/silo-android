@@ -64,7 +64,7 @@ class HomeSectionPreferencesStore(
         val layout = load(profileId)
         val rank = layout.orderedSectionIds.withIndex().associate { it.value to it.index }
         val arranged = sections
-            .filter { it.items.isNotEmpty() }
+            .filter { it.hasCards }
             .withIndex()
             .sortedWith(
                 compareBy<IndexedValue<ResolvedSection>>(

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.browse
 
+import org.siloserver.silo.android.ui.components.PosterArtworkAspectRatio
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.i18n.currentNumberLocale
@@ -198,7 +199,16 @@ fun BrowseScreen(
             // Content area
             when {
                 state.isLoading && state.items.isEmpty() -> {
-                    PosterGridSkeleton(progress = rememberShimmerProgress())
+                    // Square once the list has shown audiobooks (a re-sort or
+                    // filter reloads it); the first load can't know yet.
+                    PosterGridSkeleton(
+                        progress = rememberShimmerProgress(),
+                        posterAspect = if (state.mediaType == org.siloserver.silo.catalog.filter.BrowseFacetMediaType.Audiobook) {
+                            1f
+                        } else {
+                            PosterArtworkAspectRatio
+                        },
+                    )
                 }
 
                 state.error != null -> {

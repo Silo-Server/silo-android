@@ -70,6 +70,7 @@ import org.siloserver.silo.tv.ui.focus.toTvReturnSections
 import org.siloserver.silo.tv.ui.focus.tvReturnItemId
 import org.siloserver.silo.tv.ui.focus.tvReturnItemIds
 import org.siloserver.silo.common.cards.LocalCardPresentation
+import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.network.ApiResult
@@ -190,13 +191,37 @@ fun TvSkylineSectionFeed(
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     /** Re-reads [sections] after the marquee translated a card's description. */
     onMarqueeTranslated: () -> Unit = {},
+    /**
+     * Opens a card of a row of collections. Without it such rows are left
+     * out, since their cards could not open anything.
+     */
+    onCollectionClick: ((SectionCollectionCard) -> Unit)? = null,
+    /** Off on a Movies- or Series-scoped library page, where a collection's whole count is wrong. */
+    showCollectionCounts: Boolean = true,
 ) {
     val exploresRows = onExploreAllForSection != null
-    val rows = remember(sections, exploresRows) {
-        sections.filter { it.items.isNotEmpty() }
-            .let { nonEmpty -> if (exploresRows) nonEmpty.map { it.cappedForRow() } else nonEmpty }
+    val opensCollections = onCollectionClick != null
+    val rows = remember(sections, exploresRows, opensCollections) {
+        sections.mapNotNull { section ->
+            when {
+                // A row of collections shows every card and is never capped.
+                // Duplicate cards would break its lazy keys and return ids.
+                section.isCollectionRow -> section
+                    .takeIf { opensCollections && it.collections.isNotEmpty() }
+                    ?.let { row -> row.copy(collections = row.collections.distinctBy { it.rowKey }) }
+                section.items.isEmpty() -> null
+                exploresRows -> section.cappedForRow()
+                else -> section
+            }
+        }
     }
     fun ResolvedSection.showsExploreAll() = exploresRows && offersExploreAll
+    // Only a feed showing collections reads who made them.
+    val collectionOwners = if (rows.any { it.isCollectionRow }) {
+        rememberTvCollectionOwners()
+    } else {
+        TvCollectionOwners()
+    }
     val diagnosticsSurface = when {
         surfaceKey == "home" -> DiagnosticsListSurface.TV_HOME
         surfaceKey == "for_you" -> DiagnosticsListSurface.TV_FOR_YOU
@@ -206,7 +231,9 @@ fun TvSkylineSectionFeed(
     val diagnosticsListSnapshot = remember(rows, sectionsComplete) {
         DiagnosticsListSnapshot.fromKeys(
             keys = rows.map { it.id },
-            rowKeys = rows.map { section -> section.items.map { it.contentId } },
+            rowKeys = rows.map { section ->
+                if (section.isCollectionRow) section.tvReturnItemIds() else section.items.map { it.contentId }
+            },
             fullyResolved = sectionsComplete,
         )
     }
@@ -221,14 +248,19 @@ fun TvSkylineSectionFeed(
     val catalogRepository: CatalogRepository = koinInject()
     val fetchDetail: suspend (String) -> ItemDetail? = remember(catalogRepository) {
         { contentId ->
-            (catalogRepository.getItemDetailForPrefetch(contentId) as? ApiResult.Success)?.data
+            // A collection card's marquee id names no title; never ask for it.
+            if (isTvCollectionMarqueeId(contentId)) {
+                null
+            } else {
+                (catalogRepository.getItemDetailForPrefetch(contentId) as? ApiResult.Success)?.data
+            }
         }
     }
     val marquee = rememberTvFocusMarqueeState(fetchDetail = fetchDetail)
     SideEffect { marquee.refreshSources(rows) }
     val initialMarqueeSeed = remember(rows) {
         rows.firstOrNull()?.let { section ->
-            section.items.firstOrNull()?.let { item ->
+            section.tvMarqueeItems().firstOrNull()?.let { item ->
                 TvSkylineMarqueeSeed(
                     item = item,
                     rowTitle = section.title,
@@ -398,6 +430,10 @@ fun TvSkylineSectionFeed(
         val focusedItemWasRemoved = previousContentId != null &&
             if (previousContentId == TvExploreAllItemId) {
                 rows.getOrNull(focusedRowIndex)?.showsExploreAll() != true
+            } else if (isTvCollectionMarqueeId(previousContentId)) {
+                rows.none { row ->
+                    row.collections.any { TvCollectionMarqueeIdPrefix + it.rowKey == previousContentId }
+                }
             } else {
                 rows.none { row -> row.items.any { it.contentId == previousContentId } }
             }
@@ -406,7 +442,7 @@ fun TvSkylineSectionFeed(
         }
         if (focusedRowIndex in rows.indices) {
             val row = rows[focusedRowIndex]
-            val slots = row.items.size + if (row.showsExploreAll()) 1 else 0
+            val slots = row.tvReturnItemIds().size + if (row.showsExploreAll()) 1 else 0
             if (focusedItemIndex >= slots) focusedItemIndex = (slots - 1).coerceAtLeast(-1)
         }
         // Same guard as browse re-arming: a refresh that removes whatever
@@ -414,11 +450,11 @@ fun TvSkylineSectionFeed(
         // viewer launched from.
         if (focusedItemWasRemoved && focusedRowIndex in rows.indices && restorationsInFlight == 0) {
             val targetRow = rows[focusedRowIndex]
-            if (targetRow.items.isNotEmpty()) {
-                val itemIndex = focusedItemIndex.coerceIn(0, targetRow.items.lastIndex)
-                // A progress-row card that advanced to the next episode is
-                // still the same show; follow it rather than the old slot.
-                val rowReturnIds = targetRow.tvReturnItemIds()
+            // A progress-row card that advanced to the next episode is still
+            // the same show; follow it rather than the old slot.
+            val rowReturnIds = targetRow.tvReturnItemIds()
+            if (rowReturnIds.isNotEmpty()) {
+                val itemIndex = focusedItemIndex.coerceIn(0, rowReturnIds.lastIndex)
                 returnTarget = TvReturnTarget(
                     sectionId = targetRow.id,
                     itemId = previousReturnItemId?.takeIf { it in rowReturnIds }
@@ -436,9 +472,10 @@ fun TvSkylineSectionFeed(
     val rowBandScope = rememberCoroutineScope()
     // Skyline matches tvOS' view-aligned row stack: vertical motion is owned by
     // this feed, while each row's LazyRow still handles horizontal card scroll.
-    val onItemFocused: (SectionItem, ResolvedSection, Int, Int) -> Unit =
-        { item, section, rowIndex, itemIndex ->
-        val returnItemId = section.tvReturnItemId(item)
+    // [returnItemId] is the card's return identity (see tvReturnItemIds); a
+    // collection card previews [item] as a stand-in built from its poster.
+    val onItemFocused: (SectionItem, String, ResolvedSection, Int, Int) -> Unit =
+        { item, returnItemId, section, rowIndex, itemIndex ->
         marquee.preview(item, section.title, section.id)
         focusedRowIndex = rowIndex
         focusedItemIndex = itemIndex
@@ -514,8 +551,10 @@ fun TvSkylineSectionFeed(
     LaunchedEffect(rows, settledFocus, fetchDetail, prefetchLogos, heroPreload) {
         val focus = settledFocus ?: return@LaunchedEffect
         val row = rows.getOrNull(focus.rowIndex) ?: return@LaunchedEffect
+        // A row of collections warms its cards' backdrops through their
+        // stand-ins; their detail fetch is a no-op (see fetchDetail).
         val window = settledPrefetchItems(
-            items = row.items,
+            items = row.tvMarqueeItems(),
             rawFocusedContentId = focus.contentId,
             settledContentId = focus.contentId,
             radius = HeroFocusPrefetchRadius,
@@ -1023,11 +1062,60 @@ fun TvSkylineSectionFeed(
                     itemsIndexed(
                         items = rows,
                         key = { _, row -> row.id },
-                        contentType = { _, _ -> "skyline-section-row" },
+                        contentType = { _, row ->
+                            if (row.isCollectionRow) "skyline-collection-row" else "skyline-section-row"
+                        },
                     ) { rowIndex, section ->
                         val isFirstRow = section.id == firstRowId
-                        val showProgress = showProgressForSection(section)
                         val isReturnRow = locatedReturn?.sectionIndex == rowIndex
+                        if (section.isCollectionRow) {
+                            TvCollectionRow(
+                                title = sectionTitle(section),
+                                collections = section.collections,
+                                onCollectionClick = { card, index ->
+                                    returnTarget = TvReturnTarget(
+                                        sectionId = section.id,
+                                        itemId = card.rowKey,
+                                        sectionIndex = rowIndex,
+                                        itemIndex = index,
+                                    )
+                                    returnGeneration++
+                                    detailReturnPending = true
+                                    onCollectionClick?.invoke(card)
+                                },
+                                onCollectionFocused = { card, index ->
+                                    onItemFocused(card.tvMarqueeItem(), card.rowKey, section, rowIndex, index)
+                                },
+                                startPadding = TvSkyline.safeAreaX,
+                                endPadding = Spacing.safeArea,
+                                itemSpacing = TvSkylineItemSpacing,
+                                rowTopPadding = TvSkylineRowCardVerticalPadding,
+                                rowBottomPadding = TvSkylineRowCardVerticalPadding,
+                                posterWidth = RowDimens.DensePosterWidth *
+                                    presentation.posterSize.posterScale,
+                                owners = collectionOwners,
+                                showCounts = showCollectionCounts,
+                                firstItemFocusRequester = resolvedFirstRowFocusRequester
+                                    .takeIf { isFirstRow },
+                                rowContainerFocusRequester = when {
+                                    isFirstRow -> firstRowContainerFocusRequester
+                                    isReturnRow -> detailReturnRowContainerFocusRequester
+                                    else -> null
+                                },
+                                firstItemFocusRequest = if (isFirstRow) firstRowFocusRequest else 0,
+                                restoreFocusIndex = if (isReturnRow) locatedReturn?.itemIndex ?: -1 else -1,
+                                // Gated on a ladder in flight, as for media rows below.
+                                restoreFocusRequest = if (isReturnRow && restorationsInFlight > 0) {
+                                    returnRestoreRequest
+                                } else {
+                                    0
+                                },
+                                restoreFocusRequester = detailReturnItemFocusRequester
+                                    .takeIf { isReturnRow },
+                            )
+                            return@itemsIndexed
+                        }
+                        val showProgress = showProgressForSection(section)
                         TvMediaRow(
                             title = sectionTitle(section),
                             items = section.items,
@@ -1091,7 +1179,7 @@ fun TvSkylineSectionFeed(
                             restoreFocusRequester = detailReturnItemFocusRequester
                                 .takeIf { isReturnRow },
                             onItemFocusedAtIndex = { item, itemIndex ->
-                                onItemFocused(item, section, rowIndex, itemIndex)
+                                onItemFocused(item, section.tvReturnItemId(item), section, rowIndex, itemIndex)
                             },
                             cardActions = { item -> cardActions(section, item) },
                             longClickAction = { item ->

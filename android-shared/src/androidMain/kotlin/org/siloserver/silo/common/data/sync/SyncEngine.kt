@@ -6,7 +6,10 @@ import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
 import org.siloserver.silo.model.ebook.SaveEbookProgressRequest
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.model.request.RequestMutationFailure
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.CleartextOriginNotApprovedException
+import org.siloserver.silo.network.SiloAuthUnavailableException
 import org.siloserver.silo.network.api.DownloadProgressReceipt
 import org.siloserver.silo.network.api.EbookReaderApi
 import org.siloserver.silo.network.api.PersonalDataApi
@@ -113,11 +116,11 @@ class SyncEngine(
                 }
                 when (outcome) {
                     WriteOutcome.SYNCED -> {
-                        if (op.opKind == OutboxOperation.SET_POSITION) settleDownloadProgress(op) else dao.deleteById(op.id)
+                        if (op.opKind == OutboxOperation.SET_POSITION) settleDownloadProgress(op, accepted = true) else dao.deleteById(op.id)
                         synced++
                     }
                     WriteOutcome.TERMINAL -> if (op.opKind == OutboxOperation.SET_POSITION) {
-                        settleDownloadProgress(op)
+                        settleDownloadProgress(op, accepted = false)
                         dropped++
                     } else {
                         // A stale in-flight op must not roll back a newer pending
@@ -206,19 +209,57 @@ class SyncEngine(
             // event changes nothing unless the device clock ran over two minutes
             // fast. Settling on doubt instead would delete positions the server
             // never received.
-            else -> WriteOutcome.RETRIABLE
+            else -> {
+                // It may have arrived, so it no longer beats the server's answer at
+                // start; newer progress from another device would win. Offline it
+                // stays the resume point.
+                if (mayHaveArrived(result)) {
+                    // A local failure here must not turn the op terminal: it stays queued.
+                    try {
+                        markProgressSent(op)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG, "op ${op.id}: couldn't mark its position sent", e)
+                    }
+                }
+                WriteOutcome.RETRIABLE
+            }
         }
     }
 
+    /** True when a progress send left the device and got no usable answer. */
+    private fun mayHaveArrived(result: ApiResult<*>): Boolean {
+        if (!RequestMutationFailure.isUncertain(result)) return false
+        // Refused before sending: sign-in unavailable, a cleartext server the
+        // user hasn't approved or the platform blocks, or a TLS handshake that failed.
+        val failure = (result as? ApiResult.NetworkError)?.exception ?: return true
+        return generateSequence(failure) { it.cause?.takeIf { cause -> cause !== it } }
+            .none {
+                it is SiloAuthUnavailableException || it is CleartextOriginNotApprovedException ||
+                    it is javax.net.ssl.SSLHandshakeException || it is java.net.UnknownServiceException
+            }
+    }
+
+    private suspend fun markProgressSent(op: DirtyOperationEntity) = userStateDao.markPlaybackProgressSent(
+        op.serverId, op.accountId, op.profileId, op.targetContentId, op.targetFileId ?: -1, op.createdAtMs,
+    )
+
     /**
      * The server has the position (or refused it for good), so from now on its
-     * answer stands: drop the op and the local copy it sent. A newer sample
-     * queued meanwhile keeps its row until its own op settles.
+     * answer stands: drop the op. An accepted copy is kept, marked sent: online
+     * the server's answer stands over it, and offline, where there is no server
+     * answer to read, it is the resume point. A refused one is cleared. A newer
+     * sample queued meanwhile keeps its row, unmarked, until its own op settles.
      */
-    private suspend fun settleDownloadProgress(op: DirtyOperationEntity) {
+    private suspend fun settleDownloadProgress(op: DirtyOperationEntity, accepted: Boolean) {
         db.withTransaction {
             dao.deleteById(op.id)
-            if (dao.countNewerForTargetKind(op.serverId, op.accountId, op.profileId, op.targetContentId, op.opKind, op.id) == 0) {
+            if (accepted) {
+                markProgressSent(op)
+            } else if (
+                dao.countNewerForTargetKind(op.serverId, op.accountId, op.profileId, op.targetContentId, op.opKind, op.id) == 0
+            ) {
                 // Stamped with the event it settles, so a sample taken after it but
                 // written after this still counts as newer.
                 userStateDao.clearPlaybackProgressBefore(

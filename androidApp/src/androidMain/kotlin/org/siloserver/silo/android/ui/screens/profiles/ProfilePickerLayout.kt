@@ -26,8 +26,8 @@ data class ProfilePickerLayout(
     private data class Option(val perRow: Int, val maxAvatar: Float, val gutter: Float, val rowSpacing: Float)
 
     companion object {
-        /** Name, optional "Last used" caption and their spacing under an avatar. */
-        const val LABEL_HEIGHT = 48f
+        /** Name (up to two lines), optional "Last used" caption and their spacing under an avatar. */
+        const val LABEL_HEIGHT = 68f
         const val MINIMUM_AVATAR = 64f
 
         private val options = listOf(

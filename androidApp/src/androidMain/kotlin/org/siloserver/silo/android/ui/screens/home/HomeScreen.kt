@@ -55,6 +55,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil3.imageLoader
 import coil3.request.ImageRequest
+import org.siloserver.silo.android.ui.navigation.ReportBottomNavPageTop
 import org.siloserver.silo.android.ui.components.TabContentGap
 import org.siloserver.silo.android.ui.components.TabContentTop
 import org.siloserver.silo.android.ui.components.TabHeaderRowHeight
@@ -128,7 +129,8 @@ fun HomeScreen(
     onPlayClick: (String, Double?) -> Unit,
     /** Opens a row's full page ("Explore all"). */
     onExploreSection: ((org.siloserver.silo.model.section.ResolvedSection) -> Unit)? = null,
-    onBottomNavMinimizedChange: (Boolean) -> Unit = {},
+    /** Opens a card of a row of collections. */
+    onCollectionClick: ((org.siloserver.silo.model.section.SectionCollectionCard) -> Unit)? = null,
     viewModel: HomeViewModel,
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
@@ -150,7 +152,7 @@ fun HomeScreen(
     val sections = state.sections
     val profileScopeId = activeEntry?.profileId ?: activeProfile?.id
     val activeAccountId = activeEntry?.accountId
-    val populatedServerSections = remember(sections) { sections.filter { it.items.isNotEmpty() } }
+    val populatedServerSections = remember(sections) { sections.filter { it.hasCards } }
     // No hero billboard on phone (matches iOS): a `featured` section is just
     // another row, rendered in the order the server configured it.
     val regularSections = remember(
@@ -275,30 +277,8 @@ fun HomeScreen(
     }
 
     val listState = rememberLazyListState()
+    ReportBottomNavPageTop(listState)
     val currentDiagnosticsSections by rememberUpdatedState(regularSections)
-    val currentBottomNavCallback by rememberUpdatedState(onBottomNavMinimizedChange)
-    LaunchedEffect(listState) {
-        var previousIndex = listState.firstVisibleItemIndex
-        var previousOffset = listState.firstVisibleItemScrollOffset
-        snapshotFlow {
-            Triple(
-                listState.firstVisibleItemIndex,
-                listState.firstVisibleItemScrollOffset,
-                listState.isScrollInProgress,
-            )
-        }.collect { (index, offset, isScrolling) ->
-            val isAtTop = index == 0 && offset == 0
-            if (isAtTop) {
-                currentBottomNavCallback(false)
-            } else if (isScrolling) {
-                val movingDown = index > previousIndex ||
-                    (index == previousIndex && offset > previousOffset)
-                if (movingDown) currentBottomNavCallback(true)
-            }
-            previousIndex = index
-            previousOffset = offset
-        }
-    }
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
             .distinctUntilChanged()
@@ -471,6 +451,8 @@ fun HomeScreen(
                                 onToggleWatchlist = viewModel::toggleWatchlist,
                                 onRemoveFromHome = viewModel::dismissFromHome,
                                 onExploreAllClick = onExploreSection?.let { open -> { open(section) } },
+                                onCollectionClick = onCollectionClick,
+                                activeProfileId = profileScopeId,
                             )
                         }
 

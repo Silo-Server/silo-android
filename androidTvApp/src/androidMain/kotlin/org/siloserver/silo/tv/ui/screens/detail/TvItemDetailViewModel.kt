@@ -2,6 +2,7 @@
 
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.viewmodel.DetailSeeds
 import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.model.playback.withPendingSeriesSubtitleChoice
@@ -86,6 +87,12 @@ import org.siloserver.silo.common.R as CommonR
 data class TvItemDetailUiState(
     val isLoading: Boolean = true,
     val detail: ItemDetail? = null,
+    /**
+     * [detail] is the card the page was opened from ([DetailSeeds]), not a
+     * fetched detail. The page draws it, but Play and the More menu wait for
+     * the fetch.
+     */
+    val isProvisional: Boolean = false,
     val error: UiText? = null,
     // User state toggles.
     val isFavorite: Boolean = false,
@@ -579,7 +586,13 @@ class TvItemDetailViewModel(
             return if (onSeriesPage) ArtworkSurface.EPISODES else ArtworkSurface.SEASON_EPISODES
         }
 
-    private val _uiState = MutableStateFlow(TvItemDetailUiState())
+    // The tapped card draws the page on its first frame; the detail request
+    // replaces it.
+    private val _uiState = MutableStateFlow(
+        DetailSeeds.take(contentId)?.takeUnless { isTvHiddenMediaType(it.type) }.let { seed ->
+            TvItemDetailUiState(detail = seed, isProvisional = seed != null)
+        },
+    )
     val uiState: StateFlow<TvItemDetailUiState> = kotlinx.coroutines.flow.combine(_uiState, personalDataRepository.memberships.actions) { state, actions ->
         var projected = state
         actions.values.filter { personalDataRepository.memberships.current(it.intent) }.forEach { action ->
@@ -788,6 +801,7 @@ class TvItemDetailViewModel(
             it.copy(
                 isLoading = true,
                 detail = cached,
+                isProvisional = false,
                 userRating = cached.userRating,
                 isWatched = cached.userData?.played == true,
                 error = null,
@@ -873,6 +887,13 @@ class TvItemDetailViewModel(
         _uiState.update {
             it.copy(moreLikeThis = emptyList(), moreLikeThisLoading = false, boxSet = null, boxSetItems = emptyList())
         }
+        // A page that already knows it is a series, from its card or the
+        // durable cache, loads seasons and first episodes alongside the
+        // detail request rather than after it.
+        val seasonsStarted = _uiState.value.detail?.type?.lowercase() == "series"
+        if (seasonsStarted) {
+            loadSeasons(seriesContentId = contentId, preferredSeasonNumber = _uiState.value.selectedSeason)
+        }
         detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository?.captureSimilarAuthority()
             trackChoiceOwner = catalogRepository.captureWatchAuthority()
@@ -884,6 +905,7 @@ class TvItemDetailViewModel(
                             it.copy(
                                 isLoading = false,
                                 detail = null,
+                                isProvisional = false,
                                 error = UiText.Res(CommonR.string.detail_error_notOnTv),
                             )
                         }
@@ -893,7 +915,8 @@ class TvItemDetailViewModel(
                         it.copy(
                             isLoading = false,
                             detail = detail,
-                            seasonsLoading = detail.type.lowercase() == "series" || it.seasonsLoading,
+                            isProvisional = false,
+                            seasonsLoading = (detail.type.lowercase() == "series" && !seasonsStarted) || it.seasonsLoading,
                             userRating = detail.userRating,
                             isWatched = detail.userData?.played == true,
                             error = null,
@@ -903,7 +926,7 @@ class TvItemDetailViewModel(
                     // Restore a durably-persisted audio/subtitle override (TM4).
                     seedPersistedTrackSelection(detail)
                     when (detail.type.lowercase()) {
-                        "series" -> loadSeasons(
+                        "series" -> if (!seasonsStarted) loadSeasons(
                             seriesContentId = detail.contentId,
                             // Cached navigation may already have applied an
                             // entry-route season before this fresh detail
@@ -928,13 +951,20 @@ class TvItemDetailViewModel(
                         isLoading = false,
                         // The durable cache still holds a title the server now
                         // refuses; drop the copy seedCachedDetail painted so the
-                        // screen shows the error, not stale actions.
-                        detail = if (result.isAccessRefusal()) null else it.detail,
+                        // screen shows the error, not stale actions. A card
+                        // seed is never kept in place of the error.
+                        detail = if (it.isProvisional || result.isAccessRefusal()) null else it.detail,
+                        isProvisional = false,
                         error = result.errorText(CommonR.string.detail_error_loadFailed),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(isLoading = false, error = UiText.Res(CommonR.string.catalog_error_network))
+                    it.copy(
+                        isLoading = false,
+                        detail = if (it.isProvisional) null else it.detail,
+                        isProvisional = false,
+                        error = UiText.Res(CommonR.string.catalog_error_network),
+                    )
                 }
             }
         }
@@ -1112,6 +1142,8 @@ class TvItemDetailViewModel(
         showAccessRefusal: Boolean = false,
         afterPlayback: Boolean = false,
     ) {
+        // A card seed has nothing to refresh; its full load is still running.
+        if (_uiState.value.isProvisional) return
         val current = _uiState.value.detail ?: return
         val consumedPlaybackReturn = TvDetailTrackSelectionSession.consumePlaybackReturn(contentId)
         consumedPlaybackReturn?.let { saved ->

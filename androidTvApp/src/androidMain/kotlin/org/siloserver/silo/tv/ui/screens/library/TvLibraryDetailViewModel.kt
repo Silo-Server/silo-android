@@ -648,7 +648,8 @@ class TvLibraryDetailViewModel(
             // measured common case has every section populated and makes zero
             // extra calls.
             val sections = layout.sections
-            val unresolved = sections.filter { it.items.isEmpty() && it.totalCount > 0 }
+            // A row of collections arrives with its cards and has no items to fetch.
+            val unresolved = sections.filter { !it.isCollectionRow && it.items.isEmpty() && it.totalCount > 0 }
             val resolved = if (unresolved.isEmpty()) {
                 sections
             } else {
@@ -668,7 +669,9 @@ class TvLibraryDetailViewModel(
 
             // Independent shelves can overlap, but keep each cursor chain sequential.
             val refillPermits = Semaphore(3)
-            val scoped = resolved.filterNot { it.featured }.map { section ->
+            // A row of collections is never a hero, so a featured flag on one
+            // is ignored rather than hiding the row.
+            val scoped = resolved.filterNot { it.featured && !it.isCollectionRow }.map { section ->
                 async {
                     refillPermits.withPermit {
                         scopeTvLibrarySection(section, mediaScope) { cursor ->

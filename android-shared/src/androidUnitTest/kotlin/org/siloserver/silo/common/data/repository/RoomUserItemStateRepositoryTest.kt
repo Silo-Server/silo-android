@@ -413,6 +413,22 @@ class RoomUserItemStateRepositoryTest {
     }
 
     @Test
+    fun aSentPositionStandsOnlyOfflineUntilANewSampleIsTaken() = runTest {
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        db.userItemStateDao().markPlaybackProgressSent("s1", "", "p1", "c1", fileId = 7, sampledAtMs = 1000L)
+
+        // The server has it, or may have it: online its answer stands.
+        assertNull(repo.localPlaybackProgress("c1"))
+        assertNull(repo.localPositionForContent("c1", includeSent = false))
+        // Offline it is still the newest position this device knows.
+        assertEquals(456.0, repo.localPlaybackProgress("c1", includeSent = true)?.positionSeconds)
+        assertEquals(456.0, repo.localPositionForContent("c1", includeSent = true))
+
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 470.0, durationSeconds = 3600.0)
+        assertEquals(470.0, repo.localPlaybackProgress("c1")?.positionSeconds)
+    }
+
+    @Test
     fun localPositionReadsBackTheRecordedResumePoint() = runTest {
         assertNull(repo.localPosition("c1", fileId = 7))
         repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.book
 
+import org.siloserver.silo.android.ui.screens.detail.LocalDetailActionsReady
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -197,6 +198,7 @@ fun BookDetailContent(
                         .aspectRatio(2f / 3f)
                         .clip(RoundedCornerShape(12.dp)),
                     defaultArtwork = DefaultArtworkKind.forItemType(detail.type),
+                    holdPreviousImage = true,
                 )
                 Text(
                     text = detail.title,
@@ -266,12 +268,17 @@ fun BookDetailContent(
                     Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null)
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        bookDetailPrimaryActionLabel(
-                            selectedVersion = selectedVersion,
-                            canReadSelectedVersion = canReadSelectedVersion,
-                            isDownloaded = isDownloaded,
-                            canOpenExternal = onOpenExternalClick != null,
-                        ),
+                        // A card seed has no files yet: Read waits for the detail.
+                        if (LocalDetailActionsReady.current) {
+                            bookDetailPrimaryActionLabel(
+                                selectedVersion = selectedVersion,
+                                canReadSelectedVersion = canReadSelectedVersion,
+                                isDownloaded = isDownloaded,
+                                canOpenExternal = onOpenExternalClick != null,
+                            )
+                        } else {
+                            stringResource(CommonR.string.common_loading)
+                        },
                     )
                 }
                 OutlinedButton(
@@ -288,7 +295,8 @@ fun BookDetailContent(
                         when {
                             isDownloaded -> stringResource(CommonR.string.audiobook_detail_downloaded)
                             downloadProgress != null -> stringResource(CommonR.string.audiobook_detail_cancelDownload)
-                            canDownloadSelectedVersion -> stringResource(CommonR.string.audiobook_detail_download)
+                            canDownloadSelectedVersion || !LocalDetailActionsReady.current ->
+                                stringResource(CommonR.string.audiobook_detail_download)
                             else -> stringResource(CommonR.string.audiobook_detail_downloadUnavailable)
                         },
                     )

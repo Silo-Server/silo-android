@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.downloads
 
+import org.siloserver.silo.android.ui.navigation.ReportBottomNavPageTop
 import org.siloserver.silo.android.ui.components.ReportTabHeaderScrim
 import org.siloserver.silo.android.ui.components.SiloDialogActionStyle
 import org.siloserver.silo.android.ui.components.SiloDialogAction
@@ -181,6 +182,7 @@ fun DownloadsScreen(
             ) {
                 val listState = rememberLazyListState()
                 ReportTabHeaderScrim(listState)
+                ReportBottomNavPageTop(listState)
                 DeferImagePresentationWhileScrolling(listState) {
                 LazyColumn(
                     state = listState,

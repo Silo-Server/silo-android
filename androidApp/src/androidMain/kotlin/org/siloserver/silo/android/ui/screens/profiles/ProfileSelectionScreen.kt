@@ -696,12 +696,14 @@ private fun ProfileTile(
                 }
             }
         }
+        // Two lines, so names that share a beginning ("Grandma Jo",
+        // "Grandma Bea") stay apart instead of ending in the same "…".
         Text(
             profile.name,
             color = MarqueeColors.Ink,
             fontSize = nameSize(size.value).sp,
             fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
