@@ -29,7 +29,7 @@ object RequestOutcome {
 
 /**
  * Values of [RequestState.reason]: why a title cannot be requested. They are
- * codes for deciding what to offer, not text; show [requestReasonCopy] instead.
+ * codes for deciding what to offer, not text; show [requestReasonText] instead.
  */
 object RequestReason {
     const val AlreadyRequested = "already_requested"
@@ -110,11 +110,31 @@ data class RequestDiscoverySection(
     @SerialName("total_pages") val totalPages: Int = 1,
     @SerialName("total_results") val totalResults: Int = 0,
     val results: List<RequestMediaResult> = emptyList(),
+    /**
+     * The page to ask for next when the server read several pages to fill
+     * this one (page + 1 would repeat titles); past [totalPages] when that
+     * read reached the end. Null when page + 1 applies.
+     */
+    @SerialName("next_page") val nextPage: Int? = null,
+)
+
+/** One row of the server's Discover layout, in page order. */
+@Serializable
+data class RequestDiscoverRowRef(
+    val key: String,
+    /**
+     * tmdb_chart, tmdb_discover, tmdb_list or mdblist for a row of titles;
+     * studios, networks or genres for a brand row. The server may add more.
+     */
+    val type: String = "",
+    val title: String = "",
 )
 
 @Serializable
 data class RequestsDiscoverResponse(
     @kotlinx.serialization.Required @SerialName("items") val sections: List<RequestDiscoverySection> = emptyList(),
+    /** Every row the server's layout shows, in order; empty from a server without layouts. */
+    @SerialName("row_order") val rowOrder: List<RequestDiscoverRowRef> = emptyList(),
 )
 
 @Serializable
@@ -226,6 +246,13 @@ data class MediaRequest(
     @SerialName("completed_at") val completedAt: String? = null,
 ) {
     val isActive: Boolean get() = outcome == RequestOutcome.Active
+
+    /**
+     * The server's rule for `removeFailedRequest`: it failed and delivered
+     * nothing. One that delivered a quality before failing stays as the record of that copy.
+     */
+    val isRemovableFailure: Boolean
+        get() = outcome == RequestOutcome.Failed && targets.none { it.status == RequestStatus.Completed }
 }
 
 @Serializable
@@ -245,6 +272,8 @@ data class RequestsFeatureStatus(
     val state: String? = null,
     /** The server takes `PUT`/`DELETE /api/v2/requests/follows/{media_type}/{tmdb_id}`; absent (false) on older servers. */
     @SerialName("follow_supported") val followSupported: Boolean = false,
+    /** The server takes `DELETE /api/v2/requests/{id}` for a failed request; absent (false) on older servers. */
+    @SerialName("remove_failed_supported") val removeFailedSupported: Boolean = false,
 ) {
     /** The feature is on and this profile may use it; a blocked account sees `allowed: false`. */
     val isAvailable: Boolean

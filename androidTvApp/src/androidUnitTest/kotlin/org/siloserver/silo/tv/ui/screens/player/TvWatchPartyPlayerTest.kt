@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.player
 
 import androidx.media3.common.Player
 import org.siloserver.silo.common.player.video.markerSkipTarget
+import org.siloserver.silo.domain.player.MarkerTimeline
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.watchtogether.RoomPlayerState
 import org.siloserver.silo.watchtogether.WatchPartyPlaybackContext
@@ -15,10 +16,11 @@ import kotlin.test.assertTrue
 class TvWatchPartyPlayerTest {
     @Test
     fun `visible quality offer owns select throughout recap and credits`() {
-        val recap = TimeRange(80.0, 160.0)
-        val credits = TimeRange(160.0, 240.0)
+        val markers = MarkerTimeline.resolve(
+            null, intro = null, credits = TimeRange(160.0, 240.0), recap = TimeRange(80.0, 160.0), preview = null,
+        )
         for (position in listOf(100.0, 200.0)) {
-            val target = markerSkipTarget(position, recap, credits)
+            val target = markerSkipTarget(position, markers)
             assertTrue(target != null)
             assertNull(tvManualMarkerSkipTarget(target, true, false, false, true))
             // Opening controls hides the quality offer and restores the focused
@@ -201,6 +203,29 @@ class TvWatchPartyPlayerTest {
     }
 
     @Test
+    fun `a seekable window reaches any earlier point but not past the buffer`() {
+        // A member 3 s ahead of a paused room seeks back in place.
+        assertTrue(
+            tvRoomPositionBuffered(
+                targetPlayerSeconds = 97.0, currentPlayerSeconds = 100.0, bufferedPlayerSeconds = 130.0,
+                seekableBehindPlayhead = true,
+            ),
+        )
+        assertTrue(
+            tvRoomPositionBuffered(
+                targetPlayerSeconds = 0.0, currentPlayerSeconds = 100.0, bufferedPlayerSeconds = 130.0,
+                seekableBehindPlayhead = true,
+            ),
+        )
+        assertFalse(
+            tvRoomPositionBuffered(
+                targetPlayerSeconds = 131.0, currentPlayerSeconds = 100.0, bufferedPlayerSeconds = 130.0,
+                seekableBehindPlayhead = true,
+            ),
+        )
+    }
+
+    @Test
     fun `inconsistent or unknown positions are never buffered`() {
         assertFalse(tvRoomPositionBuffered(targetPlayerSeconds = 100.0, currentPlayerSeconds = 100.0, bufferedPlayerSeconds = 90.0))
         assertFalse(tvRoomPositionBuffered(targetPlayerSeconds = Double.NaN, currentPlayerSeconds = 100.0, bufferedPlayerSeconds = 130.0))
@@ -223,8 +248,7 @@ class TvWatchPartyPlayerTest {
     fun `the lower quality offer is one rung below the current height`() {
         val ladder = listOf(
             VideoQualityOption(id = "auto", label = "Auto", isSelected = false),
-            VideoQualityOption(id = "original", label = "Original", isSelected = true, resolution = "1080p"),
-            VideoQualityOption(id = "1080p", label = "1080p", isSelected = false, resolution = "1080p"),
+            VideoQualityOption(id = "1080p", label = "1080p", isSelected = true, resolution = "1080p"),
             VideoQualityOption(id = "720p", label = "720p", isSelected = false, resolution = "720p"),
             VideoQualityOption(id = "480p", label = "480p", isSelected = false, resolution = "480p"),
         )

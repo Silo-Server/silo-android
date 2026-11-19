@@ -70,13 +70,14 @@ class CatalogLibraryScopeTest {
                 reads++
                 return SeasonsResponse()
             }
-            override suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int): EpisodesResponse {
+            override suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int, surface: ArtworkSurface): EpisodesResponse {
                 reads++
                 return EpisodesResponse()
             }
             override suspend fun cacheItemDetail(contentId: String, detail: ItemDetail, lease: CatalogCacheWriteLease) { writes++ }
             override suspend fun cacheSeasons(seriesId: String, seasons: SeasonsResponse, lease: CatalogCacheWriteLease) { writes++ }
-            override suspend fun cacheEpisodes(seriesId: String, seasonNumber: Int, episodes: EpisodesResponse, lease: CatalogCacheWriteLease) { writes++ }
+            override suspend fun cacheEpisodes(seriesId: String, seasonNumber: Int, episodes: EpisodesResponse, lease: CatalogCacheWriteLease,
+                surface: ArtworkSurface) { writes++ }
         }
         var fail = false
         val client = HttpClient(MockEngine { request ->

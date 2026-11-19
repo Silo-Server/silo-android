@@ -37,6 +37,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -59,6 +60,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
@@ -71,18 +73,22 @@ import org.siloserver.silo.tv.ui.theme.FocusedContent
  */
 data class TvMediaCardActions(
     val onPlay: (() -> Unit)? = null,
-    val playLabel: String = "Play",
+    /** Null shows "Play". */
+    val playLabel: String? = null,
     val onSetWatched: ((watched: Boolean) -> Unit)? = null,
     val onToggleFavorite: ((favorite: Boolean) -> Unit)? = null,
     val onToggleWatchlist: ((inWatchlist: Boolean) -> Unit)? = null,
-    val onRemoveFromContinueWatching: (() -> Unit)? = null,
+    /** Removes the card from its Home row; [removeFromHomeLabel] names the list it leaves. */
+    val onRemoveFromHome: (() -> Unit)? = null,
+    /** Null shows "Remove from Continue Watching". */
+    val removeFromHomeLabel: String? = null,
 ) {
     val isEmpty: Boolean
         get() = onPlay == null &&
             onSetWatched == null &&
             onToggleFavorite == null &&
             onToggleWatchlist == null &&
-            onRemoveFromContinueWatching == null
+            onRemoveFromHome == null
 }
 
 /**
@@ -118,7 +124,7 @@ fun TvMediaCardContextMenu(
         actions.onSetWatched != null -> TvMenuAction.Watched
         actions.onToggleFavorite != null -> TvMenuAction.Favorite
         actions.onToggleWatchlist != null -> TvMenuAction.Watchlist
-        else -> TvMenuAction.RemoveFromContinueWatching
+        else -> TvMenuAction.RemoveFromHome
     }
 
     Box(
@@ -181,7 +187,7 @@ private fun TvMediaCardMenuRows(
 ) {
     actions.onPlay?.let { play ->
         TvMenuRow(
-            text = actions.playLabel,
+            text = actions.playLabel ?: stringResource(CommonR.string.cardMenu_play),
             icon = Icons.Default.PlayArrow,
             onClick = {
                 onDismiss()
@@ -196,7 +202,7 @@ private fun TvMediaCardMenuRows(
     }
     actions.onSetWatched?.let { setWatched ->
         TvMenuRow(
-            text = if (isPlayed) "Mark as Unwatched" else "Mark as Watched",
+            text = stringResource(if (isPlayed) CommonR.string.menu_card_markUnwatched else CommonR.string.menu_card_markWatched),
             icon = if (isPlayed) Icons.Default.VisibilityOff else Icons.Default.Check,
             onClick = {
                 setWatched(!isPlayed)
@@ -211,7 +217,7 @@ private fun TvMediaCardMenuRows(
     }
     actions.onToggleFavorite?.let { toggle ->
         TvMenuRow(
-            text = if (isFavorite) "Remove from Favorites" else "Add to Favorites",
+            text = stringResource(if (isFavorite) CommonR.string.detail_more_removeFavorite else CommonR.string.detail_more_addFavorite),
             icon = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
             onClick = {
                 toggle(!isFavorite)
@@ -226,7 +232,7 @@ private fun TvMediaCardMenuRows(
     }
     actions.onToggleWatchlist?.let { toggle ->
         TvMenuRow(
-            text = if (isInWatchlist) "Remove from Watchlist" else "Add to Watchlist",
+            text = stringResource(if (isInWatchlist) CommonR.string.personal_watchlist_remove else CommonR.string.cardMenu_addWatchlist),
             icon = if (isInWatchlist) Icons.Default.BookmarkRemove else Icons.Default.BookmarkAdd,
             onClick = {
                 toggle(!isInWatchlist)
@@ -239,15 +245,15 @@ private fun TvMediaCardMenuRows(
             },
         )
     }
-    actions.onRemoveFromContinueWatching?.let { remove ->
+    actions.onRemoveFromHome?.let { remove ->
         TvMenuRow(
-            text = "Remove from Continue Watching",
+            text = actions.removeFromHomeLabel ?: stringResource(CommonR.string.cardMenu_removeContinueWatching),
             icon = Icons.Default.Close,
             onClick = {
                 remove()
                 onDismiss()
             },
-            modifier = if (firstAction == TvMenuAction.RemoveFromContinueWatching) {
+            modifier = if (firstAction == TvMenuAction.RemoveFromHome) {
                 Modifier.focusRequester(firstRowFocus)
             } else {
                 Modifier
@@ -285,7 +291,7 @@ private enum class TvMenuAction {
     Watched,
     Favorite,
     Watchlist,
-    RemoveFromContinueWatching,
+    RemoveFromHome,
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

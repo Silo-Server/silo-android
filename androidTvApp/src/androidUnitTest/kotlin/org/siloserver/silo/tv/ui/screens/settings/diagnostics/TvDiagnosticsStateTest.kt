@@ -8,6 +8,7 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsReportSummary
 import org.siloserver.silo.common.diagnostics.DiagnosticsUiState
 import org.siloserver.silo.common.diagnostics.PendingReportStatus
 import org.siloserver.silo.model.diagnostics.DiagnosticsReportType
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.tv.ui.navigation.TvRoute
 import org.siloserver.silo.tv.ui.navigation.tvShouldShowDiagnosticsPrompt
 import kotlin.test.Test
@@ -33,25 +34,27 @@ class TvDiagnosticsStateTest {
             listOf(DiagnosticsDestinationKind.HOSTED, DiagnosticsDestinationKind.SELF_HOSTED),
             TvDiagnosticsDestinations,
         )
-        assertEquals("Silo Diagnostics", tvDiagnosticsDestinationTitle(DiagnosticsDestinationKind.HOSTED))
-        assertEquals("This Silo server", tvDiagnosticsDestinationTitle(DiagnosticsDestinationKind.SELF_HOSTED))
+        assertEquals(
+            CommonR.string.diagnostics_destination_hosted,
+            tvDiagnosticsDestinationTitle(DiagnosticsDestinationKind.HOSTED),
+        )
+        assertEquals(
+            CommonR.string.diagnostics_destination_thisServer,
+            tvDiagnosticsDestinationTitle(DiagnosticsDestinationKind.SELF_HOSTED),
+        )
     }
 
     @Test
     fun selfHostedDestinationReadsAsTheConnectedServer() {
         assertEquals(
             "Living Room Silo",
-            tvDiagnosticsDestinationName(DiagnosticsDestinationKind.SELF_HOSTED, "Living Room Silo"),
+            tvDiagnosticsDestinationServerName(DiagnosticsDestinationKind.SELF_HOSTED, "Living Room Silo"),
         )
-        // An unnamed server must not render an empty value row.
-        assertEquals(
-            "This Silo server",
-            tvDiagnosticsDestinationName(DiagnosticsDestinationKind.SELF_HOSTED, ""),
-        )
-        assertEquals(
-            "Silo Diagnostics",
-            tvDiagnosticsDestinationName(DiagnosticsDestinationKind.HOSTED, "Living Room Silo"),
-        )
+        // An unnamed server must not render an empty value row: the
+        // destination's title ("This Silo server") stands in.
+        assertNull(tvDiagnosticsDestinationServerName(DiagnosticsDestinationKind.SELF_HOSTED, ""))
+        // The hosted collector is named outright ("Silo Diagnostics").
+        assertNull(tvDiagnosticsDestinationServerName(DiagnosticsDestinationKind.HOSTED, "Living Room Silo"))
     }
 
     // -----------------------------------------------------------------------
@@ -112,36 +115,45 @@ class TvDiagnosticsStateTest {
     // -----------------------------------------------------------------------
 
     @Test
-    fun pendingHeaderCarriesTheCountIncludingZero() {
-        assertEquals("Pending Reports (0)", tvDiagnosticsPendingHeader(0))
-        assertEquals("Pending Reports (3)", tvDiagnosticsPendingHeader(3))
-    }
-
-    @Test
     fun wireReportTypesRenderAsTitles() {
-        assertEquals("Crash", tvDiagnosticsReportTypeTitle(DiagnosticsReportType.CRASH))
-        assertEquals("Crash", tvDiagnosticsReportTypeTitle(DiagnosticsReportType.NATIVE_CRASH))
-        assertEquals("Not Responding", tvDiagnosticsReportTypeTitle(DiagnosticsReportType.ANR))
-        assertEquals("Not Responding", tvDiagnosticsReportTypeTitle(DiagnosticsReportType.HANG))
-        assertEquals("Unclean Shutdown", tvDiagnosticsReportTypeTitle(DiagnosticsReportType.ABNORMAL_EXIT))
-        assertEquals("Manual Report", tvDiagnosticsReportTypeTitle(DiagnosticsReportType.MANUAL))
+        val crash = CommonR.string.diagnostics_reportType_crash
+        val notResponding = CommonR.string.diagnostics_reportType_notResponding
+        assertEquals(crash, tvDiagnosticsReportTypeTitle(DiagnosticsReportType.CRASH))
+        assertEquals(crash, tvDiagnosticsReportTypeTitle(DiagnosticsReportType.NATIVE_CRASH))
+        assertEquals(notResponding, tvDiagnosticsReportTypeTitle(DiagnosticsReportType.ANR))
+        assertEquals(notResponding, tvDiagnosticsReportTypeTitle(DiagnosticsReportType.HANG))
+        assertEquals(
+            CommonR.string.diagnostics_reportType_uncleanShutdown,
+            tvDiagnosticsReportTypeTitle(DiagnosticsReportType.ABNORMAL_EXIT),
+        )
+        assertEquals(CommonR.string.diagnostics_reportType_manual, tvDiagnosticsReportTypeTitle(DiagnosticsReportType.MANUAL))
     }
 
     @Test
     fun statusRowUsesTheShortFeatureStateTitles() {
-        assertEquals("Available", tvDiagnosticsStatusTitle(DiagnosticsAvailabilityUi.AVAILABLE))
-        assertEquals("Disabled by server", tvDiagnosticsStatusTitle(DiagnosticsAvailabilityUi.DISABLED))
-        assertEquals("Offline", tvDiagnosticsStatusTitle(DiagnosticsAvailabilityUi.OFFLINE))
+        assertEquals(
+            CommonR.string.diagnostics_availability_available,
+            tvDiagnosticsStatusTitle(DiagnosticsAvailabilityUi.AVAILABLE),
+        )
+        assertEquals(
+            CommonR.string.diagnostics_availability_disabled,
+            tvDiagnosticsStatusTitle(DiagnosticsAvailabilityUi.DISABLED),
+        )
+        assertEquals(
+            CommonR.string.diagnostics_availability_offline,
+            tvDiagnosticsStatusTitle(DiagnosticsAvailabilityUi.OFFLINE),
+        )
     }
 
     @Test
     fun expiryCountsWholeDaysAndNamesAnElapsedReport() {
         val day = 24L * 60L * 60L * 1000L
-        assertEquals("Expires in 30 days", tvDiagnosticsExpiryLabel(30 * day, 0))
-        assertEquals("Expires in 1 day", tvDiagnosticsExpiryLabel(day, 0))
+        assertEquals(30, tvDiagnosticsExpiryDays(30 * day, 0))
+        assertEquals(1, tvDiagnosticsExpiryDays(day, 0))
         // A part-day still has time left, so it must not read as expired.
-        assertEquals("Expires in 1 day", tvDiagnosticsExpiryLabel(day / 2, 0))
-        assertEquals("Expired", tvDiagnosticsExpiryLabel(0, day))
+        assertEquals(1, tvDiagnosticsExpiryDays(day / 2, 0))
+        // 0 renders as "Expired".
+        assertEquals(0, tvDiagnosticsExpiryDays(0, day))
     }
 
     @Test

@@ -1,16 +1,25 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.Season
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = Application::class)
 class TvSeasonPresentationLabelTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
     @Test
     fun pickerLabelsSeasonZeroWithoutSpecialsFlagAsSpecials() {
         assertEquals(
             "Specials",
-            tvSeasonPickerLabel(Season(contentId = "specials", seasonNumber = 0)),
+            tvSeasonPickerLabel(resources, Season(contentId = "specials", seasonNumber = 0)),
         )
     }
 
@@ -19,6 +28,7 @@ class TvSeasonPresentationLabelTest {
         assertEquals(
             "Specials",
             tvSeasonPickerLabel(
+                resources,
                 Season(contentId = "bonus", seasonNumber = 99, isSpecials = true),
             ),
         )
@@ -33,7 +43,7 @@ class TvSeasonPresentationLabelTest {
             seasonNumber = 0,
         )
 
-        assertEquals("Specials", episodeEyebrowLabel(detail, TvItemDetailUiState()))
+        assertEquals("Specials", episodeEyebrowLabel(resources, detail, TvItemDetailUiState()))
     }
 
     @Test
@@ -49,7 +59,7 @@ class TvSeasonPresentationLabelTest {
             selectedSeason = 0,
         )
 
-        assertEquals("Specials", episodeEyebrowLabel(detail, state))
-        assertEquals("Specials", tvSeasonPickerLabel(specials))
+        assertEquals("Specials", episodeEyebrowLabel(resources, detail, state))
+        assertEquals("Specials", tvSeasonPickerLabel(resources, specials))
     }
 }

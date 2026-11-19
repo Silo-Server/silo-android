@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.search
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -28,7 +29,10 @@ import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
+import org.siloserver.silo.model.request.withoutLibraryTitles
 import org.siloserver.silo.viewmodel.RequestSearchViewModel
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 @Composable
 fun RequestSearchSection(
@@ -44,9 +48,12 @@ fun RequestSearchSection(
     val router = rememberRequestRouter(koinInject(), onRequestLibraryItemClick, onRequestMediaClick)
     val trimmedQuery = query.trim()
     val requestMediaType = selectedMediaType.toRequestMediaType()
-    val visibleResults = state.results.filter { result ->
+    val matchingResults = state.results.filter { result ->
         selectedMediaType.allowsRequestResult(result)
     }
+    val visibleResults = matchingResults.withoutLibraryTitles()
+    // Every match is already in the library results, so there is nothing to say here.
+    val onlyLibraryMatches = matchingResults.isNotEmpty() && visibleResults.isEmpty()
 
     LaunchedEffect(requestsEnabled, trimmedQuery, requestMediaType) {
         if (!requestsEnabled || requestMediaType == null || trimmedQuery.length < 2) {
@@ -62,7 +69,7 @@ fun RequestSearchSection(
     val shouldShowSection = visibleResults.isNotEmpty() ||
         state.isLoading ||
         state.error != null ||
-        state.hasSubmittedQuery
+        (state.hasSubmittedQuery && !onlyLibraryMatches)
 
     if (!requestsEnabled || trimmedQuery.length < 2 || !shouldShowSection) return
 
@@ -73,7 +80,7 @@ fun RequestSearchSection(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            text = "Available to request",
+            text = stringResource(CommonR.string.search_requests_title),
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
@@ -101,9 +108,9 @@ fun RequestSearchSection(
                 }
                 }
             }
-            state.isLoading -> RequestSearchFeedback("Checking requestable titles...", showProgress = true)
-            state.error != null -> RequestSearchFeedback(state.error ?: "Request search failed.")
-            state.hasSubmittedQuery -> RequestSearchFeedback("No requestable matches found.")
+            state.isLoading -> RequestSearchFeedback(stringResource(CommonR.string.search_requests_checking), showProgress = true)
+            state.error != null -> RequestSearchFeedback(state.error?.text() ?: stringResource(CommonR.string.search_requests_failed))
+            state.hasSubmittedQuery -> RequestSearchFeedback(stringResource(CommonR.string.search_requests_empty))
         }
     }
 }

@@ -5,6 +5,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.SharedString
 
 class LanguageOptionsTest {
 
@@ -16,7 +18,7 @@ class LanguageOptionsTest {
         assertTrue("en" in values)
         assertTrue("te" in values)
         assertEquals(37, values.size)
-        assertTrue(options.all { it.second.isNotBlank() })
+        assertTrue(options.all { it.second == UiText.LanguageName(it.first) })
     }
 
     @Test
@@ -48,36 +50,32 @@ class LanguageOptionsTest {
     @Test
     fun `each definition supplies its own unset label`() {
         assertEquals(
-            LanguageOptions.UNSET to "No preference",
+            LanguageOptions.UNSET to UiText.Key(SharedString.AudioLanguageUnset),
             LanguageOptions.options(SettingKeys.PLAYBACK_AUDIO_LANGUAGE).first(),
         )
         assertEquals(
-            LanguageOptions.UNSET to "None",
+            LanguageOptions.UNSET to UiText.Key(SharedString.SubtitleLanguageUnset),
             LanguageOptions.options(SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE).first(),
         )
         assertEquals(
-            LanguageOptions.UNSET to "Library default",
+            LanguageOptions.UNSET to UiText.Key(SharedString.MetadataLanguageUnset),
             LanguageOptions.options(SettingKeys.CATALOG_METADATA_LANGUAGE).first(),
         )
     }
 
     @Test
-    fun `labels and wire values round trip through the rendered options`() {
+    fun `a stored value's label picks out its own option`() {
         val options = LanguageOptions.options(
             SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE,
             currentValue = "pt-BR",
         )
-        for ((wire, label) in options) {
-            assertEquals(wire, LanguageOptions.wireValue(label, options))
+        val labels = options.map { it.second }
+        options.forEachIndexed { index, (wire, _) ->
+            assertEquals(index, labels.indexOf(LanguageOptions.label(wire, SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE)))
         }
-        assertNotEquals(
-            "None",
-            LanguageOptions.label("pt-BR", SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE),
-        )
-        assertEquals(
-            "None",
-            LanguageOptions.label("English", SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE),
-        )
+        val none = UiText.Key(SharedString.SubtitleLanguageUnset)
+        assertNotEquals<UiText>(none, LanguageOptions.label("pt-BR", SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE))
+        assertEquals(none, LanguageOptions.label("English", SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE))
     }
 
     @Test

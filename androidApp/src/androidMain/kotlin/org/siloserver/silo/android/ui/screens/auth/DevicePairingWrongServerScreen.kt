@@ -13,6 +13,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -35,9 +38,9 @@ fun DevicePairingWrongServerScreen(
     onCancel: () -> Unit,
 ) {
     DevicePairingNoticeStage(
-        title = "Different server",
-        body = "This TV is signing in to $serverName. Switch to it to continue.",
-        primaryLabel = "Switch to $serverName",
+        title = stringResource(CommonR.string.companion_wrongServer_title),
+        body = stringResourceWithNames(CommonR.string.companion_wrongServer_body, serverName),
+        primaryLabel = stringResourceWithNames(CommonR.string.companion_wrongServer_switch, serverName),
         onPrimary = onSwitch,
         onCancel = onCancel,
     )
@@ -51,10 +54,9 @@ fun DevicePairingUnknownServerScreen(
     onCancel: () -> Unit,
 ) {
     DevicePairingNoticeStage(
-        title = "Unknown server",
-        body = "This TV is signing in to $origin, which isn't one of your servers. " +
-            "Add it to continue.",
-        primaryLabel = "Add server",
+        title = stringResource(CommonR.string.companion_unknownServer_title),
+        body = stringResourceWithNames(CommonR.string.companion_unknownServer_body, origin),
+        primaryLabel = stringResource(CommonR.string.companion_unknownServer_add),
         onPrimary = onAddServer,
         onCancel = onCancel,
     )
@@ -109,7 +111,7 @@ private fun DevicePairingNoticeStage(
             Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
-                Text(text = "Cancel")
+                Text(text = stringResource(CommonR.string.common_cancel))
             }
         }
     }

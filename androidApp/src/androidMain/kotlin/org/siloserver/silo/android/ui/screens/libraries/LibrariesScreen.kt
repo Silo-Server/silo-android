@@ -1,5 +1,15 @@
 package org.siloserver.silo.android.ui.screens.libraries
 
+import org.siloserver.silo.android.ui.components.PosterArtworkAspectRatio
+import org.siloserver.silo.android.ui.components.CollectionPosterCard
+import org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.detailedErrorText
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -8,6 +18,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -24,6 +35,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -52,11 +64,18 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -68,6 +87,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.annotation.StringRes
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -83,11 +105,25 @@ import kotlinx.coroutines.sync.withPermit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.android.ui.components.TabContentGap
+import org.siloserver.silo.android.ui.components.TabHeaderPillGap
+import org.siloserver.silo.android.ui.components.TabHeaderRowHeight
+import org.siloserver.silo.android.ui.components.TabPillRowHeight
+import org.siloserver.silo.android.ui.components.TopBarEdgeMargin
+import org.siloserver.silo.android.ui.components.TopBarGlassFadeDistance
+import org.siloserver.silo.android.ui.components.TopBarRemoteControl
 import org.siloserver.silo.android.ui.components.TopBarRowTopInset
 import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
+import org.siloserver.silo.android.ui.navigation.LocalBottomChromeHeight
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
+import org.siloserver.silo.android.ui.navigation.LocalBottomNavPageMovedItself
+import org.siloserver.silo.android.ui.navigation.LocalBottomNavScrolledToTop
+import org.siloserver.silo.android.ui.navigation.ReportBottomNavPageTop
+import org.siloserver.silo.android.ui.navigation.LocalPageDockHost
+import org.siloserver.silo.android.ui.navigation.OfferPageDock
+import org.siloserver.silo.android.ui.navigation.rememberNonShrinking
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.MediaRowsSkeleton
 import org.siloserver.silo.android.ui.components.PosterGridSkeleton
@@ -106,15 +142,22 @@ import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import androidx.compose.material.icons.filled.Cancel
 import org.siloserver.silo.common.settings.BrowsePrefsStore
 import org.siloserver.silo.android.ui.screens.browse.CatalogGrid
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.screens.browse.CatalogViewDensity
 import org.siloserver.silo.android.ui.screens.browse.FilterSheet
 import org.siloserver.silo.android.ui.screens.browse.facetValueLabel
-import org.siloserver.silo.android.ui.screens.browse.normalizeCatalogNamePrefix
+import org.siloserver.silo.android.ui.screens.browse.CatalogLetterJump
+import org.siloserver.silo.android.ui.screens.browse.CatalogLetterJumpState
+import org.siloserver.silo.android.ui.screens.browse.CatalogLetterQuery
 import org.siloserver.silo.catalog.filter.BrowseFacetMediaType
 import org.siloserver.silo.catalog.scopeLibrarySection
 import org.siloserver.silo.catalog.filter.CatalogFacet
 import org.siloserver.silo.catalog.filter.CatalogFilterQueryBuilder
 import org.siloserver.silo.catalog.filter.CatalogFilterState
+import org.siloserver.silo.catalog.sort.CatalogSortField
+import org.siloserver.silo.catalog.sort.CatalogSortRelevance
+import org.siloserver.silo.common.catalog.directionLabelRes
+import org.siloserver.silo.common.catalog.labelRes
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
@@ -127,11 +170,12 @@ import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.util.formatCardDate
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.BrowseItem
-import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.viewmodel.withLocalContentState
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
@@ -155,28 +199,23 @@ enum class LibrariesSubtab {
     Collections,
 }
 
-enum class LibraryBrowseSort(
-    val label: String,
-    val sortField: String,
-    val sortOrder: String,
-) {
-    RecentlyAdded("Recently Added", "added_at", "desc"),
-    Title("Title", "title", "asc"),
-    ReleaseDate("Release Date", "release_date", "desc");
+/** The library Browse grid opens newest first. */
+internal val DefaultLibraryBrowseSort = CatalogSortField.DateAdded
+internal const val DefaultLibraryBrowseOrder = "desc"
 
-    companion object {
-        /**
-         * The sort rides the persisted [CatalogFilterState] (same as
-         * BrowseViewModel), so restoring saved browse prefs also restores the
-         * chip label. [CatalogFilterState]'s own defaults are exactly
-         * [RecentlyAdded]'s pair, so a state saved before the sort travelled
-         * with it — or one naming a field this client does not offer — falls
-         * back to [RecentlyAdded].
-         */
-        fun fromFilterState(state: CatalogFilterState): LibraryBrowseSort =
-            entries.firstOrNull { it.sortField == state.sort && it.sortOrder == state.order }
-                ?: RecentlyAdded
-    }
+/**
+ * The sort and order a persisted [CatalogFilterState] restores. The sort
+ * rides that state (same as BrowseViewModel), so restoring saved browse prefs
+ * also restores the menu label. A sort this library's list would not offer
+ * stays in use, and the menu keeps listing it, as on TV, Apple and Roku. Only
+ * a field this client doesn't know falls back to the default; a state saved
+ * with no usable order takes the field's own default direction.
+ */
+internal fun restoredLibraryBrowseSort(state: CatalogFilterState): Pair<CatalogSortField, String> {
+    val field = CatalogSortField.fromWire(state.sort)
+        ?: return DefaultLibraryBrowseSort to DefaultLibraryBrowseOrder
+    val order = state.order.takeIf { it == "asc" || it == "desc" } ?: field.defaultOrder
+    return field to order
 }
 
 data class LibrariesUiState(
@@ -187,7 +226,7 @@ data class LibrariesUiState(
     val selectedTab: LibrariesSubtab = LibrariesSubtab.Recommended,
     val isLoadingSections: Boolean = false,
     val sections: List<ResolvedSection> = emptyList(),
-    val sectionsError: String? = null,
+    val sectionsError: UiText? = null,
     val isLoadingCatalog: Boolean = false,
     val isLoadingMoreCatalog: Boolean = false,
     val catalogItems: List<BrowseItem> = emptyList(),
@@ -203,15 +242,49 @@ data class LibrariesUiState(
     val availableFilters: CatalogFiltersResponse? = null,
     val browseMediaType: BrowseFacetMediaType = BrowseFacetMediaType.Video,
     val preserveFilters: Boolean = true,
-    val selectedNamePrefix: String? = null,
     val catalogDensity: CatalogViewDensity = CatalogViewDensity.Normal,
-    val browseSort: LibraryBrowseSort = LibraryBrowseSort.RecentlyAdded,
-    val catalogError: String? = null,
+    val browseSort: CatalogSortField = DefaultLibraryBrowseSort,
+    val catalogError: UiText? = null,
     val isLoadingCollections: Boolean = false,
     val collections: List<LibraryCollection> = emptyList(),
-    val collectionsError: String? = null,
-    val librariesError: String? = null,
-)
+    val collectionsError: UiText? = null,
+    val librariesError: UiText? = null,
+    /** The selected library's exact size under its Movies/Series scope; null until read, or when the server can't count it. */
+    val libraryCount: Int? = null,
+    /** The Browse page's exact total under its filters; null until its first page loads, or when the server can't count it. */
+    val browseFilteredTotal: Int? = null,
+    /** The library had collections when they last loaded, so the phone dock offers that page. Fixed while the library is open. */
+    val hasCollections: Boolean = true,
+) {
+    /**
+     * The count under the library's name: the Browse page's filtered total
+     * while it narrows the list, otherwise the library's size. Null shows the
+     * library's kind instead (iOS #1159).
+     */
+    val headerCount: Int?
+        get() = if (selectedTab == LibrariesSubtab.Browse && filterState.hasActiveFilters) {
+            browseFilteredTotal
+        } else {
+            libraryCount
+        }
+
+    /** The pages the phone dock offers, in order. */
+    val dockTabs: List<LibrariesSubtab>
+        get() = if (hasCollections) LibrariesSubtab.entries else LibrariesSubtab.entries - LibrariesSubtab.Collections
+
+    /** The sort list's media: the selected library's type, or the mixed library side being browsed. */
+    val browseSortRelevance: CatalogSortRelevance
+        get() = CatalogSortRelevance.forLibrary(
+            libraries.firstOrNull { it.id == selectedLibraryId }?.type,
+            mediaScope,
+        )
+
+    /** The browse order, "asc" or "desc"; it rides [filterState] with the sort. */
+    val browseOrder: String get() = filterState.order
+
+    val isBrowseSortDefault: Boolean
+        get() = browseSort == DefaultLibraryBrowseSort && browseOrder == DefaultLibraryBrowseOrder
+}
 
 class LibrariesViewModel(
     private val personalDataRepository: PersonalDataRepository,
@@ -240,6 +313,7 @@ class LibrariesViewModel(
     private var catalogRequestGeneration = 0L
     private var catalogQueryGeneration = 0L
     private var collectionsRequestGeneration = 0L
+    private var headerDetailsGeneration = 0L
     // Library-list loads run one at a time, in order, so an older response
     // can't overwrite a newer one (on screen or in the offline cache). A
     // request made mid-load queues one follow-up pass.
@@ -252,6 +326,14 @@ class LibrariesViewModel(
     private var serverLibraries: List<UserLibrary> = emptyList()
     private var pendingContentReload = false
     private val pageSize = 42
+
+    /** The A–Z jump while the Browse grid is in title order; see [CatalogLetterJump]. */
+    private val letterJumpController = CatalogLetterJump(
+        scope = viewModelScope,
+        repository = catalogRepository,
+        overlay = { overlayLocalState(it) },
+    )
+    val letterJump: StateFlow<CatalogLetterJumpState?> = letterJumpController.state
 
     /** Bumps when the profile hides or shows a library on another device. */
     val hiddenLibrariesRevision: StateFlow<Int> = personalDataRepository.hiddenLibrariesRevision
@@ -293,7 +375,15 @@ class LibrariesViewModel(
      * short — hiding the switcher and every other library — until the process
      * died.
      */
-    fun refreshLibraryList() = loadLibraries(reloadContent = false)
+    fun refreshLibraryList() {
+        // A library opened without collections can gain some while the app
+        // runs; with one library there is no reopening to learn it, so look
+        // again each time the screen comes back.
+        val state = _uiState.value
+        val libraryId = state.selectedLibraryId
+        if (libraryId != null && !state.hasCollections) loadCollections(libraryId, force = true)
+        loadLibraries(reloadContent = false)
+    }
 
     private fun loadLibraries(reloadContent: Boolean) {
         if (reloadContent) pendingContentReload = true
@@ -377,6 +467,7 @@ class LibrariesViewModel(
 
                 if (selectedLibraryId != null && (reload || selectionChanged || recovering)) {
                     loadCurrentTab(selectedLibraryId, force = true)
+                    loadHeaderDetails(selectedLibraryId)
                 }
             }
             is ApiResult.Error -> {
@@ -388,7 +479,7 @@ class LibrariesViewModel(
                         isLoadingLibraries = false,
                         libraries = emptyList(),
                         sections = emptyList(),
-                        librariesError = result.message.ifBlank { "Failed to load libraries" },
+                        librariesError = result.errorText(CommonR.string.library_error_loadLibraries),
                     )
                 }
             }
@@ -398,7 +489,7 @@ class LibrariesViewModel(
                         isLoadingLibraries = false,
                         libraries = emptyList(),
                         sections = emptyList(),
-                        librariesError = "Network error: ${result.exception.message ?: "unknown"}",
+                        librariesError = result.detailedErrorText(),
                     )
                 }
             }
@@ -415,6 +506,7 @@ class LibrariesViewModel(
         ++catalogQueryGeneration
         ++collectionsRequestGeneration
         catalogContinuation = null
+        letterJumpController.reset(null)
         _uiState.update {
             it.copy(
                 sections = emptyList(),
@@ -453,6 +545,7 @@ class LibrariesViewModel(
         val library = _uiState.value.libraries.firstOrNull { it.id == libraryId }
         resetForLibrary(libraryId, library?.let(::defaultMediaScope))
         loadCurrentTab(libraryId, force = true)
+        loadHeaderDetails(libraryId)
     }
 
     fun selectMediaScope(mediaScope: String) {
@@ -461,6 +554,30 @@ class LibrariesViewModel(
         val libraryId = state.selectedLibraryId ?: return
         resetForLibrary(libraryId, mediaScope)
         loadCurrentTab(libraryId, force = true)
+        loadHeaderDetails(libraryId)
+    }
+
+    /**
+     * Read what the phone header and dock show about the open library: its
+     * size under the current scope, and whether it has collections. The
+     * collections load early, as on iOS; [loadCollections] remembers the
+     * answer only for the library's next opening, so the dock never gains or
+     * loses a section on screen.
+     */
+    private fun loadHeaderDetails(libraryId: Int) {
+        val mediaScope = _uiState.value.mediaScope
+        val generation = ++headerDetailsGeneration
+        viewModelScope.launch {
+            val count = catalogRepository.libraryCount(libraryId, mediaScope)
+            _uiState.update {
+                if (generation == headerDetailsGeneration && it.selectedLibraryId == libraryId && it.mediaScope == mediaScope) {
+                    it.copy(libraryCount = count)
+                } else {
+                    it
+                }
+            }
+        }
+        loadCollections(libraryId, force = false)
     }
 
     /** A mixed library opens on Movies; other libraries have no media scope. */
@@ -472,8 +589,8 @@ class LibrariesViewModel(
      * selection's rows, filter vocabulary and letter, and invalidating its
      * in-flight requests. Restores this library and scope's persisted
      * filter/sort state (iOS parity) so a preserved selection doesn't flash the
-     * unfiltered grid; defaults to a clean filter — and therefore
-     * RecentlyAdded — when nothing is saved.
+     * unfiltered grid; defaults to a clean filter — and therefore Date
+     * Added, newest first — when nothing is saved.
      */
     private fun resetForLibrary(libraryId: Int?, mediaScope: String?) {
         recommendedJob?.cancel()
@@ -485,11 +602,25 @@ class LibrariesViewModel(
         ++catalogQueryGeneration
         ++collectionsRequestGeneration
         catalogContinuation = null
-        val restoredFilterState = libraryId?.let { browsePrefs?.savedState(it, mediaScope) } ?: CatalogFilterState()
+        letterJumpController.reset(null)
+        val savedFilterState = libraryId?.let { browsePrefs?.savedState(it, mediaScope) } ?: CatalogFilterState()
+        val hasCollections = libraryId?.let { browsePrefs?.hasCollections(it) } ?: true
         _uiState.update {
+            val (restoredSort, restoredOrder) = restoredLibraryBrowseSort(savedFilterState)
+            val restoredFilterState = savedFilterState.copy(sort = restoredSort.wireValue, order = restoredOrder)
             it.copy(
                 selectedLibraryId = libraryId,
                 mediaScope = mediaScope,
+                // A library without the Collections section never opens on
+                // it, which would leave no section selected in the dock.
+                selectedTab = if (!hasCollections && it.selectedTab == LibrariesSubtab.Collections) {
+                    LibrariesSubtab.Recommended
+                } else {
+                    it.selectedTab
+                },
+                hasCollections = hasCollections,
+                libraryCount = if (libraryId == it.selectedLibraryId && mediaScope == it.mediaScope) it.libraryCount else null,
+                browseFilteredTotal = null,
                 sections = emptyList(),
                 sectionsError = null,
                 isLoadingSections = false,
@@ -499,10 +630,9 @@ class LibrariesViewModel(
                 isLoadingCatalog = false,
                 isLoadingMoreCatalog = false,
                 filterState = restoredFilterState,
-                browseSort = LibraryBrowseSort.fromFilterState(restoredFilterState),
+                browseSort = restoredSort,
                 availableFilters = null,
                 preserveFilters = libraryId?.let { id -> browsePrefs?.preserveEnabled(id, mediaScope) } ?: true,
-                selectedNamePrefix = null,
                 catalogError = null,
                 collections = emptyList(),
                 collectionsError = null,
@@ -533,6 +663,7 @@ class LibrariesViewModel(
                 catalogItems = emptyList(),
                 catalogTotal = 0,
                 catalogHasMore = false,
+                browseFilteredTotal = null,
             )
         }
         browsePrefs?.saveState(_uiState.value.selectedLibraryId, reconciled, _uiState.value.mediaScope)
@@ -546,40 +677,43 @@ class LibrariesViewModel(
         if (enabled) browsePrefs?.saveState(libraryId, _uiState.value.filterState, _uiState.value.mediaScope)
     }
 
-    fun selectBrowseSort(sort: LibraryBrowseSort) {
+    /**
+     * Sort the Browse grid by [sort]. Picking the active sort again flips its
+     * direction; a new sort starts in its own default direction. [order]
+     * forces a direction (Reset).
+     */
+    fun selectBrowseSort(sort: CatalogSortField, order: String? = null) {
+        val current = _uiState.value
+        val nextOrder = order ?: if (sort == current.browseSort) {
+            if (current.browseOrder == "asc") "desc" else "asc"
+        } else {
+            sort.defaultOrder
+        }
         // The sort rides the persisted filter state so "Preserve sort & filters"
         // actually restores it, instead of the chips coming back while the sort
-        // snaps to Recently Added.
-        val nextFilterState = _uiState.value.filterState.copy(
-            sort = sort.sortField,
-            order = sort.sortOrder,
+        // snaps to Date Added.
+        val nextFilterState = current.filterState.copy(
+            sort = sort.wireValue,
+            order = nextOrder,
         )
+        // The current page stays on screen until the re-sorted one replaces
+        // it, so the grid and its sort menu stay mounted: picking the active
+        // sort again flips it with the menu still open.
         _uiState.update {
             it.copy(
                 browseSort = sort,
                 filterState = nextFilterState,
-                catalogItems = emptyList(),
-                catalogTotal = 0,
-                catalogHasMore = false,
             )
         }
         browsePrefs?.saveState(_uiState.value.selectedLibraryId, nextFilterState, _uiState.value.mediaScope)
         _uiState.value.selectedLibraryId?.let { loadCatalog(it, reset = true, force = true) }
     }
 
-    fun selectNamePrefix(prefix: String?) {
-        val normalizedPrefix = normalizeCatalogNamePrefix(prefix)
-        if (_uiState.value.selectedNamePrefix == normalizedPrefix) return
-        _uiState.update {
-            it.copy(
-                selectedNamePrefix = normalizedPrefix,
-                catalogItems = emptyList(),
-                catalogTotal = 0,
-                catalogHasMore = false,
-            )
-        }
-        _uiState.value.selectedLibraryId?.let { loadCatalog(it, reset = true, force = true) }
-    }
+    /** The finger rests on [letter] in the rail: read where a jump would land. */
+    fun prepareLetterJump(letter: String) = letterJumpController.prepareJump(letter)
+
+    /** List position of [letter]'s first title, once the titles there are read or briefly awaited. */
+    suspend fun letterJumpPosition(letter: String): Int? = letterJumpController.positionForJump(letter)
 
     fun selectViewDensity(density: CatalogViewDensity) {
         if (_uiState.value.catalogDensity == density) return
@@ -634,7 +768,7 @@ class LibrariesViewModel(
             if (!isRecommendedRequestCurrent(requestGeneration, libraryId)) return@launch
             if (owner == null) {
                 recommendedLoadedLibraryId = null
-                _uiState.update { it.copy(isLoadingSections = false, sections = emptyList(), sectionsError = "Sign in to load library sections.") }
+                _uiState.update { it.copy(isLoadingSections = false, sections = emptyList(), sectionsError = UiText.Res(CommonR.string.library_error_signInForSections)) }
                 return@launch
             }
             val result = sectionRepository.getLibrarySections(libraryId, owner)
@@ -668,9 +802,12 @@ class LibrariesViewModel(
                         if (isRecommendedRequestCurrent(requestGeneration, libraryId, it)) {
                             it.copy(
                                 isLoadingSections = false,
-                                sections = scoped.map { it.section }.filter { it.items.isNotEmpty() },
-                                sectionsError = if (scoped.any { it.incomplete })
-                                    "Some shelves could not be fully loaded. Retry or open Library to browse all titles." else null,
+                                sections = scoped.map { it.section }.filter { it.hasCards },
+                                sectionsError = if (scoped.any { it.incomplete }) {
+                                    UiText.Res(CommonR.string.library_error_someShelves)
+                                } else {
+                                    null
+                                },
                             )
                         } else {
                             it
@@ -684,7 +821,7 @@ class LibrariesViewModel(
                             it.copy(
                                 isLoadingSections = false,
                                 sections = emptyList(),
-                                sectionsError = result.message.ifBlank { "Failed to load recommendations" },
+                                sectionsError = result.errorText(CommonR.string.library_error_loadRecommendations),
                             )
                         } else {
                             it
@@ -698,7 +835,7 @@ class LibrariesViewModel(
                             it.copy(
                                 isLoadingSections = false,
                                 sections = emptyList(),
-                                sectionsError = "Network error: ${result.exception.message ?: "unknown"}",
+                                sectionsError = result.detailedErrorText(),
                             )
                         } else {
                             it
@@ -719,9 +856,17 @@ class LibrariesViewModel(
             libraryId = libraryId,
             mediaScope = requestState.mediaScope,
             browseSort = requestState.browseSort,
-            selectedNamePrefix = requestState.selectedNamePrefix,
             filterState = requestState.filterState,
         )
+        val titleOrdered = requestState.browseSort.wireValue == CatalogLetterJump.TITLE_SORT
+        // The letter index is read beside the first page, so the rail is
+        // ready when the grid is.
+        if (reset) {
+            letterJumpController.reset(
+                CatalogLetterQuery.of(libraryId, requestState.mediaScope, requestState.browseOrder, requestState.filterState)
+                    .takeIf { titleOrdered },
+            )
+        }
         val requestGeneration = ++catalogRequestGeneration
         val queryGeneration =
             if (reset) ++catalogQueryGeneration else catalogQueryGeneration
@@ -766,11 +911,12 @@ class LibrariesViewModel(
                 val result = catalogRepository.browse(
                     libraryId = libraryId,
                     mediaType = requestState.mediaScope,
-                    sort = requestState.browseSort.sortField,
-                    order = requestState.browseSort.sortOrder,
+                    sort = requestState.browseSort.wireValue,
+                    order = requestState.browseOrder,
                     continuation = if (reset) null else catalogContinuation,
-                    limit = pageSize,
-                    namePrefix = requestState.selectedNamePrefix,
+                    // In title order the first page is one whole pager page, so
+                    // the full-length grid need not read it again.
+                    limit = if (titleOrdered) CatalogLetterJump.TITLE_FIRST_PAGE_SIZE else pageSize,
                     // Full facet filtering (genre/decade/rating/studio/language/...)
                     // via the shared query builder — replaces the single-genre param.
                     queryGroups = CatalogFilterQueryBuilder.buildGroups(requestState.filterState),
@@ -789,11 +935,12 @@ class LibrariesViewModel(
                     // Loading stays up meanwhile, so the wrong message never flashes.
                     val libraryHasItems = when {
                         !reset || overlaid.isNotEmpty() -> null
-                        !requestState.filterState.hasActiveFilters && requestState.selectedNamePrefix == null -> false
+                        !requestState.filterState.hasActiveFilters -> false
                         else -> catalogRepository.libraryHasItems(libraryId, requestState.mediaScope)
                     }
                     if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
                     catalogContinuation = result.data.continuation
+                    if (reset) letterJumpController.seed(overlaid, result.data.windowCursor)
                     // Audiobook libraries expose book-native facets
                     // (author/narrator/series) — detected from the first item.
                     val detectedMediaType = overlaid.firstOrNull()?.let { first ->
@@ -810,6 +957,11 @@ class LibrariesViewModel(
                                 isLoadingMoreCatalog = false,
                                 catalogItems = if (reset) overlaid else it.catalogItems + overlaid,
                                 catalogTotal = result.data.total,
+                                browseFilteredTotal = if (reset) {
+                                    result.data.total.takeIf { result.data.totalExact != false }
+                                } else {
+                                    it.browseFilteredTotal
+                                },
                                 catalogHasMore = result.data.hasMore,
                                 catalogLibraryHasItems = if (reset) libraryHasItems else it.catalogLibraryHasItems,
                                 browseMediaType = detectedMediaType ?: it.browseMediaType,
@@ -827,7 +979,7 @@ class LibrariesViewModel(
                             it.copy(
                                 isLoadingCatalog = false,
                                 isLoadingMoreCatalog = false,
-                                catalogError = result.message.ifBlank { "Failed to load catalog" },
+                                catalogError = result.errorText(CommonR.string.library_error_loadCatalog),
                             )
                         } else {
                             it
@@ -841,7 +993,7 @@ class LibrariesViewModel(
                             it.copy(
                                 isLoadingCatalog = false,
                                 isLoadingMoreCatalog = false,
-                                catalogError = "Network error: ${result.exception.message ?: "unknown"}",
+                                catalogError = result.detailedErrorText(),
                             )
                         } else {
                             it
@@ -862,18 +1014,15 @@ class LibrariesViewModel(
         if (local.isEmpty()) return items
         return items.map { item ->
             val ls = local[item.contentId] ?: return@map item
-            val base = item.userState ?: MediaItemUserState()
-            item.copy(
-                userState = base.copy(
-                    played = ls.watched ?: base.played,
-                    isFavorite = ls.favorite ?: base.isFavorite,
-                ),
-            )
+            item.copy(userState = item.userState.withLocalContentState(ls))
         }
     }
 
     private fun loadCollections(libraryId: Int, force: Boolean) {
-        if (!force && collectionsLoadedLibraryId == libraryId && _uiState.value.collections.isNotEmpty()) {
+        // Already shown, or already on its way (the early load the header
+        // starts when a library opens).
+        val current = _uiState.value
+        if (!force && collectionsLoadedLibraryId == libraryId && (current.collections.isNotEmpty() || current.isLoadingCollections)) {
             return
         }
         collectionsLoadedLibraryId = libraryId
@@ -894,12 +1043,18 @@ class LibrariesViewModel(
             when (val result = sectionRepository.getLibraryCollections(libraryId)) {
                 is ApiResult.Success -> {
                     if (!isCollectionsRequestCurrent(requestGeneration, libraryId)) return@launch
+                    browsePrefs?.rememberHasCollections(libraryId, result.data.isNotEmpty())
                     _uiState.update {
                         if (isCollectionsRequestCurrent(requestGeneration, libraryId, it)) {
                             it.copy(
                                 isLoadingCollections = false,
                                 collections = result.data,
                                 collectionsError = null,
+                                // The dock gains the section as soon as there
+                                // is something in it; losing it waits for the
+                                // library's next opening, so a section never
+                                // vanishes from under a finger.
+                                hasCollections = it.hasCollections || result.data.isNotEmpty(),
                             )
                         } else {
                             it
@@ -912,7 +1067,7 @@ class LibrariesViewModel(
                         if (isCollectionsRequestCurrent(requestGeneration, libraryId, it)) {
                             it.copy(
                                 isLoadingCollections = false,
-                                collectionsError = result.message.ifBlank { "Failed to load collections" },
+                                collectionsError = result.errorText(CommonR.string.collections_error_loadCollections),
                             )
                         } else {
                             it
@@ -925,7 +1080,7 @@ class LibrariesViewModel(
                         if (isCollectionsRequestCurrent(requestGeneration, libraryId, it)) {
                             it.copy(
                                 isLoadingCollections = false,
-                                collectionsError = "Network error: ${result.exception.message ?: "unknown"}",
+                                collectionsError = result.detailedErrorText(),
                             )
                         } else {
                             it
@@ -963,7 +1118,6 @@ class LibrariesViewModel(
         state.selectedLibraryId == libraryId &&
             state.mediaScope == mediaScope &&
             state.browseSort == browseSort &&
-            state.selectedNamePrefix == selectedNamePrefix &&
             state.filterState == filterState
 
     private fun isCollectionsRequestCurrent(
@@ -976,34 +1130,36 @@ class LibrariesViewModel(
     private data class CatalogRequestIdentity(
         val libraryId: Int,
         val mediaScope: String?,
-        val browseSort: LibraryBrowseSort,
-        val selectedNamePrefix: String?,
+        val browseSort: CatalogSortField,
         val filterState: CatalogFilterState,
     )
 }
-
-// Distance the Recommended tab must scroll for the chrome scrim to fully
-// fade in. Mirrors `chromeScrimFadeDistance` on iOS.
-private const val ChromeFadeDistanceDp = 80f
 
 @Composable
 fun LibrariesScreen(
     onItemClick: (String, Int?) -> Unit,
     onCollectionClick: (LibraryCollection, Int, String?) -> Unit,
+    /** Opens a personal collection by id, from a Recommended row of collections. */
+    onPersonalCollectionClick: ((String) -> Unit)? = null,
+    /** Opens a Recommended row's full page: the row, its library, and the Movies/Series scope. */
+    onExploreSection: ((ResolvedSection, Int, String?) -> Unit)? = null,
     viewModel: LibrariesViewModel,
     activeProfile: Profile?,
+    remoteControl: TopBarRemoteControl,
     onLibrarySelectorClick: () -> Unit,
     onSearchClick: () -> Unit,
     onRequestsClick: (() -> Unit)?,
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    onSignOutClick: (removeServer: Boolean) -> Unit,
     shuffleLauncher: org.siloserver.silo.common.ui.ShuffleLauncher? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val letterJump by viewModel.letterJump.collectAsState()
+    val shownRatingSources = org.siloserver.silo.android.ui.components.rememberShownRatingSources()
     val selectedLibrary = state.libraries.firstOrNull { it.id == state.selectedLibraryId }
     // Movie, TV, and mixed libraries shuffle from the Browse tab when the
     // server offers it.
@@ -1042,10 +1198,51 @@ fun LibrariesScreen(
     // Recommended tab scroll state — drives the chrome scrim opacity so the
     // header fades in its scrim once the user scrolls the rows underneath it.
     val recommendedListState = rememberLazyListState()
-    LaunchedEffect(state.selectedLibraryId, state.mediaScope) { recommendedListState.scrollToItem(0) }
+    // Each page keeps its own position while another is on screen, and when
+    // the screen comes back from a title. A new library or Movies/Series side
+    // starts every page at its top, and a new sort or filter starts Browse at
+    // its top. The keys are saved with the positions, so returning to the
+    // screen is not mistaken for a change. requestScrollToItem waits for no
+    // layout, so a page not on screen moves too.
+    val browseGridState = rememberLazyGridState()
+    val collectionsGridState = rememberLazyGridState()
+    val pagesKey = "${state.selectedLibraryId}|${state.mediaScope}"
+    val browseListKey = "$pagesKey|${state.filterState}"
+    var positionsPagesKey by rememberSaveable { mutableStateOf(pagesKey) }
+    var positionsBrowseKey by rememberSaveable { mutableStateOf(browseListKey) }
+    if (positionsPagesKey != pagesKey) {
+        positionsPagesKey = pagesKey
+        recommendedListState.requestScrollToItem(0)
+        collectionsGridState.requestScrollToItem(0)
+    }
+    if (positionsBrowseKey != browseListKey) {
+        positionsBrowseKey = browseListKey
+        browseGridState.requestScrollToItem(0)
+    }
+    val pageScope = rememberCoroutineScope()
+    // The browse grid reports its own top (CatalogGrid).
+    ReportBottomNavPageTop(recommendedListState)
+    ReportBottomNavPageTop(collectionsGridState)
+    val bottomNavScrolledToTop = LocalBottomNavScrolledToTop.current
+    val bottomNavPageMovedItself = LocalBottomNavPageMovedItself.current
+    val latestSelectedTab by rememberUpdatedState(state.selectedTab)
+    val scrollPageToTop: (LibrariesSubtab) -> Unit = { tab ->
+        bottomNavPageMovedItself()
+        pageScope.launch {
+            when (tab) {
+                LibrariesSubtab.Recommended -> recommendedListState.animateScrollToItem(0)
+                LibrariesSubtab.Browse -> browseGridState.animateScrollToItem(0)
+                LibrariesSubtab.Collections -> collectionsGridState.animateScrollToItem(0)
+            }
+            // Arriving at the top expands a minimized tab bar, as a user
+            // scroll would. An interrupted scroll never gets here, and a
+            // page left mid-scroll no longer speaks for the tab.
+            if (latestSelectedTab == tab) bottomNavScrolledToTop()
+        }
+    }
     val density = LocalDensity.current
     val chromeFadePx = remember(density) {
-        with(density) { ChromeFadeDistanceDp.dp.toPx() }
+        with(density) { TopBarGlassFadeDistance.toPx() }
     }
     val recommendedScrollProgress by remember(chromeFadePx) {
         derivedStateOf {
@@ -1069,11 +1266,56 @@ fun LibrariesScreen(
     var chromeHeightPx by remember { mutableIntStateOf(0) }
     val chromeHeight = with(density) { chromeHeightPx.toDp() }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
+        // Phones (and a folded foldable) switch pages and libraries from a
+        // dock above the nav pill (iOS #1137); wider windows keep the chip
+        // row and the selector sheet, as iPad does.
+        val showsDock = maxWidth < LibraryDockMaxWindowWidth && selectedLibrary != null
+        // The dock lives in the tab bar's accessory slot (iOS 26.1), resting
+        // above the expanded bar and moving inline beside the minimized
+        // control, so the bar's measured height (and with it the inset below)
+        // already includes it. While Remote Control or the audiobook holds the
+        // slot, the dock floats in the page instead, riding the chrome's live
+        // edge, and the page adds its footprint to the inset.
+        val dockHost = LocalPageDockHost.current
+        val dockFloats = showsDock && (dockHost == null || dockHost.nowPlayingHoldsSlot)
+        if (showsDock && dockHost != null) {
+            OfferPageDock(dockHost) { inline ->
+                LibraryDockContent(
+                    style = if (inline) LibraryDockStyle.Inline else LibraryDockStyle.Accessory,
+                    library = selectedLibrary,
+                    libraries = state.libraries,
+                    tabs = state.dockTabs,
+                    selectedTab = state.selectedTab,
+                    onSelect = viewModel::selectTab,
+                    onReselect = scrollPageToTop,
+                    onPickLibrary = viewModel::selectLibrary,
+                    modifier = if (inline) Modifier.fillMaxSize() else Modifier,
+                )
+            }
+        }
+        val navChromeInset = LocalBottomChromeInset.current
+        // Read at placement only: it changes every frame while the bar moves.
+        val navChromeHeight = LocalBottomChromeHeight.current
+        // Never shrinks while the page is up, so a list resting at its end
+        // stays put when the dock moves from floating into the tab bar (an
+        // audiobook ending), as the shell's inset does for the bar itself. A
+        // new window size starts over, as the shell's does.
+        val configuration = LocalConfiguration.current
+        val pageBottomInset by rememberNonShrinking(
+            showsDock,
+            configuration.screenWidthDp,
+            configuration.screenHeightDp,
+        ) {
+            navChromeInset + if (dockFloats) LibraryDockFootprint else 0.dp
+        }
+        CompositionLocalProvider(
+            LocalBottomChromeInset provides pageBottomInset,
+        ) {
         LibraryContentViewport(
             modifier = Modifier
                 .fillMaxSize()
@@ -1098,15 +1340,15 @@ fun LibrariesScreen(
                     }
                     state.librariesError != null && state.libraries.isEmpty() -> {
                         ErrorView(
-                            message = state.librariesError ?: "Failed to load libraries",
+                            message = state.librariesError?.text() ?: stringResource(CommonR.string.library_error_loadLibraries),
                             onRetry = viewModel::refresh,
                             modifier = Modifier.fillMaxSize().padding(top = topInset),
                         )
                     }
                     selectedLibrary == null -> {
                         EmptyStateView(
-                            title = "No libraries available",
-                            subtitle = "Libraries visible to this profile will show up here",
+                            title = stringResource(CommonR.string.library_noLibraries),
+                            subtitle = stringResource(CommonR.string.library_noLibrariesBody),
                             icon = Icons.Default.VideoLibrary,
                             modifier = Modifier.fillMaxSize().padding(top = topInset),
                         )
@@ -1118,6 +1360,24 @@ fun LibrariesScreen(
                             topInset = topInset,
                             onItemClick = { onItemClick(it, state.selectedLibraryId) },
                             onRetry = viewModel::retryCurrentTab,
+                            onExploreSection = state.selectedLibraryId?.let { libraryId ->
+                                onExploreSection?.let { open -> { section -> open(section, libraryId, state.mediaScope) } }
+                            },
+                            // A server collection opens in this library and scope,
+                            // as the Collections tab opens it. A personal one opens
+                            // as the Collections screen does, except in a Movies- or
+                            // Series-scoped view, where it keeps that scope (as on TV).
+                            onCollectionClick = { card ->
+                                val libraryId = state.selectedLibraryId
+                                when {
+                                    card.isUserCollection && state.mediaScope == null ->
+                                        onPersonalCollectionClick?.invoke(card.id)
+                                    libraryId != null ->
+                                        onCollectionClick(card.toLibraryCollection(), libraryId, state.mediaScope)
+                                    card.isUserCollection -> onPersonalCollectionClick?.invoke(card.id)
+                                }
+                            },
+                            activeProfileId = activeProfile?.id,
                         )
                     }
                     state.selectedTab == LibrariesSubtab.Browse -> {
@@ -1128,15 +1388,24 @@ fun LibrariesScreen(
                             onRetry = viewModel::retryCurrentTab,
                             onLoadMore = viewModel::loadMoreCatalog,
                             onSortChanged = viewModel::selectBrowseSort,
-                            onNamePrefixChanged = viewModel::selectNamePrefix,
+                            letterJump = letterJump,
+                            onPrepareLetterJump = viewModel::prepareLetterJump,
+                            letterJumpPosition = viewModel::letterJumpPosition,
+                            shownRatingSources = shownRatingSources,
                             onDensityChanged = viewModel::selectViewDensity,
                             onApplyFilter = viewModel::applyFilterState,
                             onSetPreserve = viewModel::setPreserveFilters,
+                            gridState = browseGridState,
+                            // With the dock, Shuffle sits beside Sort and
+                            // Filter, as on iPhone.
+                            onShuffle = onShuffle?.takeIf { showsDock },
+                            shuffleEnabled = shuffleLauncher?.isStarting != true,
                         )
                     }
                     else -> {
                         CollectionsTabContent(
                             state = state,
+                            gridState = collectionsGridState,
                             topInset = topInset,
                             onCollectionClick = { collection ->
                                 state.selectedLibraryId?.let { libraryId ->
@@ -1149,13 +1418,17 @@ fun LibrariesScreen(
                 }
             }
         }
+        }
 
         LibrariesFloatingChrome(
             scrimProgress = chromeScrimProgress,
             hazeState = chromeHaze,
             selectedLibrary = selectedLibrary,
+            showsDock = showsDock,
+            headerCount = state.headerCount,
             canSwitch = state.libraries.size > 1,
             activeProfile = activeProfile,
+            remoteControl = remoteControl,
             selectedTab = state.selectedTab,
             mediaScope = state.mediaScope,
             onMediaScopeSelected = viewModel::selectMediaScope,
@@ -1166,12 +1439,27 @@ fun LibrariesScreen(
             onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
-            onSwitchServerClick = onSwitchServerClick,
+            onChangeAccountClick = onChangeAccountClick,
             onSignOutClick = onSignOutClick,
             onShuffleClick = onShuffle,
             shuffleEnabled = shuffleLauncher?.isStarting != true,
             modifier = Modifier.onSizeChanged { chromeHeightPx = it.height },
         )
+
+        if (dockFloats) {
+            LibraryDock(
+                library = selectedLibrary,
+                libraries = state.libraries,
+                tabs = state.dockTabs,
+                selectedTab = state.selectedTab,
+                onSelect = viewModel::selectTab,
+                onReselect = scrollPageToTop,
+                onPickLibrary = viewModel::selectLibrary,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .offset { IntOffset(0, -(navChromeHeight() + LibraryDockBottomGap).roundToPx()) },
+            )
+        }
     }
 }
 
@@ -1193,6 +1481,9 @@ private fun RecommendedTabContent(
     topInset: Dp,
     onItemClick: (String) -> Unit,
     onRetry: () -> Unit,
+    onExploreSection: ((ResolvedSection) -> Unit)? = null,
+    onCollectionClick: ((SectionCollectionCard) -> Unit)? = null,
+    activeProfileId: String? = null,
 ) {
     val diagnosticsListSnapshot = remember(state.sections) {
         DiagnosticsListSnapshot.fromKeys(
@@ -1212,19 +1503,20 @@ private fun RecommendedTabContent(
         state.isLoadingSections && state.sections.isEmpty() -> {
             MediaRowsSkeleton(
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
+                posterAspect = state.loadingCardAspect,
             )
         }
         state.sectionsError != null && state.sections.isEmpty() -> {
             ErrorView(
-                message = state.sectionsError ?: "Failed to load recommendations",
+                message = state.sectionsError?.text() ?: stringResource(CommonR.string.library_error_loadRecommendations),
                 onRetry = onRetry,
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         state.sections.isEmpty() -> {
             EmptyStateView(
-                title = "No recommendations yet",
-                subtitle = "Try switching libraries or browsing the full catalog",
+                title = stringResource(CommonR.string.library_noRecommendations),
+                subtitle = stringResource(CommonR.string.library_noRecommendationsBody),
                 icon = libraryIcon(state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.type.orEmpty()),
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
@@ -1239,15 +1531,17 @@ private fun RecommendedTabContent(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 // Rows start below the floating chrome and scroll up under it.
-                contentPadding = PaddingValues(top = topInset + 16.dp),
+                // The chrome already ends at TabContentTop, where Home's first
+                // row sits.
+                contentPadding = PaddingValues(top = topInset),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
 
-                if (state.sectionsError != null) {
+                state.sectionsError?.let { sectionsError ->
                     item(key = "scope-load-error") {
                         Column(Modifier.padding(horizontal = 16.dp)) {
-                            Text(state.sectionsError, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            TextButton(onClick = onRetry) { Text("Retry") }
+                            Text(sectionsError.text(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            TextButton(onClick = onRetry) { Text(stringResource(CommonR.string.common_retry)) }
                         }
                     }
                 }
@@ -1255,11 +1549,13 @@ private fun RecommendedTabContent(
                     items = state.sections,
                     key = { section -> section.id },
                 ) { section ->
-                    // No "See All" — iOS has no such affordance (H3, Jim
-                    // 2026-07-10); the row omits it when onSeeAllClick is null.
                     HomeSectionRow(
                         section = section,
                         onItemClick = onItemClick,
+                        onExploreAllClick = onExploreSection?.let { open -> { open(section) } },
+                        onCollectionClick = onCollectionClick,
+                        activeProfileId = activeProfileId,
+                        showCollectionCounts = state.mediaScope == null,
                     )
                 }
 
@@ -1279,35 +1575,56 @@ private fun BrowseTabContent(
     onItemClick: (String) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
-    onSortChanged: (LibraryBrowseSort) -> Unit,
-    onNamePrefixChanged: (String?) -> Unit,
+    onSortChanged: (CatalogSortField, String?) -> Unit,
+    shownRatingSources: Set<String>,
+    letterJump: CatalogLetterJumpState?,
+    onPrepareLetterJump: (String) -> Unit,
+    letterJumpPosition: suspend (String) -> Int?,
     onDensityChanged: (CatalogViewDensity) -> Unit,
     onApplyFilter: (CatalogFilterState) -> Unit,
     onSetPreserve: (Boolean) -> Unit,
+    gridState: LazyGridState,
+    onShuffle: (() -> Unit)? = null,
+    shuffleEnabled: Boolean = true,
 ) {
     var showFilterSheet by remember { mutableStateOf(false) }
-    val isCustomised = state.browseSort != LibraryBrowseSort.RecentlyAdded ||
-        state.filterState.hasActiveFilters ||
-        state.selectedNamePrefix != null
+    val isCustomised = !state.isBrowseSortDefault ||
+        state.filterState.hasActiveFilters
 
     // Sort ▾ / Filter (n) / Reset — the same control row as the saved lists —
     // plus removable chips for active facets. Rendered as the grid's header
     // so it scrolls with the content under the chrome's glass.
     val controlsHeader: @Composable () -> Unit = {
         Column(modifier = Modifier.padding(bottom = 4.dp)) {
+            val relevance = state.browseSortRelevance
+            val sortOptions = CatalogSortField.options(
+                relevance = relevance,
+                includePersonalized = true,
+                shownRatingSources = shownRatingSources,
+                keep = state.browseSort,
+            )
             SortFilterControlsRow(
-                sortLabel = state.browseSort.label,
-                sortActive = state.browseSort != LibraryBrowseSort.RecentlyAdded,
-                sortOptions = LibraryBrowseSort.entries.map { SortMenuOption(id = it.name, label = it.label) },
+                sortLabel = stringResource(state.browseSort.labelRes(relevance)),
+                sortActive = !state.isBrowseSortDefault,
+                sortOptions = sortOptions.map { field ->
+                    val label = stringResource(field.labelRes(relevance))
+                    SortMenuOption(
+                        id = field.name,
+                        label = label,
+                        selectedLabel = "$label  ·  ${stringResource(field.directionLabelRes(state.browseOrder))}",
+                        flipsOnReselect = true,
+                    )
+                },
                 selectedSortId = state.browseSort.name,
-                onSelectSort = { id -> onSortChanged(LibraryBrowseSort.valueOf(id)) },
+                onSelectSort = { id -> onSortChanged(CatalogSortField.valueOf(id), null) },
                 filterCount = state.filterState.activeFacetCount,
                 onOpenFilters = { showFilterSheet = true },
+                onShuffle = onShuffle,
+                shuffleEnabled = shuffleEnabled,
                 showReset = isCustomised,
                 onReset = {
-                    onSortChanged(LibraryBrowseSort.RecentlyAdded)
+                    onSortChanged(DefaultLibraryBrowseSort, DefaultLibraryBrowseOrder)
                     onApplyFilter(state.filterState.resetFilters())
-                    onNamePrefixChanged(null)
                 },
             )
             if (state.filterState.hasActiveFilters) {
@@ -1337,6 +1654,7 @@ private fun BrowseTabContent(
                 PosterGridSkeleton(
                     progress = rememberShimmerProgress(),
                     modifier = Modifier.fillMaxSize().padding(top = topInset),
+                    posterAspect = state.loadingCardAspect,
                 )
             }
             state.catalogError != null -> {
@@ -1345,7 +1663,7 @@ private fun BrowseTabContent(
                 Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
                     Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { controlsHeader() }
                     ErrorView(
-                        message = state.catalogError ?: "Failed to load catalog",
+                        message = state.catalogError?.text() ?: stringResource(CommonR.string.library_error_loadCatalog),
                         onRetry = onRetry,
                         modifier = Modifier.weight(1f),
                     )
@@ -1355,41 +1673,58 @@ private fun BrowseTabContent(
                 Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
                     Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { controlsHeader() }
                     EmptyStateView(
-                        title = when (state.catalogLibraryHasItems) {
-                            false -> "This library is empty"
-                            true -> "No matches"
-                            null -> if (isCustomised) "No matches" else "No items found"
-                        },
-                        subtitle = when (state.catalogLibraryHasItems) {
-                            false -> "There is nothing in this library yet."
-                            true -> "No titles match the current filters."
-                            null -> if (isCustomised) "No titles match the current sort or filters." else "Try switching libraries"
-                        },
+                        title = stringResource(
+                            when (state.catalogLibraryHasItems) {
+                                false -> CommonR.string.library_empty
+                                true -> CommonR.string.library_noMatchesShort
+                                null -> if (isCustomised) CommonR.string.library_noMatchesShort else CommonR.string.library_noItems
+                            },
+                        ),
+                        subtitle = stringResource(
+                            when (state.catalogLibraryHasItems) {
+                                false -> CommonR.string.library_emptyBody
+                                true -> CommonR.string.library_noTitlesMatchFilters
+                                null -> if (isCustomised) {
+                                    CommonR.string.library_noTitlesMatchSortOrFilters
+                                } else {
+                                    CommonR.string.library_trySwitchingLibraries
+                                }
+                            },
+                        ),
                         icon = libraryIcon(state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.type.orEmpty()),
                         modifier = Modifier.weight(1f),
                     )
                 }
             }
             else -> {
+                val dateLocale = currentFormatLocale()
                 CatalogGrid(
                     items = state.catalogItems,
-                    isLoadingMore = state.isLoadingMoreCatalog,
+                    // A re-sort keeps the old page up while it reloads, and
+                    // loadMoreCatalog turns a next page away until then. Count
+                    // that reload as loading so the grid asks again once it
+                    // ends, even if the new page equals the old one.
+                    isLoadingMore = state.isLoadingMoreCatalog || state.isLoadingCatalog,
                     hasMore = state.catalogHasMore,
                     onItemClick = onItemClick,
                     onLoadMore = onLoadMore,
                     // Date sorts surface the sorted-by date under each card
                     // (mirrors the standalone BrowseScreen), Jim QA 2026-07-09.
-                    cardSubtitle = when (state.browseSort.sortField) {
-                        "added_at" -> { item -> formatCardDate(item.addedAt) }
-                        "release_date" -> { item -> formatCardDate(item.releaseDate) }
+                    cardSubtitle = when (state.browseSort.wireValue) {
+                        "added_at" -> { item -> formatCardDate(item.addedAt, dateLocale) }
+                        "release_date" -> { item -> formatCardDate(item.releaseDate, dateLocale) }
+                        "last_air_date" -> { item -> formatCardDate(item.lastAirDate, dateLocale) }
                         else -> null
                     },
-                    selectedNamePrefix = state.selectedNamePrefix,
-                    onNamePrefixSelected = onNamePrefixChanged,
+                    letterJump = letterJump,
+                    listKey = state.filterState,
+                    onPrepareLetterJump = onPrepareLetterJump,
+                    letterJumpPosition = letterJumpPosition,
                     viewDensity = state.catalogDensity,
                     bottomContentInset = LocalBottomChromeInset.current,
                     topContentInset = topInset,
                     header = controlsHeader,
+                    gridState = gridState,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -1436,7 +1771,7 @@ private fun LibraryActiveFilterChip(
         )
         Icon(
             imageVector = Icons.Filled.Cancel,
-            contentDescription = "Remove filter",
+            contentDescription = stringResource(CommonR.string.filters_remove),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .size(14.dp)
@@ -1448,6 +1783,7 @@ private fun LibraryActiveFilterChip(
 @Composable
 private fun CollectionsTabContent(
     state: LibrariesUiState,
+    gridState: LazyGridState,
     topInset: Dp,
     onCollectionClick: (LibraryCollection) -> Unit,
     onRetry: () -> Unit,
@@ -1461,15 +1797,15 @@ private fun CollectionsTabContent(
         }
         state.collectionsError != null && state.collections.isEmpty() -> {
             ErrorView(
-                message = state.collectionsError ?: "Failed to load collections",
+                message = state.collectionsError?.text() ?: stringResource(CommonR.string.collections_error_loadCollections),
                 onRetry = onRetry,
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         state.collections.isEmpty() -> {
             EmptyStateView(
-                title = "No collections found",
-                subtitle = "This library does not have any collections yet",
+                title = stringResource(CommonR.string.library_noCollections),
+                subtitle = stringResource(CommonR.string.library_noCollectionsBody),
                 icon = Icons.Default.VideoLibrary,
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
@@ -1478,7 +1814,6 @@ private fun CollectionsTabContent(
             // iOS `LibraryCollectionsView`: adaptive poster grid with shared
             // column/row spacing and 16pt padding insets. Follows the Library
             // grid's view density so both tabs show the same column count.
-            val gridState = rememberLazyGridState()
             DeferImagePresentationWhileScrolling(gridState) {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(
@@ -1492,7 +1827,7 @@ private fun CollectionsTabContent(
                 contentPadding = PaddingValues(
                     start = 16.dp,
                     end = 16.dp,
-                    top = topInset + 16.dp,
+                    top = topInset,
                     bottom = 24.dp + LocalBottomChromeInset.current,
                 ),
             ) {
@@ -1501,7 +1836,7 @@ private fun CollectionsTabContent(
                     key = { it.id },
                     contentType = { "library-collection" },
                 ) { collection ->
-                    InlineLibraryCollectionCard(
+                    CollectionPosterCard(
                         collection = collection,
                         showItemCount = state.mediaScope == null,
                         onClick = { onCollectionClick(collection) },
@@ -1514,75 +1849,16 @@ private fun CollectionsTabContent(
 }
 
 @Composable
-private fun InlineLibraryCollectionCard(
-    collection: LibraryCollection,
-    showItemCount: Boolean,
-    onClick: () -> Unit,
-) {
-    // iOS `LibraryCollectionCard`: VStack(spacing: 6) of a 2:3.3 poster
-    // (smallCornerRadius = 6) carrying a bottom-trailing count badge, a
-    // siloCaption (12) name (2 lines), and a siloSmall (11) secondary
-    // type label. The two text lines follow the caption preference
-    // (showsTitle / showsMetadata); the count badge rides the artwork.
-    val caption = LocalCardPresentation.current.caption
-    Column(
-        modifier = Modifier.clickable(onClick = onClick),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(6.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f))
-                .aspectRatio(2f / 3.3f),
-        ) {
-            ThumbhashImage(
-                url = collection.posterUrl,
-                thumbhash = collection.posterThumbhash,
-                contentDescription = collection.name,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-            if (showItemCount) Text(
-                text = collection.itemCount?.takeIf { it > 0 }?.toString() ?: "Smart",
-                fontSize = 12.sp,
-                color = Color.White,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(Color.Black.copy(alpha = 0.65f))
-                    .padding(horizontal = 8.dp, vertical = 5.dp),
-            )
-        }
-        if (caption.showsTitle) {
-            Text(
-                text = collection.name,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (caption.showsMetadata) {
-            Text(
-                text = if (showItemCount) collection.itemCount?.let { "$it items" } ?: "Collection" else "Collection",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-@Composable
 private fun LibrariesFloatingChrome(
     scrimProgress: Float,
     hazeState: HazeState,
     selectedLibrary: UserLibrary?,
+    /** The dock switches pages and libraries, so the header only names the library and its size. */
+    showsDock: Boolean,
+    headerCount: Int?,
     canSwitch: Boolean,
     activeProfile: Profile?,
+    remoteControl: TopBarRemoteControl,
     selectedTab: LibrariesSubtab,
     mediaScope: String?,
     onMediaScopeSelected: (String) -> Unit,
@@ -1593,8 +1869,8 @@ private fun LibrariesFloatingChrome(
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    onSignOutClick: (removeServer: Boolean) -> Unit,
     onShuffleClick: (() -> Unit)? = null,
     shuffleEnabled: Boolean = true,
     modifier: Modifier = Modifier,
@@ -1624,50 +1900,80 @@ private fun LibrariesFloatingChrome(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp),
+                .height(TabHeaderRowHeight)
+                .padding(horizontal = TopBarEdgeMargin),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            LibrarySelectorButton(
-                library = selectedLibrary,
-                canSwitch = canSwitch,
-                onClick = onLibrarySelectorClick,
-                modifier = Modifier.weight(1f),
-            )
+            if (showsDock) {
+                LibraryHeaderTitle(
+                    library = selectedLibrary,
+                    count = headerCount,
+                    mediaScope = mediaScope,
+                    kindLabel = selectedLibrary?.typeLabel() ?: stringResource(CommonR.string.library_chooseLibrary),
+                    modifier = Modifier.weight(1f).padding(vertical = 2.dp),
+                )
+            } else {
+                LibrarySelectorButton(
+                    library = selectedLibrary,
+                    canSwitch = canSwitch,
+                    onClick = onLibrarySelectorClick,
+                    modifier = Modifier.weight(1f),
+                )
+            }
 
             TabTopBarActions(
                 activeProfile = activeProfile,
+                remoteControl = remoteControl,
                 onSearchClick = onSearchClick,
                 onRequestsClick = onRequestsClick,
                 onWatchPartyClick = onWatchPartyClick,
                 onSettingsClick = onSettingsClick,
                 onSwitchProfileClick = onSwitchProfileClick,
-                onSwitchServerClick = onSwitchServerClick,
+                onChangeAccountClick = onChangeAccountClick,
                 onSignOutClick = onSignOutClick,
             )
         }
 
-        // iOS: top bar bottom inset = smallPadding (8).
-        Spacer(modifier = Modifier.height(8.dp))
+        if (showsDock) {
+            // No chip row under the header: the first row sits close below
+            // the library's name, or below a mixed library's Movies/Series
+            // switch, as on iPhone.
+            if (mediaScope != null) {
+                Spacer(modifier = Modifier.height(TabHeaderPillGap))
+                LibraryScopeSwitch(
+                    mediaScope = mediaScope,
+                    onSelect = onMediaScopeSelected,
+                    modifier = Modifier.padding(horizontal = TopBarEdgeMargin),
+                )
+            }
+            Spacer(modifier = Modifier.height(LibraryDockHeaderContentGap))
+        } else {
+        Spacer(modifier = Modifier.height(TabHeaderPillGap))
 
         if (mediaScope != null) {
             Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = mediaScope == "movie", onClick = { onMediaScopeSelected("movie") }, label = { Text("Movies") })
-                FilterChip(selected = mediaScope == "series", onClick = { onMediaScopeSelected("series") }, label = { Text("Series") })
+                FilterChip(selected = mediaScope == "movie", onClick = { onMediaScopeSelected("movie") }, label = { Text(stringResource(CommonR.string.filters_value_movie)) })
+                FilterChip(selected = mediaScope == "series", onClick = { onMediaScopeSelected("series") }, label = { Text(stringResource(CommonR.string.filters_value_series)) })
             }
         }
 
-        LibrarySubtabRow(
-            selectedTab = selectedTab,
-            onRecommendedClick = { onTabSelected(LibrariesSubtab.Recommended) },
-            onBrowseClick = { onTabSelected(LibrariesSubtab.Browse) },
-            onCollectionsClick = { onTabSelected(LibrariesSubtab.Collections) },
-            onShuffleClick = onShuffleClick,
-            shuffleEnabled = shuffleEnabled,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
+        Box(
+            modifier = Modifier.height(TabPillRowHeight),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            LibrarySubtabRow(
+                selectedTab = selectedTab,
+                onRecommendedClick = { onTabSelected(LibrariesSubtab.Recommended) },
+                onBrowseClick = { onTabSelected(LibrariesSubtab.Browse) },
+                onCollectionsClick = { onTabSelected(LibrariesSubtab.Collections) },
+                onShuffleClick = onShuffleClick,
+                shuffleEnabled = shuffleEnabled,
+                modifier = Modifier.padding(horizontal = TopBarEdgeMargin),
+            )
+        }
 
-            // iOS: tab selector bottom inset = padding (16).
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(TabContentGap))
+        }
         }
     }
 }
@@ -1697,7 +2003,7 @@ private fun LibrarySelectorButton(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
-                text = library?.name ?: "Libraries",
+                text = library?.name ?: stringResource(CommonR.string.library_libraries),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -1715,7 +2021,7 @@ private fun LibrarySelectorButton(
             }
         }
         Text(
-            text = library?.typeLabel() ?: "Choose a library",
+            text = library?.typeLabel() ?: stringResource(CommonR.string.library_chooseLibrary),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -1741,27 +2047,28 @@ fun LibrariesSelectorSheet(
         contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         // iOS `LibraryPickerSheet`: a large "Libraries" navigation title above a
-        // VStack(spacing: 8) of rows, with h/v padding = padding (16).
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+        // ScrollView of VStack(spacing: 8) rows, with h/v padding = padding (16).
+        // The title stays put and the rows scroll, so every library is reachable
+        // when the list is taller than the screen.
+        Text(
+            text = stringResource(CommonR.string.library_libraries),
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp),
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+
+        LazyColumn(
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 48.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                text = "Libraries",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            libraries.forEach { library ->
+            items(libraries, key = { it.id }) { library ->
                 LibrarySelectorRow(
                     library = library,
                     isSelected = library.id == selectedLibraryId,
                     onClick = { onSelectLibrary(library.id) },
                 )
             }
-
-            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
@@ -1781,17 +2088,17 @@ private fun LibrarySubtabRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         LibrarySubtabChip(
-            label = "Recommended",
+            label = stringResource(CommonR.string.library_recommended),
             selected = selectedTab == LibrariesSubtab.Recommended,
             onClick = onRecommendedClick,
         )
         LibrarySubtabChip(
-            label = "Library",
+            label = stringResource(CommonR.string.library_libraryTab),
             selected = selectedTab == LibrariesSubtab.Browse,
             onClick = onBrowseClick,
         )
         LibrarySubtabChip(
-            label = "Collections",
+            label = stringResource(CommonR.string.library_collections),
             selected = selectedTab == LibrariesSubtab.Collections,
             onClick = onCollectionsClick,
         )
@@ -1815,7 +2122,7 @@ private fun LibrarySubtabRow(
                         contentDescription = null,
                         modifier = Modifier.size(14.dp),
                     )
-                    Text(text = "Shuffle", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(text = stringResource(CommonR.string.library_shufflePill), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -1930,7 +2237,7 @@ private fun LibrarySelectorRow(
     }
 }
 
-private fun libraryIcon(type: String): ImageVector = when (type.lowercase()) {
+internal fun libraryIcon(type: String): ImageVector = when (type.lowercase()) {
     "movies", "movie" -> Icons.Default.LocalMovies
     "series", "tv", "shows" -> Icons.Default.Tv
     "audiobook", "audiobooks" -> Icons.Default.Headphones
@@ -1939,11 +2246,22 @@ private fun libraryIcon(type: String): ImageVector = when (type.lowercase()) {
     else -> Icons.Default.VideoLibrary
 }
 
-private fun UserLibrary.typeLabel(): String = when (type.lowercase()) {
-    "movies", "movie" -> "Movies library"
-    "series", "tv", "shows" -> "TV library"
-    "audiobook", "audiobooks" -> "Audiobooks library"
-    "book", "books", "ebook", "ebooks" -> "Books library"
-    "comic", "comics", "manga" -> "Comics / manga library"
-    else -> "Library"
-}
+@Composable
+private fun UserLibrary.typeLabel(): String = stringResource(
+    when (type.lowercase()) {
+        "movies", "movie" -> CommonR.string.library_type_movies
+        "series", "tv", "shows" -> CommonR.string.library_type_tv
+        "audiobook", "audiobooks" -> CommonR.string.library_type_audiobooks
+        "book", "books", "ebook", "ebooks" -> CommonR.string.library_type_books
+        "comic", "comics", "manga" -> CommonR.string.library_type_comics
+        else -> CommonR.string.library_type_generic
+    },
+)
+
+/** The shape of the cards a Recommended or Browse page is loading: square in an audiobook library. */
+private val LibrariesUiState.loadingCardAspect: Float
+    get() = if (isAudiobookLikeLibraryType(libraries.firstOrNull { it.id == selectedLibraryId }?.type)) {
+        1f
+    } else {
+        PosterArtworkAspectRatio
+    }

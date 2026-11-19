@@ -2,6 +2,8 @@ package org.siloserver.silo.common.ui.components
 
 import android.util.Base64
 import android.util.LruCache
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.ScrollableState
@@ -25,10 +27,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import coil3.compose.AsyncImage
+import coil3.compose.asPainter
+import coil3.imageLoader
+import coil3.memory.MemoryCache
 import coil3.decode.DataSource
 import coil3.request.ImageRequest
 import coil3.request.crossfade
@@ -135,9 +142,25 @@ fun ThumbhashImage(
     /** Applied to the loaded image only — used by the blurred page backdrop. */
     colorFilter: ColorFilter? = null,
     defaultArtwork: DefaultArtworkKind? = null,
+    /**
+     * When [url] changes, keeps drawing the image the previous URL loaded,
+     * while it is still in the memory cache, until the new one is ready,
+     * instead of dropping back to the ThumbHash. A detail hero uses it to
+     * keep the opening card's artwork while the full-size image loads.
+     */
+    holdPreviousImage: Boolean = false,
 ) {
     val context = LocalContext.current
     val deferPresentationWhile = LocalImagePresentationDeferral.current
+    val requestKey = cacheKey ?: url
+    var loadedKey by remember { mutableStateOf<String?>(null) }
+    val heldImage = remember(requestKey) {
+        // Only while another image is on its way: a URL withdrawn on
+        // purpose (a spoiler-hidden still) must not leave the old pixels up.
+        loadedKey?.takeIf { holdPreviousImage && !url.isNullOrBlank() && it != requestKey }
+            ?.let { context.imageLoader.memoryCache?.get(MemoryCache.Key(it))?.image?.asPainter(context) }
+    }
+    val rememberLoaded = { if (holdPreviousImage) loadedKey = requestKey }
 
     // Cached placeholders resolve synchronously (instant on scroll-back); a cold
     // hash decodes off the composition thread and blurs up a frame later, so the
@@ -149,7 +172,7 @@ fun ThumbhashImage(
     // to the default artwork rather than wait on a placeholder that never comes.
     var thumbhashUnusable by remember(thumbhash) { mutableStateOf(false) }
     // Plain `val` (not `by`) so the null-checked `placeholder` smart-casts below.
-    val placeholder = produceState(initialValue = cachedPlaceholder, thumbhash, cachedPlaceholder) {
+    val thumbhashPlaceholder = produceState(initialValue = cachedPlaceholder, thumbhash, cachedPlaceholder) {
         if (cachedPlaceholder != null) return@produceState
         val hash = thumbhash?.takeIf { it.isNotBlank() } ?: run {
             value = null
@@ -159,6 +182,7 @@ fun ThumbhashImage(
         if (decoded != null) ThumbhashPainterCache.put(hash, decoded) else thumbhashUnusable = true
         value = decoded
     }.value
+    val placeholder = heldImage ?: thumbhashPlaceholder
     val hasUsableThumbhash = !thumbhash.isNullOrBlank() && !thumbhashUnusable
 
     if (url.isNullOrBlank()) {
@@ -214,7 +238,10 @@ fun ThumbhashImage(
             // than dropping to an empty box.
             error = placeholder,
             colorFilter = colorFilter,
-            onSuccess = { onSuccess?.invoke() },
+            onSuccess = {
+                rememberLoaded()
+                onSuccess?.invoke()
+            },
             onError = {
                 failed = true
                 onError?.invoke()
@@ -233,7 +260,8 @@ fun ThumbhashImage(
     // whatever the request's placeholder is. With no thumbhash to stand in
     // (hero backdrops and title logos frequently have none) that is
     // transparent: the artwork appeared, then dissolved up from the page
-    // behind it over the crossfade. Reveal it in one frame instead.
+    // behind it over the crossfade. Instead the image fades in over the cover,
+    // which stays drawn until the fade completes.
     val gatedModel = remember(model) {
         model.newBuilder().crossfade(false).build()
     }
@@ -245,6 +273,9 @@ fun ThumbhashImage(
     // Once committed, the artwork stays committed through later gestures.
     var fullImageReady by remember(url) { mutableStateOf(false) }
     var fullImagePresented by remember(url) { mutableStateOf(false) }
+    val requestedAtNanos = remember(url) { System.nanoTime() }
+    val revealAlpha = remember(url) { Animatable(0f) }
+    val revealComplete by remember(revealAlpha) { derivedStateOf { revealAlpha.value >= 1f } }
     val currentOnSuccess by rememberUpdatedState(onSuccess)
     val presentFullImage = {
         if (!fullImagePresented) {
@@ -259,8 +290,21 @@ fun ThumbhashImage(
         presentFullImage()
     }
 
+    LaunchedEffect(url, fullImagePresented) {
+        if (!fullImagePresented || revealComplete) return@LaunchedEffect
+        // Artwork that resolves before the cover has been seen (a memory-cache
+        // hit on scroll-back) appears at once, as it always has. Anything the
+        // viewer waited on fades in instead of cutting over.
+        val waitedNanos = System.nanoTime() - requestedAtNanos
+        if (crossfadeMillis <= 0 || waitedNanos < InstantRevealWindowNanos) {
+            revealAlpha.snapTo(1f)
+        } else {
+            revealAlpha.animateTo(1f, tween(crossfadeMillis))
+        }
+    }
+
     Box(modifier = modifier) {
-        if (!fullImagePresented) {
+        if (!revealComplete) {
             when {
                 placeholder != null -> Image(
                     painter = placeholder,
@@ -288,6 +332,7 @@ fun ThumbhashImage(
             error = placeholder,
             colorFilter = colorFilter,
             onSuccess = { state ->
+                rememberLoaded()
                 fullImageReady = true
                 if (
                     state.result.dataSource == DataSource.MEMORY_CACHE ||
@@ -302,9 +347,24 @@ fun ThumbhashImage(
             },
             modifier = Modifier
                 .fillMaxSize()
+                .then(
+                    if (revealComplete) {
+                        Modifier
+                    } else {
+                        // ModulateAlpha fades the single bitmap draw without an
+                        // offscreen layer.
+                        Modifier.graphicsLayer {
+                            alpha = revealAlpha.value
+                            compositingStrategy = CompositingStrategy.ModulateAlpha
+                        }
+                    },
+                )
                 .drawWithContent {
                     if (fullImagePresented) drawContent()
                 },
         )
     }
 }
+
+/** A result this soon after the request was never visibly waited on. */
+private const val InstantRevealWindowNanos = 100_000_000L

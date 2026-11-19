@@ -8,6 +8,8 @@ import org.siloserver.silo.model.subtitles.SubtitleSyncJob
 import org.siloserver.silo.model.subtitles.SubtitleSyncState
 import org.siloserver.silo.model.subtitles.SubtitleTiming
 import kotlin.test.Test
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.english
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -33,7 +35,7 @@ class SubtitleSyncFeedbackTest {
                 activeKey = key.takeIf { onScreen },
                 cueRevisions = mapOf(key to revision),
                 loadedCueRevisions = mapOf(key to loaded),
-                nameOf = { "English" },
+                nameOf = { UiText.Raw("English") },
             )
 
     private fun SubtitleSyncFeedbackState.after(vararg inputs: SubtitleSyncFeedbackInput) =
@@ -43,24 +45,24 @@ class SubtitleSyncFeedbackTest {
     fun followsAnOwnSyncUntilTheNewCuesShow() {
         var state = SubtitleSyncFeedbackState().after(input(entry(job(SubtitleSyncJob.RUNNING, 0.4, "analyzing"))))
         assertEquals(
-            SubtitleSyncNotice("j1", SubtitleSyncNotice.Tone.Progress, "Syncing English subtitles", "Listening to the audio…", 40),
-            state.notice,
+            ShownNotice("j1", SubtitleSyncNotice.Tone.Progress, "Syncing English subtitles", "Listening to the audio…", 40),
+            state.notice?.shown(),
         )
 
         val synced = entry(job(SubtitleSyncJob.SYNCED), corrected)
         state = state.after(input(synced))
-        assertEquals("Applying new timing…", state.notice?.title)
+        assertEquals("Applying new timing…", state.notice?.title?.english())
         assertEquals(100, state.notice?.percent)
 
         // The player asks for the corrected cues; it is this viewer's own change.
         state = state.after(input(synced, revision = 1))
-        assertEquals("Applying new timing…", state.notice?.title)
+        assertEquals("Applying new timing…", state.notice?.title?.english())
         assertNull(state.foreign)
 
         state = state.after(input(synced, revision = 1, loaded = 1))
         assertEquals(
-            SubtitleSyncNotice("j1", SubtitleSyncNotice.Tone.Success, "Subtitles synced", "−3.0 s"),
-            state.notice,
+            ShownNotice("j1", SubtitleSyncNotice.Tone.Success, "Subtitles synced", "−3.0 s"),
+            state.notice?.shown(),
         )
         assertTrue("j1" in state.applied)
         // A later update does not announce it again.
@@ -74,8 +76,8 @@ class SubtitleSyncFeedbackTest {
             input(entry(job(SubtitleSyncJob.SYNCED), corrected), onScreen = false),
         )
         assertEquals(
-            SubtitleSyncNotice("j1", SubtitleSyncNotice.Tone.Success, "English subtitles synced", "−3.0 s"),
-            state.notice,
+            ShownNotice("j1", SubtitleSyncNotice.Tone.Success, "English subtitles synced", "−3.0 s"),
+            state.notice?.shown(),
         )
     }
 
@@ -83,16 +85,16 @@ class SubtitleSyncFeedbackTest {
     fun warnsWhenASyncCannotHelp() {
         val noMatch = SubtitleSyncFeedbackState().after(input(entry(job(SubtitleSyncJob.NO_MATCH))))
         assertEquals(SubtitleSyncNotice.Tone.Warning, noMatch.notice?.tone)
-        assertEquals("English subtitles don't match the audio", noMatch.notice?.title)
-        assertEquals("They're probably for another release. The timing wasn't changed.", noMatch.notice?.detail)
+        assertEquals("English subtitles don't match the audio", noMatch.notice?.title?.english())
+        assertEquals("They're probably for another release. The timing wasn't changed.", noMatch.notice?.detail?.english())
 
         val failed = SubtitleSyncFeedbackState().after(input(entry(job(SubtitleSyncJob.FAILED, failure = "unavailable"))))
-        assertEquals("Couldn't sync English subtitles", failed.notice?.title)
-        assertEquals("The server is busy. Try again in a few minutes.", failed.notice?.detail)
+        assertEquals("Couldn't sync English subtitles", failed.notice?.title?.english())
+        assertEquals("The server is busy. Try again in a few minutes.", failed.notice?.detail?.english())
 
         val already = SubtitleSyncFeedbackState().after(input(entry(job(SubtitleSyncJob.ALREADY_SYNCED))))
         assertEquals(SubtitleSyncNotice.Tone.Info, already.notice?.tone)
-        assertEquals("English subtitles already match the audio", already.notice?.title)
+        assertEquals("English subtitles already match the audio", already.notice?.title?.english())
     }
 
     @Test
@@ -103,7 +105,7 @@ class SubtitleSyncFeedbackTest {
         state = state.after(input(other, revision = 1))
         assertNull(state.notice)
         state = state.after(input(other, revision = 1, loaded = 1))
-        assertEquals("Subtitle timing updated", state.notice?.title)
+        assertEquals("Subtitle timing updated", state.notice?.title?.english())
         assertEquals(SubtitleSyncNotice.Tone.Info, state.notice?.tone)
     }
 
@@ -121,10 +123,10 @@ class SubtitleSyncFeedbackTest {
         val tracker = SubtitleSyncFeedbackTracker(backgroundScope)
         tracker.update(input(entry(job(SubtitleSyncJob.RUNNING, 0.5))))
         tracker.update(input(entry(job(SubtitleSyncJob.SYNCED), corrected)))
-        assertEquals("Applying new timing…", tracker.notice.value?.title)
+        assertEquals("Applying new timing…", tracker.notice.value?.title?.english())
         // The reload never reports: the success shows anyway.
         advanceTimeBy(SubtitleSyncFeedbackTracker.APPLY_TIMEOUT_MS + 1)
-        assertEquals("Subtitles synced", tracker.notice.value?.title)
+        assertEquals("Subtitles synced", tracker.notice.value?.title?.english())
         advanceTimeBy(SubtitleSyncFeedbackTracker.NOTICE_VISIBLE_MS + 1)
         assertNull(tracker.notice.value)
 
@@ -141,3 +143,14 @@ class SubtitleSyncFeedbackTest {
         assertNull(warning.notice.value)
     }
 }
+
+/** A notice as the card shows it, in English. */
+private data class ShownNotice(
+    val id: String,
+    val tone: SubtitleSyncNotice.Tone,
+    val title: String,
+    val detail: String? = null,
+    val percent: Int? = null,
+)
+
+private fun SubtitleSyncNotice.shown() = ShownNotice(id, tone, title.english(), detail?.english(), percent)

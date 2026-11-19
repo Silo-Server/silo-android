@@ -10,7 +10,28 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
+    <!--
+        Package visibility for the system speech recogniser. From Android 11 an
+        app cannot see packages it has not declared an interest in, so without
+        this the availability check comes back empty on every modern device and
+        the voice affordance silently never appears. Silo asks the recogniser to
+        listen. On Google TV with Android 11 and later, Silo calls the device's
+        speech recognition service directly, because Google TV's recognition
+        activity can't return a result there. The service records on Silo's
+        behalf, so Silo needs RECORD_AUDIO.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
@@ -18,13 +39,17 @@
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
     <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
 
+    <!-- supportsRtl="false": the TV layout stays left to right in right-to-left languages,
+         as on tvOS, until the TV mirroring pass. Text still follows its own direction
+         (TextDirection.Content in the TV typography), and title isolates follow the
+         interface language, not the layout (isRightToLeftText). -->
     <application
         android:name=".SiloTvApplication"
         android:allowBackup="false"
         android:banner="@drawable/tv_banner"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:supportsRtl="true"
+        android:supportsRtl="false"
         android:theme="@style/Theme.SiloTv"
         android:usesCleartextTraffic="true">
 
@@ -35,7 +60,7 @@
             android:name=".MainTvActivity"
             android:exported="true"
             android:banner="@drawable/tv_banner"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|locale|layoutDirection"
             android:label="@string/app_name"
             android:launchMode="singleTask"
             android:supportsPictureInPicture="false"
@@ -68,6 +93,8 @@
             <intent-filter>
                 <action android:name="org.siloserver.silo.debug.PLAYBACK_STATUS" />
                 <action android:name="org.siloserver.silo.debug.PLAYBACK_COMMAND" />
+                <action android:name="org.siloserver.silo.debug.CAST_STATUS" />
+                <action android:name="org.siloserver.silo.debug.CAST_TARGET" />
             </intent-filter>
         </receiver>
 

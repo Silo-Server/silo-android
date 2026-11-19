@@ -17,13 +17,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 
 data class RecommendationsUiState(
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
     val sections: List<ResolvedSection> = emptyList(),
     val tasteProfile: TasteProfile? = null,
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 class RecommendationsViewModel(
@@ -59,7 +62,7 @@ class RecommendationsViewModel(
         val owner = recommendationRepository.captureDiscoverAuthority()
         if (run != loadGeneration || !currentCoroutineContext().isActive) return@coroutineScope
         if (owner == null) {
-            _uiState.update { it.copy(isLoading = false, isRefreshing = false, sections = emptyList(), error = "Sign in to load recommendations.") }
+            _uiState.update { it.copy(isLoading = false, isRefreshing = false, sections = emptyList(), error = UiText.Key(SharedString.RecommendationsSignedOut)) }
             return@coroutineScope
         }
         val discoverResultDeferred = async { recommendationRepository.getDiscover(owner) }
@@ -100,9 +103,7 @@ class RecommendationsViewModel(
                         isLoading = false,
                         isRefreshing = false,
                         tasteProfile = tasteProfile,
-                        error = discoverResult.message.ifBlank {
-                            "Failed to load recommendations"
-                        },
+                        error = discoverResult.errorText(SharedString.RecommendationsLoadFailed),
                     )
                 }
             }
@@ -113,7 +114,7 @@ class RecommendationsViewModel(
                         isLoading = false,
                         isRefreshing = false,
                         tasteProfile = tasteProfile,
-                        error = "Network error. Check your connection.",
+                        error = UiText.Key(SharedString.NetworkError),
                     )
                 }
             }

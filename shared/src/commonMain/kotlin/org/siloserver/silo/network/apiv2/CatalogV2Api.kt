@@ -12,6 +12,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.CatalogBoxSet
+import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.SeasonsResponse
@@ -30,19 +32,40 @@ class CatalogV2Api(
         query: CatalogQueryV2,
         continuation: CatalogContinuationV2? = null,
         imageSize: String? = null,
+        widths: ArtworkWidths? = null,
+        /**
+         * Zero-based list position to read from instead of the first title.
+         * Never sent with [continuation]: the cursor already carries its
+         * position, and resending the seek would read the same page again.
+         */
+        seek: Int? = null,
+        /**
+         * A first page's `window_cursor`, sent with a nonzero [seek] so the
+         * server reuses the ordering boundaries it recorded for the list
+         * instead of scanning its sorted prefix on every seek.
+         */
+        windowCursor: String? = null,
     ): ApiResult<CatalogPageV2<BrowseItem>> {
         if (query.limit !in 1..100) return invalid("Page size must be between 1 and 100.")
+        if (seek != null && (seek < 0 || continuation != null)) return invalid("A seek starts a listing; it never continues one.")
+        val seekParam = seek?.takeIf { it > 0 }
+        val window = windowCursor?.takeIf { seekParam != null }
         val usePost = query.groups.isNotEmpty()
-        val key = "${if (usePost) "POST" else "GET"}/catalog:$imageSize:${SiloJson.encodeToString(query)}"
+        // A listing keeps the widths it started with: the server binds its cursors to them.
+        val artwork = if (continuation != null) continuation.widths else widths
+        val key = "${if (usePost) "POST" else "GET"}/catalog:$imageSize:${artwork?.key.orEmpty()}:${SiloJson.encodeToString(query)}"
         val scope = continuation?.scope ?: tokenManager?.snapshotCurrentScope()
         if (continuation != null && continuation.requestKey != key) return invalid("The query changed. Reload from the first page.")
         val result = ownedV2Call<CatalogPageWireV2, CatalogPageWireV2>(gate, tokenManager, scope, OwnerPolicy.IDENTITY, null, { _ ->
             if (usePost) client.post("/api/v2/catalog/query") {
                 scope?.let { authScope(it) }
                 imageSize?.let { parameter("image_size", it) }
+                artworkWidths(artwork, scope)
                 contentType(ContentType.Application.Json)
                 val body = SiloJson.encodeToJsonElement(CatalogQueryV2.serializer(), query).jsonObject.toMutableMap()
                 continuation?.let { body["cursor"] = JsonPrimitive(it.cursor) }
+                seekParam?.let { body["seek"] = JsonPrimitive(it) }
+                window?.let { body["cursor"] = JsonPrimitive(it) }
                 setBody(JsonObject(body))
             } else client.get("/api/v2/catalog") {
                 scope?.let { authScope(it) }
@@ -61,14 +84,17 @@ class CatalogV2Api(
                 parameter("skip_total", query.skipTotal)
                 parameter("limit", query.limit)
                 imageSize?.let { parameter("image_size", it) }
+                artworkWidths(artwork, scope)
                 query.sort?.let { parameter("sort", if (query.order == "desc") "-$it" else it) }
                 continuation?.let { parameter("cursor", it.cursor) }
+                seekParam?.let { parameter("seek", it) }
+                window?.let { parameter("cursor", it) }
             }
         }) { it }
         return when (result) {
             is ApiResult.Success -> {
                 val body = result.data
-                val next = next(key, body.page, continuation, scope)
+                val next = next(key, body.page, continuation, scope, artwork)
                 when (next) {
                     is ApiResult.Success -> ApiResult.Success(CatalogPageV2(body.items, body.total, body.totalExact,
                         next.data, body.effectiveSort, body.searchDiagnostics, body.windowCursor))
@@ -79,6 +105,23 @@ class CatalogV2Api(
             is ApiResult.Error -> result.restartMessage()
             is ApiResult.NetworkError -> result
         }
+    }
+
+    /**
+     * Where each letter starts in the title-ordered list [browse] pages for
+     * the same scope and rules, or null from a server that has no letter
+     * index (it answers the route with 404 or 405, or 501 when its store
+     * cannot count by letter).
+     */
+    suspend fun letters(query: CatalogLettersQueryV2): ApiResult<CatalogLettersV2?> {
+        val result = read<CatalogLettersV2, CatalogLettersV2>({ scope ->
+            client.post("/api/v2/catalog/letters") {
+                scope?.let { authScope(it) }
+                contentType(ContentType.Application.Json)
+                setBody(SiloJson.encodeToJsonElement(CatalogLettersQueryV2.serializer(), query))
+            }
+        }) { it }
+        return if (result is ApiResult.Error && result.code in LETTERS_UNSUPPORTED_STATUSES) ApiResult.Success(null) else result
     }
 
     suspend fun audiobookGroups(
@@ -138,11 +181,12 @@ class CatalogV2Api(
         client.get("/api/v2/library/$libraryId/collections") { scope?.let { authScope(it) } }
     }) { it }
 
-    suspend fun itemDetail(id: String, libraryId: Int? = null): ApiResult<ItemDetail> =
+    suspend fun itemDetail(id: String, libraryId: Int? = null, widths: ArtworkWidths? = null): ApiResult<ItemDetail> =
         read<ItemDetailReadV2, ItemDetail>({ scope ->
             client.get("/api/v2/catalog/items/${id.encodeURLPathPart()}") {
                 scope?.let { authScope(it) }
                 libraryId?.let { parameter("library_id", it) }
+                artworkWidths(widths, scope)
             }
         }) { it.toDomain() }
 
@@ -154,11 +198,12 @@ class CatalogV2Api(
             }
         }) { it.requireComplete(); SeasonsResponse(it.items) }
 
-    suspend fun seasonEpisodes(id: String, number: Int, libraryId: Int? = null): ApiResult<EpisodesResponse> =
+    suspend fun seasonEpisodes(id: String, number: Int, libraryId: Int? = null, widths: ArtworkWidths? = null): ApiResult<EpisodesResponse> =
         read<DetailCollectionReadV2<EpisodeListItemReadV2>, EpisodesResponse>({ scope ->
             client.get("/api/v2/catalog/series/${id.encodeURLPathPart()}/seasons/$number/episodes") {
                 scope?.let { authScope(it) }
                 libraryId?.let { parameter("library_id", it) }
+                artworkWidths(widths, scope)
             }
         }) { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
 
@@ -177,6 +222,43 @@ class CatalogV2Api(
                 libraryId?.let { parameter("library_id", it) }
             }
         }) { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
+
+    /** A box set's movies in [libraryId] that the viewer can see, in collection order. */
+    suspend fun boxSet(id: String, libraryId: String, widths: ArtworkWidths? = null): ApiResult<CatalogBoxSetDetail> =
+        read<CatalogBoxSetDetailWireV2, CatalogBoxSetDetail>({ scope ->
+            client.get("/api/v2/catalog/box-sets/${id.encodeURLPathPart()}") {
+                scope?.let { authScope(it) }
+                parameter("library_id", libraryId)
+                artworkWidths(widths, scope)
+            }
+        }) { it.toDomain() }
+
+    /**
+     * The box set a movie belongs to, as [boxSet] reads it, or null when the
+     * movie is in no box set the viewer sees (the server answers `{}`).
+     */
+    suspend fun itemBoxSet(id: String, libraryId: Int? = null, widths: ArtworkWidths? = null): ApiResult<CatalogBoxSetDetail?> =
+        read<CatalogItemBoxSetWireV2, CatalogBoxSetDetail?>({ scope ->
+            client.get("/api/v2/catalog/items/${id.encodeURLPathPart()}/box-set") {
+                scope?.let { authScope(it) }
+                libraryId?.let { parameter("library_id", it) }
+                artworkWidths(widths, scope)
+            }
+        }) { it.boxSet?.toDomain() }
+
+    /** Box sets whose name, or two or more of whose movies' titles, match [query]; best match first. */
+    suspend fun searchBoxSets(query: String, limit: Int = 5): ApiResult<List<CatalogBoxSet>> {
+        val q = query.trim()
+        if (q.isEmpty() || q.length > 200) return ApiResult.Error(0, "validation_failed", "Box set search needs 1 to 200 characters.")
+        if (limit !in 1..20) return ApiResult.Error(0, "validation_failed", "Box set search limit must be between 1 and 20.")
+        return read<CatalogBoxSetListWireV2, List<CatalogBoxSet>>({ scope ->
+            client.get("/api/v2/catalog/box-sets") {
+                scope?.let { authScope(it) }
+                parameter("q", q)
+                parameter("limit", limit)
+            }
+        }) { it.items }
+    }
 
     suspend fun person(id: Long): ApiResult<Person> =
         read<PersonReadV2, Person>({ scope ->
@@ -205,11 +287,16 @@ class CatalogV2Api(
         crossinline block: suspend (AuthScopeSnapshot?) -> HttpResponse, crossinline convert: (T) -> R,
     ): ApiResult<R> = ownedV2Call<T, R>(gate, tokenManager, tokenManager?.snapshotCurrentScope(), OwnerPolicy.IDENTITY, null, block, convert)
 
-    private fun next(key: String, page: PageInfo, previous: CatalogContinuationV2?, scope: AuthScopeSnapshot?): ApiResult<CatalogContinuationV2?> {
+    private fun next(key: String, page: PageInfo, previous: CatalogContinuationV2?, scope: AuthScopeSnapshot?,
+        widths: ArtworkWidths? = null): ApiResult<CatalogContinuationV2?> {
         if (!page.hasMore) return ApiResult.Success(null)
         val cursor = page.nextCursor
         if (cursor.isNullOrBlank() || cursor in previous?.seen.orEmpty()) return invalid("The server returned invalid pagination. Reload from the first page.")
-        return ApiResult.Success(CatalogContinuationV2(key, cursor, scope, previous?.seen.orEmpty() + cursor))
+        return ApiResult.Success(CatalogContinuationV2(key, cursor, scope, previous?.seen.orEmpty() + cursor, widths))
+    }
+
+    private companion object {
+        val LETTERS_UNSUPPORTED_STATUSES = setOf(404, 405, 501)
     }
 
     private fun invalid(message: String) = ApiResult.Error(0, "invalid_cursor", message)

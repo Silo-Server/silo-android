@@ -37,8 +37,12 @@ import java.util.Vector
  * silo-apple [PairingSession.tlsParameters] byte-for-byte.
  */
 internal object PairingPsk {
-    val key: ByteArray = "silo-companion-pairing-v1".toByteArray(Charsets.UTF_8)
-    val identity: ByteArray = "silo-pairing".toByteArray(Charsets.UTF_8)
+    // Fresh arrays on every use: BouncyCastle zeroes the PSK buffer it is
+    // handed once a TLS 1.2 handshake has derived its keys. Handing it one
+    // shared array let the first iPhone or iPad wipe the TV's key for the rest
+    // of the process, failing every later handshake (TLS 1.3 included).
+    fun key(): ByteArray = "silo-companion-pairing-v1".toByteArray(Charsets.UTF_8)
+    fun identity(): ByteArray = "silo-pairing".toByteArray(Charsets.UTF_8)
 
     const val tls12CipherSuite: Int = CipherSuite.TLS_PSK_WITH_AES_128_GCM_SHA256
     const val tls13CipherSuite: Int = CipherSuite.TLS_AES_128_GCM_SHA256
@@ -211,7 +215,7 @@ private class SiloPskTlsServer(
     object : TlsPSKIdentityManager {
         override fun getHint(): ByteArray? = null
 
-        override fun getPSK(identity: ByteArray?): ByteArray = PairingPsk.key
+        override fun getPSK(identity: ByteArray?): ByteArray = PairingPsk.key()
     },
 ) {
 
@@ -236,8 +240,8 @@ private class SiloPskTlsServer(
      */
     override fun getExternalPSK(identities: Vector<*>?): TlsPSKExternal =
         BasicTlsPSKExternal(
-            PairingPsk.identity,
-            bcCrypto.createSecret(PairingPsk.key),
+            PairingPsk.identity(),
+            bcCrypto.createSecret(PairingPsk.key()),
             PRFAlgorithm.tls13_hkdf_sha256,
         )
 

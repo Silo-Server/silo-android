@@ -1,5 +1,10 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.network.ServerSetupScheme
+import org.siloserver.silo.common.network.buildServerSetupCandidateUrls
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 
 import io.ktor.client.HttpClient
@@ -27,18 +32,30 @@ import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.AuthApi
+import org.siloserver.silo.common.discovery.DiscoveredServer
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupStatusResponse
 import org.siloserver.silo.repository.AuthRepository
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import org.siloserver.silo.common.i18n.text
 
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 @OptIn(ExperimentalCoroutinesApi::class)
 class TvServerSetupPersistenceTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
+    /** Setup text as the screen shows it in English. */
+    private fun UiText.inEnglish(): String = text(resources)
+
     private val dispatcher = StandardTestDispatcher()
 
     @BeforeTest
@@ -93,6 +110,34 @@ class TvServerSetupPersistenceTest {
             tokenManager.serverUrlWrites,
             "Failed probes must not persist candidate URLs.",
         )
+    }
+
+    @Test
+    fun serverErrorKeepsTheTypedAddressSoANewPortIsTried() = runTest(dispatcher) {
+        val tried = mutableListOf<String>()
+        val viewModel = track(
+            TvServerSetupViewModel(
+                authRepository = repositoryFor(RecordingTokenManager()),
+                cleartextConsentStore = FakeCleartextConsentStore(),
+                getSetupStatus = { candidate ->
+                    tried += candidate
+                    ApiResult.Error(code = 404, error = "not_found", message = "Not found")
+                },
+                getSignupStatus = { ApiResult.Success(SignupStatusResponse(enabled = false)) },
+            ),
+        )
+
+        viewModel.onServerUrlChanged("media.example.com")
+        viewModel.onSchemeSelected(ServerSetupScheme.Http)
+        viewModel.onPortChanged("8090")
+        viewModel.onConnectClick()
+        awaitSettled(viewModel)
+        viewModel.onPortChanged("8429")
+        viewModel.onConnectClick()
+        awaitSettled(viewModel)
+
+        assertEquals("media.example.com", viewModel.uiState.value.serverUrl)
+        assertEquals(listOf("http://media.example.com:8090", "http://media.example.com:8429"), tried)
     }
 
     @Test
@@ -191,7 +236,9 @@ class TvServerSetupPersistenceTest {
     @Test
     fun successfulUnnormalizableHttpCandidateFailsClosed() = runTest(dispatcher) {
         val tokenManager = RecordingTokenManager()
-        val viewModel = track(viewModelFor(tokenManager))
+        // The address parser already refuses this host; the seam reaches the
+        // guard behind it, which must still refuse to save it.
+        val viewModel = track(viewModelFor(tokenManager, candidateUrls = { listOf("http://silo_lan") }))
 
         viewModel.onServerUrlChanged("http://silo_lan")
         viewModel.onConnectClick()
@@ -199,13 +246,35 @@ class TvServerSetupPersistenceTest {
 
         assertEquals(emptyList(), tokenManager.serverUrlWrites)
         assertNull(viewModel.uiState.value.navigateTo)
-        assertEquals("Could not safely identify this HTTP server.", viewModel.uiState.value.error)
+        assertEquals("Could not safely identify this HTTP server.", viewModel.uiState.value.error?.inEnglish())
+    }
+
+    @Test
+    fun foundHttpServerAsksForConsentBeforeSavingLikeATypedAddress() = runTest(dispatcher) {
+        val tokenManager = RecordingTokenManager()
+        val viewModel = track(viewModelFor(tokenManager))
+
+        viewModel.connectTo(DiscoveredServer(serverId = "srv", name = "Den", url = "http://192.168.1.5:8090"))
+        awaitSettled(viewModel)
+
+        assertEquals("http://192.168.1.5:8090", viewModel.uiState.value.pendingCleartextUrl)
+        assertEquals(emptyList(), tokenManager.serverUrlWrites)
+        assertNull(viewModel.uiState.value.navigateTo)
+
+        viewModel.confirmCleartextConnection()
+        awaitSettled(viewModel)
+
+        assertEquals(listOf("http://192.168.1.5:8090"), tokenManager.serverUrlWrites)
+        assertEquals(TvServerSetupDestination.Login(signupEnabled = true), viewModel.uiState.value.navigateTo)
     }
 
     private fun viewModelFor(
         tokenManager: RecordingTokenManager,
         approvals: FakeCleartextConsentStore = FakeCleartextConsentStore(),
         httpsSucceeds: Boolean = false,
+        candidateUrls: (TvServerSetupUiState) -> List<String> = {
+            buildServerSetupCandidateUrls(it.serverUrl, it.selectedScheme, it.port)
+        },
     ) = TvServerSetupViewModel(
         authRepository = repositoryFor(tokenManager),
         cleartextConsentStore = approvals,
@@ -219,6 +288,7 @@ class TvServerSetupPersistenceTest {
         getSignupStatus = {
             ApiResult.Success(SignupStatusResponse(enabled = true))
         },
+        candidateUrls = candidateUrls,
     )
 
     private fun repositoryFor(

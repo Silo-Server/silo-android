@@ -2,7 +2,9 @@ package org.siloserver.silo.common.downloads
 
 import android.content.Context
 import android.util.Log
+import org.siloserver.silo.common.R
 import androidx.work.WorkManager
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
@@ -27,7 +29,7 @@ import kotlinx.coroutines.withContext
 /**
  * Thin Android-side helper that combines the cross-platform
  * [DownloadsRepository.create] call with the platform-specific
- * [DownloadWorker.enqueue] handoff. Centralises the (serverId, profileId)
+ * [DownloadWorker.enqueue] handoff. Centralises the (serverId, accountId, profileId)
  * resolution so ViewModels stay free of Android `Context` references.
  *
  * Also responsible for stashing the catalog metadata on disk at download
@@ -66,7 +68,7 @@ class DownloadEnqueuer(
         downloadQualityOverride: DownloadQuality? = null,
     ): ApiResult<Unit> {
         val authority = authorities?.snapshotDurableLoginAuthority()
-        if (authorities != null && authority == null) return ApiResult.Error(0, "identity_changed", "Downloads need a saved login.")
+        if (authorities != null && authority == null) return clientError(0, "identity_changed", R.string.downloads_error_needsLogin, "Downloads need a saved login.")
         Log.i(TAG, "start: contentId=$contentId fileId=$fileId title=$displayTitle")
         if (activeDownloadExists(fileId)) {
             Log.i(TAG, "start: fileId=$fileId already queued/downloading — skipping duplicate")
@@ -81,7 +83,7 @@ class DownloadEnqueuer(
             expectedAuthority = authority,
         )) {
             is ApiResult.Success -> r.data.also { Log.i(TAG, "start: server record id=${it.id} status=${it.status}") }
-            is ApiResult.Error -> { Log.w(TAG, "start: server error ${r.code} ${r.message}"); return ApiResult.Error(r.code, r.error, r.message) }
+            is ApiResult.Error -> { Log.w(TAG, "start: server error ${r.code} ${r.message}"); return r }
             is ApiResult.NetworkError -> { Log.w(TAG, "start: network error", r.exception); return ApiResult.NetworkError(r.exception) }
         }
         val sidecar = buildInitialSidecar(record, contentId, displayTitle)
@@ -109,14 +111,14 @@ class DownloadEnqueuer(
         downloadQualityOverride: DownloadQuality? = null,
     ): ApiResult<Unit> {
         val authority = authorities?.snapshotDurableLoginAuthority()
-        if (authorities != null && authority == null) return ApiResult.Error(0, "identity_changed", "Downloads need a saved login.")
+        if (authorities != null && authority == null) return clientError(0, "identity_changed", R.string.downloads_error_needsLogin, "Downloads need a saved login.")
         Log.i(TAG, "startEpisode: series=$seriesContentId ep=$episodeContentId fileId=$fileId S${seasonNumber}E${episodeNumber}")
         if (activeDownloadExists(fileId)) {
             Log.i(TAG, "startEpisode: fileId=$fileId already queued/downloading — skipping duplicate")
             return alreadyActive()
         }
         // Unknown numbers leave the S/E label out rather than print "S0E0".
-        val episodeCode = if (seasonNumber != null && episodeNumber != null) "S${seasonNumber}E${episodeNumber}" else null
+        val episodeCode = if (seasonNumber != null && episodeNumber != null) episodeTag(seasonNumber, episodeNumber) else null
         val shownEpisodeTitle = episodeTitle?.takeIf { it.isNotBlank() }
         val displayTitle = listOfNotNull(seriesTitle, episodeCode).joinToString(" ") +
             (shownEpisodeTitle?.let { " · $it" } ?: "")
@@ -130,7 +132,7 @@ class DownloadEnqueuer(
             expectedAuthority = authority,
         )) {
             is ApiResult.Success -> r.data
-            is ApiResult.Error -> { Log.w(TAG, "startEpisode: server error ${r.code} ${r.message}"); return ApiResult.Error(r.code, r.error, r.message) }
+            is ApiResult.Error -> { Log.w(TAG, "startEpisode: server error ${r.code} ${r.message}"); return r }
             is ApiResult.NetworkError -> { Log.w(TAG, "startEpisode: network error", r.exception); return ApiResult.NetworkError(r.exception) }
         }
         val episodeDetail = (catalogRepository.getItemDetail(episodeContentId) as? ApiResult.Success)?.data
@@ -171,7 +173,7 @@ class DownloadEnqueuer(
         downloadQualityOverride: DownloadQuality? = null,
     ): ApiResult<Unit> {
         val authority = authorities?.snapshotDurableLoginAuthority()
-        if (authorities != null && authority == null) return ApiResult.Error(0, "identity_changed", "Downloads need a saved login.")
+        if (authorities != null && authority == null) return clientError(0, "identity_changed", R.string.downloads_error_needsLogin, "Downloads need a saved login.")
         Log.i(TAG, "startSeries: contentId=$seriesContentId")
         val created = when (val r = repository.createBatch(
             downloadRequest(
@@ -186,7 +188,7 @@ class DownloadEnqueuer(
             expectedAuthority = authority,
         )) {
             is ApiResult.Success -> r.data
-            is ApiResult.Error -> { Log.w(TAG, "startSeries: server error ${r.code} ${r.message}"); return ApiResult.Error(r.code, r.error, r.message) }
+            is ApiResult.Error -> { Log.w(TAG, "startSeries: server error ${r.code} ${r.message}"); return r }
             is ApiResult.NetworkError -> { Log.w(TAG, "startSeries: network error", r.exception); return ApiResult.NetworkError(r.exception) }
         }
         val records = created.downloads
@@ -194,7 +196,7 @@ class DownloadEnqueuer(
 
         val seriesDetail = (catalogRepository.getItemDetail(seriesContentId) as? ApiResult.Success)?.data
         val episodeByFileId = buildEpisodeIndexByFileId(seriesContentId)
-        val seriesTitle = seriesDetail?.title ?: "Series"
+        val seriesTitle = seriesDetail?.title ?: UNKNOWN_SERIES_TITLE
         val posterUrl = seriesDetail?.posterUrl
 
         for (record in records) {
@@ -211,9 +213,9 @@ class DownloadEnqueuer(
                 record = record,
                 title = seriesTitle,
                 subtitle = ep?.let {
-                    "S${it.seasonNumber}E${it.episodeNumber}" +
+                    episodeTag(it.seasonNumber, it.episodeNumber) +
                         (it.title?.takeIf { t -> t.isNotBlank() }?.let { t -> " · $t" } ?: "")
-                } ?: "Series episode",
+                } ?: UNKNOWN_EPISODE_SUBTITLE,
                 posterUrl = posterUrl,
                 posterThumbhash = seriesDetail?.posterThumbhash,
                 posterIsEpisodeStill = false,
@@ -227,7 +229,7 @@ class DownloadEnqueuer(
                 mediaType = DownloadMediaType.TvShow.wire,
                 updatedAtMs = System.currentTimeMillis(),
             )
-            val displayTitle = "$seriesTitle ${ep?.let { "S${it.seasonNumber}E${it.episodeNumber}" } ?: ""}".trim()
+            val displayTitle = "$seriesTitle ${ep?.let { episodeTag(it.seasonNumber, it.episodeNumber) } ?: ""}".trim()
             finalizeAndEnqueue(record, sidecar, displayTitle, authority)
         }
         return batchOutcome(created.skipped)
@@ -250,23 +252,23 @@ class DownloadEnqueuer(
         downloadQualityOverride: DownloadQuality? = null,
     ): ApiResult<Unit> {
         val authority = authorities?.snapshotDurableLoginAuthority()
-        if (authorities != null && authority == null) return ApiResult.Error(0, "identity_changed", "Downloads need a saved login.")
+        if (authorities != null && authority == null) return clientError(0, "identity_changed", R.string.downloads_error_needsLogin, "Downloads need a saved login.")
         Log.i(TAG, "startSeason: series=$seriesContentId season=$seasonNumber")
         val episodes = when (val r = catalogRepository.getEpisodes(seriesContentId, seasonNumber)) {
             is ApiResult.Success -> r.data.episodes
-            is ApiResult.Error -> return ApiResult.Error(r.code, r.error, r.message)
+            is ApiResult.Error -> return r
             is ApiResult.NetworkError -> return ApiResult.NetworkError(r.exception)
         }
         if (episodes.isEmpty()) return ApiResult.Success(Unit)
 
         val seriesDetail = (catalogRepository.getItemDetail(seriesContentId) as? ApiResult.Success)?.data
-        val seriesTitle = seriesDetail?.title ?: "Series"
+        val seriesTitle = seriesDetail?.title ?: UNKNOWN_SERIES_TITLE
         val posterUrl = seriesDetail?.posterUrl
 
         var firstError: ApiResult<Unit>? = null
         var queued = 0
         for (ep in episodes) {
-            if (authorities != null && authority != authorities.snapshotDurableLoginAuthority()) return ApiResult.Error(0, "identity_changed", "The download owner changed.")
+            if (authorities != null && authority != authorities.snapshotDurableLoginAuthority()) return clientError(0, "identity_changed", R.string.downloads_error_ownerChanged, "The download owner changed.")
             // Pick the highest-resolution file (last entry after best-pick
             // would be ideal, but the server already sorts; use first).
             val fileId = ep.files.firstOrNull()?.fileId ?: continue
@@ -297,6 +299,7 @@ class DownloadEnqueuer(
 
     private fun batchOutcome(skipped: List<org.siloserver.silo.model.download.SkippedDownload>): ApiResult<Unit> =
         if (skipped.isEmpty()) ApiResult.Success(Unit) else ApiResult.Error(0, "downloads_partially_skipped",
+            context.resources.getQuantityString(R.plurals.downloads_error_partiallySkipped, skipped.size, skipped.size, LocaleFormat.integer(skipped.size)),
             "${skipped.size} episodes could not be downloaded. Available episodes were queued.")
 
     private suspend fun completedLocalExists(
@@ -306,9 +309,10 @@ class DownloadEnqueuer(
         val owner = authority ?: return false
         if (owner != authorities?.snapshotDurableLoginAuthority()) return false
         val profile = owner.scope.profileId ?: return false
-        val local = metadataStore.readSidecar(owner.scope.serverId, profile, record.mediaFileId) ?: return false
+        val account = owner.scope.accountId.orEmpty()
+        val local = metadataStore.readSidecar(owner.scope.serverId, account, profile, record.mediaFileId) ?: return false
         return local.record.id == record.id && local.record.statusEnum() == DownloadStatus.Completed &&
-            storage.exists(owner.scope.serverId, profile, record.mediaFileId)
+            storage.exists(owner.scope.serverId, account, profile, record.mediaFileId)
     }
 
     /** Builds a fileId → EpisodeListItem map across every season of [seriesContentId].
@@ -348,8 +352,9 @@ class DownloadEnqueuer(
      */
     private suspend fun activeDownloadExists(fileId: Int): Boolean {
         val serverId = serverRegistry.activeServerId.value ?: DEFAULT_SERVER_ID
+        val accountId = serverRegistry.activeAccountId.value.orEmpty()
         val profileId = profileRepository.getActiveProfileId() ?: DEFAULT_PROFILE_ID
-        val existing = runCatching { metadataStore.readSidecar(serverId, profileId, fileId) }.getOrNull()
+        val existing = runCatching { metadataStore.readSidecar(serverId, accountId, profileId, fileId) }.getOrNull()
             ?: return false
         val claimsActive = when (existing.record.statusEnum()) {
             DownloadStatus.Queued, DownloadStatus.Downloading -> true
@@ -362,7 +367,7 @@ class DownloadEnqueuer(
         if (System.currentTimeMillis() - existing.updatedAtMs < WORK_VISIBILITY_GRACE_MS) return true
         if (hasLiveWork(existing.record.id)) return true
         Log.i(TAG, "activeDownloadExists: fileId=$fileId sidecar is stale (no live work) — dropping")
-        runCatching { metadataStore.deleteSidecar(serverId, profileId, fileId) }
+        runCatching { metadataStore.deleteSidecar(serverId, accountId, profileId, fileId) }
             .onFailure { Log.w(TAG, "activeDownloadExists: stale deleteSidecar failed for fileId=$fileId", it) }
         return false
     }
@@ -414,7 +419,7 @@ class DownloadEnqueuer(
 
     /**
      * Common tail: persists the sidecar and kicks off the
-     * [DownloadWorker]. Pulls (serverId, profileId, wifiOnly) here once so
+     * [DownloadWorker]. Pulls (serverId, accountId, profileId, wifiOnly) here once so
      * each entry point doesn't repeat the lookup.
      */
     private suspend fun finalizeAndEnqueue(
@@ -425,6 +430,9 @@ class DownloadEnqueuer(
     ) {
         check(authorities == null || authority == authorities.snapshotDurableLoginAuthority()) { "The download owner changed" }
         val serverId = serverRegistry.activeServerId.value ?: DEFAULT_SERVER_ID
+        // The owner's account when there is one: the download is filed under
+        // the account whose credentials created it.
+        val accountId = authority?.scope?.accountId ?: serverRegistry.activeAccountId.value.orEmpty()
         val profileId = profileRepository.getActiveProfileId() ?: DEFAULT_PROFILE_ID
         val wifiOnly = playerSettingsStore.downloadsWifiOnlyFlow.first()
         val deviceId = devices?.current()?.id
@@ -435,12 +443,13 @@ class DownloadEnqueuer(
         // re-asserts the row on status transitions; full create-if-missing is a
         // tracked follow-up.)
         suspend fun persistAndEnqueue() {
-        metadataStore.writeSidecar(serverId, profileId, sidecar)
+        metadataStore.writeSidecar(serverId, accountId, profileId, sidecar)
         DownloadWorker.enqueue(
             context = context,
             downloadId = record.id,
             fileId = record.mediaFileId,
             serverId = serverId,
+            accountId = accountId,
             profileId = profileId,
             fileName = sidecar.fileName,
             container = sidecar.container,
@@ -486,7 +495,7 @@ class DownloadEnqueuer(
             subtitle = detail?.let { d ->
                 when {
                     d.seriesTitle != null && d.seasonNumber != null && d.episodeNumber != null ->
-                        "${d.seriesTitle} · S${d.seasonNumber}E${d.episodeNumber}"
+                        "${d.seriesTitle} · ${episodeTag(d.seasonNumber, d.episodeNumber)}"
                     d.year > 0 -> "${d.year}"
                     else -> null
                 }
@@ -526,6 +535,7 @@ class DownloadEnqueuer(
     data class CancelScope(
         val serverId: String,
         val profileId: String,
+        val accountId: String = "",
     )
 
     /** Capture identity synchronously with the UI record being acted on. */
@@ -534,6 +544,7 @@ class DownloadEnqueuer(
         return CancelScope(
             serverId = active?.id ?: DEFAULT_SERVER_ID,
             profileId = active?.profileId ?: DEFAULT_PROFILE_ID,
+            accountId = active?.accountId.orEmpty(),
         )
     }
 
@@ -548,7 +559,12 @@ class DownloadEnqueuer(
         scope: CancelScope,
     ) {
         cancel(downloadId)
-        runCatching { metadataStore.deleteSidecar(scope.serverId, scope.profileId, fileId) }
+        // A worker stopped by the system keeps its partial for the retry; a
+        // cancel while that retry waits runs no worker cleanup, and the row
+        // removed below is the only pointer to those bytes.
+        runCatching { storage.delete(scope.serverId, scope.accountId, scope.profileId, fileId) }
+            .onFailure { Log.w(TAG, "cancel: partial delete failed for fileId=$fileId", it) }
+        runCatching { metadataStore.deleteSidecar(scope.serverId, scope.accountId, scope.profileId, fileId) }
             .onFailure { Log.w(TAG, "cancel: deleteSidecar failed for fileId=$fileId", it) }
     }
 
@@ -556,7 +572,20 @@ class DownloadEnqueuer(
      *  nothing was enqueued, and callers key their "download started" feedback
      *  off success. */
     private fun alreadyActive(): ApiResult<Unit> =
-        ApiResult.Error(409, ALREADY_ACTIVE_ERROR, "Already downloading")
+        clientError(409, ALREADY_ACTIVE_ERROR, R.string.downloads_error_alreadyActive, "Already downloading")
+
+    /**
+     * The compact "S2E5" tag. It is stored with the download (title, subtitle,
+     * worker input), so it stays English like the rest of the stored text.
+     */
+    private fun episodeTag(season: Int?, episode: Int?): String = "S${season}E${episode}"
+
+    /**
+     * An error this class writes: [message] in the app language for the screen
+     * that shows it, [english] as the detail that a monitored download stores.
+     */
+    private fun clientError(code: Int, error: String, @androidx.annotation.StringRes message: Int, english: String) =
+        ApiResult.Error(code, error, context.getString(message), detail = english)
 
     private fun ApiResult<Unit>.isAlreadyActive(): Boolean =
         this is ApiResult.Error && error == ALREADY_ACTIVE_ERROR
@@ -568,6 +597,16 @@ class DownloadEnqueuer(
 
         /** Local-only error code: this file already has a live download worker. */
         const val ALREADY_ACTIVE_ERROR = "download_already_active"
+
+        /**
+         * Saved as a download's series title when the series' own title is
+         * unknown. Stored data, so it stays English; Downloads shows the
+         * catalog's word in its place.
+         */
+        const val UNKNOWN_SERIES_TITLE = "Series"
+
+        /** Saved as an episode's subtitle when its numbers are unknown; shown like [UNKNOWN_SERIES_TITLE]. */
+        const val UNKNOWN_EPISODE_SUBTITLE = "Series episode"
 
         private const val WORK_VISIBILITY_GRACE_MS = 5_000L
     }

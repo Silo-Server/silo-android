@@ -1,7 +1,9 @@
 package org.siloserver.silo.playback
 
+import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.network.PlaybackRealtimeEvent
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
@@ -16,6 +18,8 @@ import kotlinx.serialization.json.intOrNull
  * range means "no such marker" (the server clears it). [fileId] names the file
  * the ranges belong to; the server also sends a file's update to sessions that
  * requested it but are playing another file, so players must check it.
+ * [markerSegments] lists every occurrence; the singular ranges are the first
+ * occurrence of each kind.
  */
 data class PlaybackMarkersUpdate(
     val intro: TimeRange?,
@@ -23,6 +27,7 @@ data class PlaybackMarkersUpdate(
     val recap: TimeRange?,
     val preview: TimeRange?,
     val fileId: Int? = null,
+    val markerSegments: List<MarkerSegment>? = null,
 )
 
 /**
@@ -40,12 +45,23 @@ fun decodeMarkersUpdate(payload: JsonObject): PlaybackMarkersUpdate {
         val end = num("end") ?: return null
         return TimeRange(start = start, end = end)
     }
+    // Every occurrence, in the wire's `start_seconds`/`end_seconds` shape.
+    // Absent from older servers, so null (not empty) leaves the singular
+    // fields in charge.
+    val markerSegments = (payload["marker_segments"] as? JsonArray)?.mapNotNull { element ->
+        val obj = element as? JsonObject ?: return@mapNotNull null
+        fun num(k: String): Double? =
+            (obj[k] as? JsonPrimitive)?.takeIf { !it.isString }?.doubleOrNull?.takeIf { it.isFinite() }
+        val kind = (obj["kind"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return@mapNotNull null
+        MarkerSegment(kind, num("start_seconds") ?: return@mapNotNull null, num("end_seconds") ?: return@mapNotNull null)
+    }
     return PlaybackMarkersUpdate(
         intro = range("intro"),
         credits = range("credits"),
         recap = range("recap"),
         preview = range("preview"),
         fileId = (payload["file_id"] as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull?.takeIf { it > 0 },
+        markerSegments = markerSegments,
     )
 }
 

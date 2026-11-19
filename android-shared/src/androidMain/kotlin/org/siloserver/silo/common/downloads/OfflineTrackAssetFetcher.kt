@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.downloads
 
+import org.siloserver.silo.network.localroute.stayOnSavedAddress
 import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeoutConfig
@@ -64,6 +65,7 @@ internal class OfflineTrackAssetFetcher(
     suspend fun fetch(
         downloadId: String,
         serverId: String,
+        accountId: String,
         profileId: String,
         fileId: Int,
         configure: HttpRequestBuilder.() -> Unit,
@@ -72,7 +74,7 @@ internal class OfflineTrackAssetFetcher(
         val body = fetchManifestBody(downloadId, configure) ?: return null
         val manifest = decodeOfflineManifestTracks(body) ?: return null
 
-        val directory = storage.offlineSubtitleDirectory(serverId, profileId, fileId)
+        val directory = storage.offlineSubtitleDirectory(serverId, accountId, profileId, fileId)
         // A replaced download (new revision) must not keep the previous
         // revision's sidecars around under the same file slot.
         directory?.deleteRecursively()
@@ -83,7 +85,7 @@ internal class OfflineTrackAssetFetcher(
                 fetchSubtitle(downloadId, ordinal, subtitle, directory, configure)
             }
         }
-        val artwork = fetchArtwork(downloadId, serverId, profileId, fileId, decodeOfflineManifestArtwork(body), configure)
+        val artwork = fetchArtwork(downloadId, serverId, accountId, profileId, fileId, decodeOfflineManifestArtwork(body), configure)
         return OfflineAssets(tracks = manifest.toOfflineTrackInfo(saved), artwork = artwork)
     }
 
@@ -101,6 +103,7 @@ internal class OfflineTrackAssetFetcher(
             if (attempt > 0) delay(manifestRetryDelayMs * attempt)
             try {
                 val response = httpClient.get("/api/v2/downloads/${downloadId.encodeURLPathPart()}/manifest") {
+                    stayOnSavedAddress()
                     configure()
                 }
                 val status = response.status
@@ -124,12 +127,13 @@ internal class OfflineTrackAssetFetcher(
     private suspend fun fetchArtwork(
         downloadId: String,
         serverId: String,
+        accountId: String,
         profileId: String,
         fileId: Int,
         manifest: OfflineManifestArtwork?,
         configure: HttpRequestBuilder.() -> Unit,
     ): OfflineArtworkFiles {
-        val directory = storage.offlineArtworkDirectory(serverId, profileId, fileId)
+        val directory = storage.offlineArtworkDirectory(serverId, accountId, profileId, fileId)
         // Same slot, new revision: drop the previous revision's images first.
         directory?.deleteRecursively()
         if (manifest == null) return OfflineArtworkFiles()
@@ -161,6 +165,7 @@ internal class OfflineTrackAssetFetcher(
         return try {
             if (!directory.isDirectory && !directory.mkdirs()) throw IOException("could not create $directory")
             artworkHttpClient.prepareGet(url.trim()) {
+                stayOnSavedAddress()
                 configure()
                 timeout {
                     requestTimeoutMillis = ARTWORK_REQUEST_TIMEOUT_MS
@@ -313,6 +318,7 @@ internal class OfflineTrackAssetFetcher(
         val partial = File(target.parentFile, "${target.nameWithoutExtension}.part")
         try {
             httpClient.prepareGet(url) {
+                stayOnSavedAddress()
                 configure()
                 // Embedded ASS/PGS sidecars are extracted from the source on
                 // demand, so the first byte can take a while; keep only an idle

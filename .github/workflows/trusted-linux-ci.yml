@@ -41,7 +41,7 @@ jobs:
   changes:
     name: Select CI work
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       schema: ${{ steps.route.outputs.schema }}
       mode: ${{ steps.route.outputs.mode }}
@@ -61,9 +61,20 @@ jobs:
         run: |
           ./scripts/test-check-build-supply-chain.sh
           ./scripts/check-build-supply-chain.sh
-          ./scripts/test-release-workflow.sh
+          python3 scripts/test-release-version.py -v
+          ./scripts/test-summarize-release-notes.sh
+          ruby scripts/test-fastlane-lanes.rb
           python3 scripts/test-ci-routing.py -v
           python3 scripts/test-ci-result.py -v
+
+      # A local-<commit> pin generates from a clone of the catalog, which needs Node.
+      - name: Set up Node for the translation catalog
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Check generated translations match the catalog
+        run: ./scripts/check-translations
 
       - name: Select validation jobs
         id: route
@@ -263,8 +274,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # CI exercises debug variants; release.yml retains the host tests for
-          # distinct release behavior and BuildConfig values.
+          # CI exercises debug variants; release.yml runs the release variant's
+          # host tests (release behavior and BuildConfig values) before Play.
           ./gradlew \
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             testDebugUnitTest \

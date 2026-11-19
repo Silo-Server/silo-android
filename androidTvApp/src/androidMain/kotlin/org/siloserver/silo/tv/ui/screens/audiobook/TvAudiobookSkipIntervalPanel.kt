@@ -15,6 +15,8 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.player.AudiobookSettingsStore
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Focusable skip-interval overlay: choose how far the transport skip buttons
@@ -47,7 +49,7 @@ fun TvAudiobookSkipIntervalPanel(
     val focusValue = skipBackSeconds.takeIf { it in choices } ?: choices.first()
 
     TvAudiobookOverlayScaffold(
-        title = "Skip interval",
+        title = stringResource(CommonR.string.audiobook_skipInterval_title),
         initialFocus = focusRequester,
         modifier = modifier,
         onAcquisitionFailed = onFocusAcquisitionFailed,
@@ -61,9 +63,9 @@ fun TvAudiobookSkipIntervalPanel(
                 .verticalScroll(rememberScrollState()),
         ) {
             val note = when {
-                !editable -> "Checking the server. Intervals can be changed once it answers."
-                profileWide -> "Applies to every device on this profile."
-                else -> "Saved on this device. This server does not sync skip intervals."
+                !editable -> stringResource(CommonR.string.audiobook_skipInterval_checkingTv)
+                profileWide -> stringResource(CommonR.string.audiobook_skipInterval_profileWideTv)
+                else -> stringResource(CommonR.string.audiobook_skipInterval_deviceOnlyTv)
             }
             Text(
                 text = note,
@@ -78,10 +80,10 @@ fun TvAudiobookSkipIntervalPanel(
                     color = Color(0xFFFF8A80),
                 )
             }
-            SectionLabel("Skip back")
+            SectionLabel(stringResource(CommonR.string.audiobook_skipInterval_back))
             choices.forEach { seconds ->
                 TvAudiobookOverlayRow(
-                    label = "${seconds}s",
+                    label = stringResource(CommonR.string.audiobook_skip_secondsShort, seconds),
                     isCurrent = skipBackSeconds == seconds,
                     focusRequester = if (seconds == focusValue) focusRequester else null,
                     onSelect = { if (editable) onSelectSkipBack(seconds) },
@@ -89,10 +91,10 @@ fun TvAudiobookSkipIntervalPanel(
                 )
             }
             Spacer(Modifier.height(16.dp))
-            SectionLabel("Skip forward")
+            SectionLabel(stringResource(CommonR.string.audiobook_skipInterval_forward))
             choices.forEach { seconds ->
                 TvAudiobookOverlayRow(
-                    label = "${seconds}s",
+                    label = stringResource(CommonR.string.audiobook_skip_secondsShort, seconds),
                     isCurrent = skipForwardSeconds == seconds,
                     onSelect = { if (editable) onSelectSkipForward(seconds) },
                     modifier = Modifier.fillMaxWidth(),

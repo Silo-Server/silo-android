@@ -26,9 +26,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.Season
 import kotlin.math.absoluteValue
@@ -53,8 +55,6 @@ internal fun SeasonEpisodePager(
     showsSeasonSelector: Boolean = true,
     selectsCenteredEpisode: Boolean = false,
     allowsSeasonPaging: Boolean = true,
-    /** Tablet/fold rail cards show title, date/runtime, and overview. */
-    showsEpisodeDetails: Boolean = false,
     /** Tablet/fold rail selection follows taps rather than centre position. */
     tapToFocusEpisode: Boolean = false,
 ) {
@@ -67,7 +67,6 @@ internal fun SeasonEpisodePager(
             onEpisodeWatchedChange = onEpisodeWatchedChange,
             highlightContentId = highlightContentId,
             selectsCenteredEpisode = selectsCenteredEpisode,
-            showsEpisodeDetails = showsEpisodeDetails,
             tapToFocusEpisode = tapToFocusEpisode,
         )
         return
@@ -167,7 +166,6 @@ internal fun SeasonEpisodePager(
                     onEpisodeWatchedChange = onEpisodeWatchedChange,
                     highlightContentId = highlightContentId,
                     selectsCenteredEpisode = selectsCenteredEpisode,
-                    showsEpisodeDetails = showsEpisodeDetails,
                     tapToFocusEpisode = tapToFocusEpisode,
                     modifier = Modifier
                         .onSizeChanged { pageHeightsPx[page] = it.height }
@@ -191,20 +189,16 @@ private fun SeasonEpisodePage(
     onEpisodeWatchedChange: ((String, Boolean) -> Unit)?,
     highlightContentId: String?,
     selectsCenteredEpisode: Boolean,
-    showsEpisodeDetails: Boolean,
     tapToFocusEpisode: Boolean,
     modifier: Modifier = Modifier,
 ) {
     when {
         isLoading -> {
-            EpisodeListSkeleton(
-                showsEpisodeDetails = showsEpisodeDetails,
-                modifier = modifier,
-            )
+            EpisodeListSkeleton(modifier = modifier)
         }
         episodes.isEmpty() -> {
             Text(
-                text = "No episodes available",
+                text = stringResource(CommonR.string.detail_episodes_empty),
                 style = MaterialTheme.typography.bodySmall,
                 color = DetailTertiaryText,
                 modifier = modifier.padding(horizontal = SafePadding),
@@ -218,7 +212,6 @@ private fun SeasonEpisodePage(
                 onEpisodeWatchedChange = onEpisodeWatchedChange,
                 highlightContentId = highlightContentId,
                 selectsCenteredEpisode = selectsCenteredEpisode,
-                showsEpisodeDetails = showsEpisodeDetails,
                 tapToFocusEpisode = tapToFocusEpisode,
                 modifier = modifier,
             )

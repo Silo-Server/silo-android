@@ -1,6 +1,9 @@
 package org.siloserver.silo.common.player.watchparty
 
+import android.content.Context
 import android.os.SystemClock
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.R
 import org.siloserver.silo.watchtogether.RoomPlaybackNotice
 import org.siloserver.silo.watchtogether.RoomTransportIntent
 import kotlin.math.abs
@@ -51,7 +54,10 @@ class IssuedSeekTracker(
     }
 }
 
-/** Plain-language text for a room notice, on phone and TV alike. */
+/**
+ * English text for a room notice, kept for logs and tests. Show
+ * [watchPartyNoticeRes] (or `context.localizedWatchPartyNotice`) instead.
+ */
 fun watchPartyNoticeText(notice: RoomPlaybackNotice): String = when (notice) {
     is RoomPlaybackNotice.Denied -> when (notice.intent) {
         RoomTransportIntent.Seek -> "Only the host can seek."
@@ -61,3 +67,18 @@ fun watchPartyNoticeText(notice: RoomPlaybackNotice): String = when (notice) {
     RoomPlaybackNotice.ClockUnavailable -> "Waiting for party timing. If this continues, leave and rejoin."
     RoomPlaybackNotice.Undelivered -> "Couldn't reach the party. Try again."
 }
+
+/** The catalog string for a room notice, on phone and TV alike. */
+@StringRes
+fun watchPartyNoticeRes(notice: RoomPlaybackNotice): Int = when (notice) {
+    is RoomPlaybackNotice.Denied -> when (notice.intent) {
+        RoomTransportIntent.Seek -> R.string.watchParty_player_hostOnlySeek
+        RoomTransportIntent.PlayPause -> R.string.watchParty_player_hostOnlyPlayPause
+    }
+    RoomPlaybackNotice.Reconnecting -> R.string.watchParty_player_reconnecting
+    RoomPlaybackNotice.ClockUnavailable -> R.string.watchParty_player_waitingForClock
+    RoomPlaybackNotice.Undelivered -> R.string.player_watchParty_undelivered
+}
+
+/** Plain-language text for a room notice in the interface language, on phone and TV alike. */
+fun Context.localizedWatchPartyNotice(notice: RoomPlaybackNotice): String = getString(watchPartyNoticeRes(notice))

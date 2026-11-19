@@ -1,6 +1,8 @@
 package org.siloserver.silo.tv.ui.focus
 
+import org.siloserver.silo.model.section.COLLECTION_POSTERS_SECTION_TYPE
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.model.section.SectionItem
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -106,6 +108,65 @@ class TvReturnAdaptersTest {
         )
     }
 
+    @Test
+    fun `a Continue Watching show that advanced an episode is found at its new slot`() {
+        fun episode(contentId: String, seriesId: String) = SectionItem(
+            contentId = contentId,
+            type = "episode",
+            title = contentId,
+            seriesId = seriesId,
+            seasonNumber = 1,
+        )
+        fun continueWatching(vararg items: SectionItem) = ResolvedSection(
+            id = "continue",
+            sectionType = "continue_watching",
+            title = "Continue Watching",
+            items = items.toList(),
+        )
+        val before = continueWatching(
+            episode("x-e1", "show-x"),
+            episode("y-e5", "show-y"),
+            episode("z-e3", "show-z"),
+        )
+        val launched = TvReturnTarget(
+            "continue",
+            before.tvReturnItemId(before.items[2]),
+            sectionIndex = 0,
+            itemIndex = 2,
+        )
+
+        // Finishing Z's E3 replaces the card with E4 and moves it to the front.
+        val after = continueWatching(
+            episode("z-e4", "show-z"),
+            episode("x-e1", "show-x"),
+            episode("y-e5", "show-y"),
+        )
+
+        assertEquals(
+            TvReturnResolution.Exact(0, 0, "continue", launched.itemId),
+            resolveTvReturnTarget(launched, listOf(after).toTvReturnSections()),
+        )
+
+        // A show that appears twice can't be one target; its cards keep episode ids.
+        val repeated = continueWatching(episode("z-e3", "show-z"), episode("z-e4", "show-z"))
+        assertEquals(listOf("z-e3", "z-e4"), repeated.tvReturnItemIds())
+    }
+
+    @Test
+    fun `episodes outside progress rows keep their own identity`() {
+        val recent = ResolvedSection(
+            id = "recent",
+            sectionType = "recently_added",
+            title = "Recently Added",
+            items = listOf(
+                SectionItem(contentId = "e1", type = "episode", title = "e1", seriesId = "show"),
+                SectionItem(contentId = "e2", type = "episode", title = "e2", seriesId = "show"),
+            ),
+        )
+
+        assertEquals(listOf("e1", "e2"), listOf(recent).toTvReturnSections().single().itemIds)
+    }
+
     // ── Flat paginated surfaces ──────────────────────────────────────────
 
     @Test
@@ -150,6 +211,31 @@ class TvReturnAdaptersTest {
                 flatTvReturnSections(listOf("a", "b"), hasMore = true),
                 treatAbsenceAsFinal = true,
             ),
+        )
+    }
+
+    @Test
+    fun `a row of collections returns to its cards by source and id`() {
+        // A server and a personal collection can share an id, and the row has
+        // no items, so the cards' row keys are its only identity, and its
+        // cards make it complete.
+        val row = ResolvedSection(
+            id = "collections",
+            sectionType = COLLECTION_POSTERS_SECTION_TYPE,
+            title = "Collections",
+            totalCount = 2,
+            collections = listOf(
+                SectionCollectionCard(id = "7", source = "library", title = "Bond", libraryId = "1"),
+                SectionCollectionCard(id = "7", source = "user", title = "Mine"),
+            ),
+        )
+        val sections = listOf(row).toTvReturnSections()
+
+        assertEquals(listOf(TvReturnSection("collections", listOf("library:7", "user:7"))), sections)
+        assertTrue(sections.single().isComplete)
+        assertEquals(
+            TvReturnResolution.Exact(0, 1, "collections", "user:7"),
+            resolveTvReturnTarget(TvReturnTarget("collections", "user:7", 0, 1), sections),
         )
     }
 }

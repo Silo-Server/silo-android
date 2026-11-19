@@ -50,6 +50,9 @@ import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 /** Saved-list grids arrive a page at a time; pace the claim to that, not to frames. */
 private const val SavedListFocusRetryDelayMillis = 60L
@@ -78,6 +81,7 @@ fun TvRecommendationsScreen(
     detailReturnCardFocusRequester: FocusRequester? = null,
     firstRowFocusRequester: FocusRequester? = null,
     firstRowContainerFocusRequester: FocusRequester? = null,
+    shouldRefreshOnResume: () -> Boolean = { true },
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     entryRequest: TvForYouEntryRequest = TvForYouEntryRequest(),
     viewModel: RecommendationsViewModel = koinViewModel(),
@@ -171,22 +175,31 @@ fun TvRecommendationsScreen(
         claimSavedListFocus()
     }
 
-    // TV has no pull-to-refresh, so ON_RESUME is the only quiet self-heal path.
-    // The shared VM loads once in init and retains its state across tab swaps, so
-    // an empty discover response otherwise leaves this tab a permanent dead end
-    // until a profile switch/restart. If the feed is still the empty fallback
-    // when the user returns (e.g. after watching and rating content), re-check.
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                val current = viewModel.uiState.value
-                if (!current.isLoading && current.sections.visibleOnTv().isEmpty()) {
-                    viewModel.refresh()
-                }
-            }
+    // TV has no pull-to-refresh, so ON_RESUME is the only refresh path. The
+    // shared VM loads once in init and keeps its rows across tab swaps, so
+    // without this a title watched elsewhere stayed on this tab until a
+    // profile switch or restart. Refresh quietly whenever the tab is shown
+    // again, as Home does; refresh() keeps the current rows on screen. The
+    // effect also runs when first added, while the VM's own first load is
+    // still running, so skip it then.
+    //
+    // A detail return defers the refresh instead: the shell is restoring focus
+    // to the launch card, which new rows would move. Once the shell allows
+    // refreshes again the pending one runs, so a title watched from that
+    // detail page leaves the feed without another tab visit.
+    var refreshPending by remember { mutableStateOf(false) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
+        if (!viewModel.uiState.value.isLoading) {
+            if (shouldRefreshOnResume()) viewModel.refresh() else refreshPending = true
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onPauseOrDispose { }
+    }
+    val refreshAllowed = shouldRefreshOnResume()
+    LaunchedEffect(refreshAllowed, refreshPending) {
+        if (refreshAllowed && refreshPending) {
+            refreshPending = false
+            viewModel.refresh()
+        }
     }
 
     val showFallbackCaption = savedListSelection != null && savedListIsFallback
@@ -213,7 +226,7 @@ fun TvRecommendationsScreen(
                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
             )
             state.error != null && state.sections.isEmpty() -> TvErrorScreen(
-                message = state.error ?: "Failed to load recommendations",
+                message = state.error?.text() ?: stringResource(CommonR.string.home_forYou_loadFailed),
                 onRetry = viewModel::loadRecommendations,
                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
             )
@@ -236,12 +249,12 @@ fun TvRecommendationsScreen(
                             modifier = Modifier.size(28.dp),
                         )
                         Text(
-                            text = "Not enough data yet",
+                            text = stringResource(CommonR.string.home_forYou_notEnoughData),
                             style = MaterialTheme.typography.headlineSmall,
                             color = Color.White,
                         )
                         Text(
-                            text = "Watch and rate more content to unlock personalized recommendations.",
+                            text = stringResource(CommonR.string.home_forYou_notEnoughDataBody),
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = 0.7f),
                         )
@@ -250,7 +263,7 @@ fun TvRecommendationsScreen(
                             onClick = viewModel::loadRecommendations,
                             contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp),
                         ) {
-                            Text("Check again", style = MaterialTheme.typography.labelLarge)
+                            Text(stringResource(CommonR.string.home_forYou_checkAgain), style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
@@ -278,7 +291,7 @@ fun TvRecommendationsScreen(
 
         if (showFallbackCaption) {
             Text(
-                text = "No recommendations yet — showing your saved titles.",
+                text = stringResource(CommonR.string.home_forYou_savedFallback),
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontSize = 16.sp,
                     lineHeight = 20.sp,

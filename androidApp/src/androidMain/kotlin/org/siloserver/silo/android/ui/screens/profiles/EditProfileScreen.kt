@@ -29,6 +29,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -36,6 +37,8 @@ import org.siloserver.silo.android.ui.screens.auth.AuthColors
 import org.siloserver.silo.android.ui.screens.auth.AuthErrorBanner
 import org.siloserver.silo.android.ui.screens.auth.SiloButton
 import org.siloserver.silo.android.ui.screens.auth.SiloTextField
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.model.profile.displayProfileQualityPreference
 import org.koin.compose.viewmodel.koinViewModel
@@ -75,7 +78,7 @@ fun EditProfileScreen(
         TopAppBar(
             title = {
                 Text(
-                    text = "Edit Profile",
+                    text = stringResource(CommonR.string.profiles_edit_title),
                     fontWeight = FontWeight.SemiBold,
                     color = AuthColors.OnBackground,
                 )
@@ -84,7 +87,7 @@ fun EditProfileScreen(
                 IconButton(onClick = onNavigateBack) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = stringResource(CommonR.string.common_back),
                         tint = AuthColors.OnBackground,
                     )
                 }
@@ -108,12 +111,12 @@ fun EditProfileScreen(
                     .padding(horizontal = 24.dp),
             ) {
                 state.error?.let { error ->
-                    AuthErrorBanner(message = error)
+                    AuthErrorBanner(message = error.text())
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
                 // -- Avatar selection --
-                SectionHeader("Avatar")
+                SectionHeader(stringResource(CommonR.string.profiles_form_avatar))
 
                 ProfileAvatar(
                     avatar = ProfileAvatarRef(state.selectedAvatar, state.selectedAvatarUrl),
@@ -144,34 +147,35 @@ fun EditProfileScreen(
                 SiloTextField(
                     value = state.name,
                     onValueChange = viewModel::onNameChanged,
-                    label = "Profile Name",
+                    label = stringResource(CommonR.string.profiles_form_name),
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // -- Child profile toggle --
                 SwitchRow(
-                    label = "Child Profile",
-                    checked = state.isChild,
+                    label = stringResource(CommonR.string.newProfile_child),
+                    checked = state.access.isChild,
                     onCheckedChange = viewModel::onChildToggled,
-                    subtitle = "Restricts content to kid-friendly ratings",
+                    subtitle = stringResource(CommonR.string.profiles_form_childDetail),
                 )
 
-                if (state.isChild) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    DropdownField(
-                        label = "Max Content Rating",
-                        selected = state.maxContentRating ?: "PG",
-                        options = CONTENT_RATINGS,
-                        onSelected = viewModel::onContentRatingSelected,
-                    )
-                }
+                // -- Rating ceiling + library allowlist (every profile, as on the web) --
+                Spacer(modifier = Modifier.height(16.dp))
+                ProfileAccessControls(
+                    access = state.access,
+                    libraries = state.libraries,
+                    onContentRatingSelected = viewModel::onContentRatingSelected,
+                    onLibraryRestrictionsToggled = viewModel::onLibraryRestrictionsToggled,
+                    onLibraryToggled = viewModel::onLibraryToggled,
+                    onRetryLibraries = viewModel::loadLibraries,
+                )
 
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // -- PIN --
                 SwitchRow(
-                    label = "Require PIN",
+                    label = stringResource(CommonR.string.profiles_form_requirePin),
                     checked = state.pinEnabled,
                     onCheckedChange = viewModel::onPinToggled,
                 )
@@ -181,7 +185,7 @@ fun EditProfileScreen(
                     SiloTextField(
                         value = state.pin,
                         onValueChange = viewModel::onPinChanged,
-                        label = "New 4-Digit PIN (leave blank to keep current)",
+                        label = stringResource(CommonR.string.profiles_edit_pinLabel),
                         keyboardType = KeyboardType.NumberPassword,
                     )
                 }
@@ -190,9 +194,10 @@ fun EditProfileScreen(
 
                 // -- Quality preference --
                 DropdownField(
-                    label = "Quality Preference",
-                    selected = displayProfileQualityPreference(state.qualityPreference),
+                    label = stringResource(CommonR.string.profiles_form_quality),
+                    selected = qualityOptionLabel(displayProfileQualityPreference(state.qualityPreference)),
                     options = QUALITY_OPTIONS,
+                    optionLabel = { qualityOptionLabel(it) },
                     onSelected = viewModel::onQualitySelected,
                 )
 
@@ -200,18 +205,21 @@ fun EditProfileScreen(
 
                 // -- Subtitle mode --
                 DropdownField(
-                    label = "Subtitles",
-                    selected = state.subtitleMode?.replace("_", " ")
-                        ?.replaceFirstChar { it.uppercaseChar() }
-                        ?: "Off",
+                    label = stringResource(CommonR.string.profiles_form_subtitles),
+                    selected = subtitleModeLabel(
+                        state.subtitleMode?.replace("_", " ")
+                            ?.replaceFirstChar { it.uppercaseChar() }
+                            ?: "Off",
+                    ),
                     options = SUBTITLE_MODES,
+                    optionLabel = { subtitleModeLabel(it) },
                     onSelected = viewModel::onSubtitleModeSelected,
                 )
 
                 Spacer(modifier = Modifier.height(32.dp))
 
                 SiloButton(
-                    text = "Save Changes",
+                    text = stringResource(CommonR.string.profiles_edit_save),
                     onClick = viewModel::onSaveClick,
                     isLoading = state.isSaving,
                 )

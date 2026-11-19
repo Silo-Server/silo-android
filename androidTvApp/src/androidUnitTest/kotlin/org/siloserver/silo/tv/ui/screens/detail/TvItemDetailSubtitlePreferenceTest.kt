@@ -13,7 +13,8 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -134,10 +135,13 @@ class TvItemDetailSubtitlePreferenceTest {
         try {
             block()
         } finally {
-            // Cancel viewModelScope work BEFORE resetting Main; a coroutine
-            // still alive when the next test calls setMain throws from
-            // TestMainDispatcher.
-            createdViewModels.forEach { it.viewModelScope.cancel() }
+            // Cancel viewModelScope work and wait for it to finish BEFORE
+            // resetting Main. cancel() alone returns while a child is still
+            // inside withContext(Dispatchers.IO); when that block returns, the
+            // child resumes on Main, which throws once Main has been reset.
+            createdViewModels.forEach { viewModel ->
+                viewModel.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            }
             createdViewModels.clear()
             Dispatchers.resetMain()
         }

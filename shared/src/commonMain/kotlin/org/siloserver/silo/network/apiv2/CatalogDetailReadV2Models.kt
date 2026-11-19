@@ -57,6 +57,12 @@ internal data class ItemDetailReadV2(
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("backdrop_url") val backdropUrl: String? = null,
     @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
+    @SerialName("series_poster_url") val seriesPosterUrl: String? = null,
+    @SerialName("series_poster_thumbhash") val seriesPosterThumbhash: String? = null,
+    @SerialName("series_backdrop_url") val seriesBackdropUrl: String? = null,
+    @SerialName("series_backdrop_thumbhash") val seriesBackdropThumbhash: String? = null,
+    @SerialName("season_poster_url") val seasonPosterUrl: String? = null,
+    @SerialName("season_poster_thumbhash") val seasonPosterThumbhash: String? = null,
     @SerialName("logo_url") val logoUrl: String? = null,
     @SerialName("season_count") val seasonCount: Int? = null,
     @SerialName("series_id") val seriesId: String? = null,
@@ -81,9 +87,23 @@ internal data class ItemDetailReadV2(
     val ebook: org.siloserver.silo.model.ebook.EbookMetadata? = null,
     val videos: List<ItemVideo>? = null,
     val extras: List<ItemExtra>? = null,
+    val themes: ThemeSelection? = null,
+    // The subtitle the profile's preferences resolve to for this item,
+    // including a choice remembered for its series. Detail pages preview it
+    // (and TV starts from that preview), so dropping it showed the profile's
+    // defaults instead of the series choice.
+    @SerialName("effective_subtitle_language") val effectiveSubtitleLanguage: String? = null,
+    @SerialName("effective_subtitle_mode") val effectiveSubtitleMode: String? = null,
+    @SerialName("effective_show_forced_subtitles") val effectiveShowForcedSubtitles: Boolean? = null,
+    @SerialName("effective_subtitle_track_signature")
+    val effectiveSubtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
 ) {
     fun toDomain() = ItemDetail(
         contentId = contentId,
+        effectiveSubtitleLanguage = effectiveSubtitleLanguage,
+        effectiveSubtitleMode = effectiveSubtitleMode,
+        effectiveShowForcedSubtitles = effectiveShowForcedSubtitles,
+        effectiveSubtitleTrackSignature = effectiveSubtitleTrackSignature,
         type = type,
         status = status,
         title = title,
@@ -122,6 +142,12 @@ internal data class ItemDetailReadV2(
         posterThumbhash = posterThumbhash,
         backdropUrl = backdropUrl,
         backdropThumbhash = backdropThumbhash,
+        seriesPosterUrl = seriesPosterUrl,
+        seriesPosterThumbhash = seriesPosterThumbhash,
+        seriesBackdropUrl = seriesBackdropUrl,
+        seriesBackdropThumbhash = seriesBackdropThumbhash,
+        seasonPosterUrl = seasonPosterUrl,
+        seasonPosterThumbhash = seasonPosterThumbhash,
         logoUrl = logoUrl,
         seasonCount = seasonCount,
         seriesId = seriesId,
@@ -146,6 +172,7 @@ internal data class ItemDetailReadV2(
         ebook = ebook,
         videos = videos,
         extras = extras,
+        themes = themes,
     )
 }
 
@@ -255,7 +282,8 @@ internal data class LeafItemUserDataReadV2(
     @SerialName("last_file_id") val lastFileId: String? = null,
     @SerialName("last_resolution") val lastResolution: String? = null,
     @SerialName("last_hdr") val lastHdr: Boolean? = null,
-    @SerialName("last_codec_video") val lastCodecVideo: String? = null
+    @SerialName("last_codec_video") val lastCodecVideo: String? = null,
+    @SerialName("last_edition_key") val lastEditionKey: String? = null,
 ) {
     fun toDomain() = LeafItemUserData(
         played = played,
@@ -266,6 +294,7 @@ internal data class LeafItemUserDataReadV2(
         lastResolution = lastResolution,
         lastHdr = lastHdr,
         lastCodecVideo = lastCodecVideo,
+        lastEditionKey = lastEditionKey,
     )
 }
 

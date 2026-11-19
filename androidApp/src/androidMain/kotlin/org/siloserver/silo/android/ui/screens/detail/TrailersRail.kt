@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -33,6 +34,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.openYoutubeTrailer
@@ -40,7 +44,7 @@ import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.TrailerRailEntry
 import org.siloserver.silo.model.catalog.extraKindLabel
 import org.siloserver.silo.model.catalog.trailerRailDurationLabel
-import org.siloserver.silo.model.catalog.youtubeThumbnailUrl
+import org.siloserver.silo.common.i18n.text
 
 /**
  * "Trailers & More" section — header plus a horizontal rail of remote
@@ -67,7 +71,7 @@ fun TrailersRail(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = modifier,
     ) {
-        SectionHeader(title = "Trailers & More")
+        SectionHeader(title = stringResource(CommonR.string.detail_trailers))
         val rowState = rememberLazyListState()
         DeferImagePresentationWhileScrolling(rowState) {
         LazyRow(
@@ -107,14 +111,19 @@ private fun TrailerCard(
     entry: TrailerRailEntry,
     onClick: () -> Unit,
 ) {
-    val kindLabel = extraKindLabel(entry.kind)
+    val kind = extraKindLabel(entry.kind)
+    val kindLabel = kind.text()
+    // A known kind is translated; an unknown one is the server's own word.
+    val kindCaps = if (kind is UiText.Raw) kindLabel.uppercase() else kindLabel.displayUppercase()
+    val title = entry.title.text()
     val durationLabel = trailerRailDurationLabel(entry)
+    val cardDescription = stringResource(CommonR.string.detail_trailerCardDescription, title, kindLabel)
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
             .width(TrailerCardWidth)
             .clickable(onClick = onClick)
-            .semantics { contentDescription = "${entry.title}, $kindLabel" },
+            .semantics { contentDescription = cardDescription },
     ) {
         Box(
             contentAlignment = Alignment.Center,
@@ -123,13 +132,13 @@ private fun TrailerCard(
                 .clip(TrailerThumbnailShape)
                 .background(SiloSurfaceElevated),
         ) {
-            // Local extras have no artwork of their own — the scanner only
-            // records the file — so they keep the surface tile.
-            if (entry is TrailerRailEntry.Remote) {
-                // hqdefault is 4:3 with letterbox bars; a 16:9 crop removes them.
+            // A local extra the server has no image for yet keeps the
+            // surface tile. YouTube's hqdefault is 4:3 with letterbox bars;
+            // a 16:9 crop removes them.
+            entry.thumbnailUrl?.let { url ->
                 ThumbhashImage(
-                    url = youtubeThumbnailUrl(entry.video.siteKey),
-                    thumbhash = null,
+                    url = url,
+                    thumbhash = entry.thumbhash,
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -151,7 +160,7 @@ private fun TrailerCard(
         }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                text = kindLabel.uppercase(),
+                text = kindCaps,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp,
@@ -159,7 +168,7 @@ private fun TrailerCard(
                 maxLines = 1,
             )
             Text(
-                text = entry.title,
+                text = title,
                 fontSize = 14.sp,
                 lineHeight = 18.sp,
                 fontWeight = FontWeight.SemiBold,

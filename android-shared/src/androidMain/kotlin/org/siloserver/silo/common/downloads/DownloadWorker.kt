@@ -1,5 +1,8 @@
 package org.siloserver.silo.common.downloads
 
+import org.siloserver.silo.common.R
+import org.siloserver.silo.network.localroute.stayOnSavedAddress
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
@@ -7,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.util.Log
 import org.siloserver.silo.common.diagnostics.DiagnosticsDownloadLogger
+import org.siloserver.silo.common.i18n.AppLocales
 import androidx.core.app.NotificationCompat
 import androidx.work.BackoffPolicy
 import androidx.work.CoroutineWorker
@@ -17,6 +21,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import org.siloserver.silo.model.download.DownloadStatus
@@ -48,6 +53,7 @@ import java.io.IOException
 import java.net.URLDecoder
 import java.time.Instant
 import java.util.concurrent.TimeUnit
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 internal fun DownloadRecord.withWorkerStatus(
     status: String,
@@ -61,7 +67,7 @@ internal fun DownloadRecord.withWorkerStatus(
 
 /**
  * Streams `GET /api/v2/downloads/{id}/file` to the local
- * `<filesDir>/downloads/<serverId>/<profileId>/<fileId>/<original-name>`
+ * `<serverId>/acct-<accountId>/<profileId>/<fileId>/<original-name>`
  * location via [DownloadStorage], reporting progress to WorkManager at
  * most every ~200ms; the foreground notification is rebuilt only when
  * the integer percent actually changes.
@@ -86,13 +92,29 @@ class DownloadWorker(
     // paint progress/Failed onto the wrong scope's card. Null = legacy call
     // sites keep the old (unguarded) behavior.
     private val activeScope: (suspend () -> Pair<String?, String?>)? = null,
+    private val activeAccount: (suspend () -> String?)? = null,
     private val authorities: DurableLoginAuthorityProvider? = null,
     private val transitions: IdentityTransitionBarrier? = null,
     private val devices: DeviceMetadataProvider? = null,
     private val gate: org.siloserver.silo.network.apiv2.ApiV2Gate,
 ) : CoroutineWorker(appContext, params) {
 
+    /**
+     * Context for notification text. The application context keeps the
+     * device language before Android 13 and skips the English stand-in for a
+     * language without a catalog (D64); [AppLocales.wrap] applies both, as
+     * the activities do.
+     */
+    private val text: Context by lazy { AppLocales.wrap(appContext) }
+
     private var transferAuthority: DurableLoginAuthority? = null
+
+    /**
+     * The account the download is filed under (its Room row and files), read
+     * from the work input. Work queued before accounts existed has none; its
+     * row belongs to whichever account adopted the server's old data.
+     */
+    private var accountId: String = ""
     private val offlineTrackFetcher = OfflineTrackAssetFetcher(httpClient, storage)
     private suspend fun requireOwner() {
         if (authorities != null && (transferAuthority == null || transferAuthority != authorities.snapshotDurableLoginAuthority() || inputData.getString(KEY_DEVICE_ID) != devices?.current()?.id)) throw DownloadOwnerChanged()
@@ -105,6 +127,9 @@ class DownloadWorker(
 
     private suspend fun uiPushAllowed(serverId: String, profileId: String): Boolean {
         if (authorities != null && transferAuthority != authorities.snapshotDurableLoginAuthority()) return false
+        // Another account of this server may share the profile id.
+        val account = activeAccount
+        if (account != null && runCatching { account() }.getOrNull().orEmpty() != accountId) return false
         val scope = activeScope ?: return true
         // Resolving the active scope must never abort an otherwise-healthy
         // download — this is called inside doWork()'s own catch block, where a
@@ -123,15 +148,26 @@ class DownloadWorker(
             ?: return@withContext Result.failure()
         val profileId = inputData.getString(KEY_PROFILE_ID)
             ?: return@withContext Result.failure()
+        // Work queued before accounts existed names none: it belongs to the
+        // server's adopting account once the startup adoption pass has run
+        // (until then the marker may not exist yet). Unadopted rows stay ''.
+        // A pass still running means adoption may be moving this job's row:
+        // retry rather than file the download under the empty account.
+        accountId = inputData.getString(KEY_ACCOUNT_ID)
+            ?: run {
+                if (!AccountDataAdoption.awaitFirstPassFinished()) return@withContext Result.retry()
+                storage.legacyFilesOwner(serverId).orEmpty()
+            }
         val fileName = inputData.getString(KEY_FILE_NAME)
         val container = inputData.getString(KEY_CONTAINER)
         val mediaType = inputData.getString(KEY_MEDIA_TYPE)
-        val displayTitle = inputData.getString(KEY_DISPLAY_TITLE) ?: "Download"
+        val displayTitle = inputData.getString(KEY_DISPLAY_TITLE) ?: text.getString(R.string.downloads_notification_defaultTitle)
         if (fileId < 0) return@withContext Result.failure()
         if (authorities != null) {
             val captured = authorities.snapshotDurableLoginAuthority() ?: return@withContext Result.retry()
             if (!downloadWorkMatchesOwner(inputData.getString(KEY_LOGIN_ID), inputData.getString(KEY_ORIGIN),
-                inputData.getString(KEY_DEVICE_ID), serverId, profileId, captured, devices?.current()?.id)) return@withContext Result.failure()
+                inputData.getString(KEY_DEVICE_ID), serverId, profileId, captured, devices?.current()?.id,
+                accountId = inputData.getString(KEY_ACCOUNT_ID))) return@withContext Result.failure()
             transferAuthority = captured
         }
         if (gate.blocked() != null) return@withContext Result.retry()
@@ -141,9 +177,9 @@ class DownloadWorker(
         try {
         Log.i(TAG, "doWork start id=$downloadId fileId=$fileId title=$displayTitle")
         DiagnosticsDownloadLogger.event("download started")
-        runCatching {
+        promoteToForeground {
             setForeground(buildForegroundInfo(downloadId, displayTitle, progress = 0, indeterminate = true))
-        }.onFailure { Log.w(TAG, "setForeground initial failed", it) }
+        }
 
         var activeUri: String? = null
         // Capture can outlive media publication. A stop then preserves the
@@ -151,12 +187,12 @@ class DownloadWorker(
         var mediaPublished = false
 
         try {
-            var existing = runCatching { metadataStore.readSidecar(serverId, profileId, fileId) }.getOrNull()
+            var existing = runCatching { metadataStore.readSidecar(serverId, accountId, profileId, fileId) }.getOrNull()
             // A stopped capture resumes from the completed local file, including
             // legacy rows whose original transfer revision is unknown.
             if (existing != null && existing.record.id == downloadId &&
                 existing.record.statusEnum() == DownloadStatus.Completed &&
-                storage.locateLocalMedia(serverId, profileId, fileId) != null
+                storage.locateLocalMedia(serverId, accountId, profileId, fileId) != null
             ) {
                 mediaPublished = true
                 requireOwner()
@@ -192,8 +228,8 @@ class DownloadWorker(
                             resumeValidator = null,
                         )
                         ownedWrite {
-                            storage.delete(serverId, profileId, fileId)
-                            metadataStore.writeSidecar(serverId, profileId, restarted)
+                            storage.delete(serverId, accountId, profileId, fileId)
+                            metadataStore.writeSidecar(serverId, accountId, profileId, restarted)
                             true
                         }
                         existing = restarted
@@ -218,6 +254,9 @@ class DownloadWorker(
             requireOwner()
             httpClient.prepareGet("/api/v2/downloads/${downloadId.encodeURLPathPart()}/file") {
                 transferAuthority?.let { managedDownloadAuth(it.scope) }
+                // Downloads stay on the saved address: a transfer outlives the
+                // network it started on.
+                stayOnSavedAddress()
                 // Streaming download: drop the global 60s TOTAL-request timeout (it
                 // guillotines large files mid-transfer) and keep only a socket/idle
                 // timeout so a genuinely stalled connection still fails → retry.
@@ -240,7 +279,7 @@ class DownloadWorker(
                 // (shrank/changed). Drop it and retry fresh (no Range next time).
                 if (canResume && response.status == HttpStatusCode.RequestedRangeNotSatisfiable) {
                     // Drop the partial; partialSize→0 makes the retry a fresh GET.
-                    ownedWrite { storage.delete(serverId, profileId, fileId); true }
+                    ownedWrite { storage.delete(serverId, accountId, profileId, fileId); true }
                     throw IOException("range not satisfiable — restarting fresh")
                 }
                 // The v2 file route answers one bare `conflict` problem for every
@@ -278,7 +317,7 @@ class DownloadWorker(
                         catalogFileName = fileName,
                         contentDisposition = response.headers["Content-Disposition"],
                     )
-                    val fresh = ownedWrite { storage.prepareWrite(serverId, profileId, fileId, resolvedFileName, container, mediaType) }
+                    val fresh = ownedWrite { storage.prepareWrite(serverId, accountId, profileId, fileId, resolvedFileName, container, mediaType) }
                     activeUri = fresh.uriString
                     total = response.headers["Content-Length"]?.toLongOrNull() ?: -1L
                     written = 0L
@@ -310,7 +349,9 @@ class DownloadWorker(
                                 // Rebuilding the notification (and its cancel
                                 // PendingIntent) is the expensive part — only
                                 // do it when the visible percent changed.
-                                if (decision.updateForeground) {
+                                // A refusal only means no notification yet; the
+                                // next percent change asks again.
+                                if (decision.updateForeground) promoteToForeground {
                                     setForeground(buildForegroundInfo(downloadId, displayTitle, progress = decision.percent, indeterminate = total <= 0))
                                 }
                                 // Push progress into the shared repo so any
@@ -390,23 +431,29 @@ class DownloadWorker(
         } catch (e: CancellationException) {
             // Worker stopped — user cancel (notification action /
             // DownloadEnqueuer.cancel → cancelAllWorkByTag) or a
-            // constraint / quota stop. Not a failure: drop the partial
-            // bytes but leave the repo record + sidecar status alone.
-            // A constraint-stop must keep "downloading" state so the
-            // WorkManager retry restarts cleanly; a user cancel is
-            // finalized by the record-delete path, not here. Writing
+            // constraint / quota / time-limit stop. Not a failure: leave the
+            // repo record + sidecar status alone. A system stop keeps
+            // "downloading" state and the partial so the WorkManager retry
+            // resumes it (a refused foreground promotion leaves the transfer
+            // subject to the background time limit); a user cancel drops the
+            // bytes and is finalized by the record-delete path. Writing
             // Failed here is what used to paint cancelled / paused
             // downloads with a red badge and delete-then-fail them.
-            Log.i(TAG, "doWork cancelled id=$downloadId")
+            // WorkManager records the stop reason itself on every API level;
+            // @RequiresApi(31) only covers the JobScheduler values it relays.
+            @SuppressLint("NewApi")
+            val reason = stopReason
+            val keepPartial = downloadStopKeepsPartial(reason)
+            Log.i(TAG, "doWork cancelled id=$downloadId stopReason=$reason keepPartial=$keepPartial")
             DiagnosticsDownloadLogger.event("download cancelled")
-            if (!mediaPublished) withContext(NonCancellable) {
+            if (!mediaPublished && !keepPartial) withContext(NonCancellable) {
                 // WorkManager's notification action cancels this transfer directly.
                 // Its separate status job must stop before we remove the bytes.
                 runCatching { DownloadStatusWorker.cancel(appContext, downloadId) }
                 // Delete by scope+fileId (not just activeUri): a cancel before the
                 // response is classified leaves activeUri null but a prior attempt's
                 // partial may still be on disk.
-                runCatching { ownedWrite { storage.delete(serverId, profileId, fileId); true } }
+                runCatching { ownedWrite { storage.delete(serverId, accountId, profileId, fileId); true } }
             }
             throw e
         } catch (e: DownloadPreparingException) {
@@ -496,18 +543,18 @@ class DownloadWorker(
             requireOwner()
             // Held until the new tracks are on the row, so a subtitle refresh
             // never publishes over the sidecars this capture writes.
-            DownloadSlotLocks.of(serverId, profileId, fileId).withLock {
-                val assets = offlineTrackFetcher.fetch(downloadId, serverId, profileId, fileId) {
+            DownloadSlotLocks.of(serverId, accountId, profileId, fileId).withLock {
+                val assets = offlineTrackFetcher.fetch(downloadId, serverId, accountId, profileId, fileId) {
                     transferAuthority?.let { managedDownloadAuth(it.scope) }
                 } ?: return
                 val tracks = assets.tracks
                 val artwork = assets.artwork
                 ownedWrite {
-                    val existing = metadataStore.readSidecar(serverId, profileId, fileId)
+                    val existing = metadataStore.readSidecar(serverId, accountId, profileId, fileId)
                         ?.takeIf { it.record.id == downloadId }
                     if (existing != null) {
                         metadataStore.writeSidecar(
-                            serverId, profileId,
+                            serverId, accountId, profileId,
                             existing.copy(
                                 offlineTracks = tracks,
                                 offlinePosterPath = artwork.posterPath,
@@ -551,7 +598,7 @@ class DownloadWorker(
         DiagnosticsDownloadLogger.error("download failed")
         // Delete by scope+fileId so a partial from any attempt is cleaned up
         // even if this attempt failed before activeUri was assigned.
-        runCatching { ownedWrite { storage.delete(serverId, profileId, fileId); true } }
+        runCatching { ownedWrite { storage.delete(serverId, accountId, profileId, fileId); true } }
         runCatching { DownloadStatusWorker.cancel(appContext, downloadId) }
         // Best-effort: publish failed state into the repo + sidecar.
         val record = if (uiPushAllowed(serverId, profileId)) repository.recordForFile(fileId) else null
@@ -608,9 +655,9 @@ class DownloadWorker(
         resumeValidator: String? = null,
         revision: Int? = null,
     ) {
-        val existing = metadataStore.readSidecar(serverId, profileId, fileId) ?: return
+        val existing = metadataStore.readSidecar(serverId, accountId, profileId, fileId) ?: return
         metadataStore.writeSidecar(
-            serverId, profileId,
+            serverId, accountId, profileId,
             existing.copy(
                 record = existing.record.withWorkerStatus(
                     status = status,
@@ -660,11 +707,11 @@ class DownloadWorker(
         val notification = NotificationCompat.Builder(appContext, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
-            .setContentText(if (indeterminate) "Starting…" else "$progress%")
+            .setContentText(if (indeterminate) text.getString(R.string.downloads_notification_starting) else LocaleFormat.percent(progress))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setProgress(100, progress, indeterminate)
-            .addAction(android.R.drawable.ic_delete, "Cancel", cancelIntent)
+            .addAction(android.R.drawable.ic_delete, text.getString(R.string.common_cancel), cancelIntent)
             .build()
 
         val notificationId = notificationIdFor(downloadId)
@@ -684,6 +731,7 @@ class DownloadWorker(
         const val KEY_DOWNLOAD_ID = "download_id"
         const val KEY_FILE_ID = "file_id"
         const val KEY_SERVER_ID = "server_id"
+        const val KEY_ACCOUNT_ID = "account_id"
         const val KEY_PROFILE_ID = "profile_id"
         const val KEY_FILE_NAME = "file_name"
         const val KEY_CONTAINER = "container"
@@ -716,7 +764,7 @@ class DownloadWorker(
 
         /**
          * Enqueue a unique one-time download for [downloadId]. Caller supplies
-         * the `(serverId, profileId, fileId)` triple + a display title for
+         * the `(serverId, accountId, profileId, fileId)` slot + a display title for
          * the notification. The [wifiOnly] flag drives the work constraint.
          *
          * Cancel via `WorkManager.cancelAllWorkByTag(tagFor(downloadId))`.
@@ -726,6 +774,7 @@ class DownloadWorker(
             downloadId: String,
             fileId: Int,
             serverId: String,
+            accountId: String,
             profileId: String,
             fileName: String?,
             container: String?,
@@ -745,6 +794,7 @@ class DownloadWorker(
                 KEY_DOWNLOAD_ID to downloadId,
                 KEY_FILE_ID to fileId,
                 KEY_SERVER_ID to serverId,
+                KEY_ACCOUNT_ID to accountId,
                 KEY_PROFILE_ID to profileId,
                 KEY_FILE_NAME to fileName,
                 KEY_CONTAINER to container,
@@ -781,8 +831,17 @@ class DownloadWorker(
          * has stopped before deleting the Room rows it can otherwise recreate.
          */
         suspend fun cancelAndAwait(context: Context, downloadId: String) {
-            DownloadWorkerLifetime.beginCancellation(downloadId)
             DownloadStatusWorker.cancel(context, downloadId)
+            cancelTransferAndAwait(context, downloadId)
+        }
+
+        /**
+         * [cancelAndAwait] without dropping a queued status report. A registry
+         * read made by that report's own worker can reach a revoked-download
+         * cleanup, which must not cancel the worker running it.
+         */
+        suspend fun cancelTransferAndAwait(context: Context, downloadId: String) {
+            DownloadWorkerLifetime.beginCancellation(downloadId)
             withContext(Dispatchers.IO) {
                 WorkManager.getInstance(context)
                     .cancelUniqueWork(tagFor(downloadId))
@@ -795,6 +854,36 @@ class DownloadWorker(
         private const val CANCEL_ACK_TIMEOUT_SECONDS = 30L
     }
 }
+
+/**
+ * Runs one foreground promotion. Android 12+
+ * refuses the foreground service start for a worker that WorkManager restarts
+ * while the app is in the background (`BackgroundServiceStartNotAllowedException`);
+ * the transfer keeps running as ordinary work, so a refusal must not reach
+ * doWork's permanent-failure branch. A stop still propagates.
+ */
+internal suspend fun promoteToForeground(promote: suspend () -> Unit) {
+    try {
+        promote()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w("DownloadWorker", "setForeground refused; continuing in the background", e)
+    }
+}
+
+/**
+ * True when WorkManager stopped the transfer for a reason it retries (time
+ * limit, lost constraint, quota, or a JobScheduler stop that carries no reason
+ * before Android 12), so the partial and its validator stay for a Range resume.
+ * A cancel by the app (the notification action, removal, an identity purge),
+ * reported as [WorkInfo.STOP_REASON_CANCELLED_BY_APP] on every API level, drops
+ * it, as does a cancellation that was not a WorkManager stop. A kept partial
+ * that is never resumed is removed with its slot when the download is removed.
+ */
+internal fun downloadStopKeepsPartial(stopReason: Int): Boolean =
+    stopReason != WorkInfo.STOP_REASON_CANCELLED_BY_APP &&
+        stopReason != WorkInfo.STOP_REASON_NOT_STOPPED
 
 /**
  * A 409 from the v2 file route: the download is not servable right now,
@@ -917,6 +1006,8 @@ internal fun downloadAuthFailureIsRetriable(e: Throwable): Boolean =
 private class DownloadOwnerChanged : IllegalStateException("The download owner changed")
 
 internal fun downloadWorkMatchesOwner(loginId: String?, origin: String?, deviceId: String?, serverId: String,
-    profileId: String, authority: DurableLoginAuthority, currentDevice: String?): Boolean =
+    profileId: String, authority: DurableLoginAuthority, currentDevice: String?, accountId: String? = null): Boolean =
     !deviceId.isNullOrBlank() && deviceId == currentDevice && loginId == authority.loginId &&
-        origin == authority.scope.serverUrl && serverId == authority.scope.serverId && profileId == authority.scope.profileId
+        origin == authority.scope.serverUrl && serverId == authority.scope.serverId && profileId == authority.scope.profileId &&
+        // Work queued before accounts existed names none; its login id still pins the owner.
+        (accountId == null || accountId == authority.scope.accountId.orEmpty())

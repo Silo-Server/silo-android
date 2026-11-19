@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -30,6 +31,7 @@ import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.components.skeleton
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.util.rememberDominantColor
+import org.siloserver.silo.common.R as CommonR
 
 /** Uses the detail hero's artwork frame while metadata and actions load. */
 @Composable
@@ -37,12 +39,15 @@ internal fun DetailLoadingSkeleton(
     modifier: Modifier = Modifier,
     artworkUrl: String? = null,
     artworkThumbhash: String? = null,
+    /** Matches the loaded page's compact artwork height; see [DetailHeroArtwork]. */
+    compactArtworkHeightFactor: Float = 1f,
 ) {
     val shimmer = rememberShimmerProgress()
     val tint by rememberDominantColor(artworkUrl, SiloBackground, artworkThumbhash)
+    val loadingDescription = stringResource(CommonR.string.detail_loadingDetails)
     DetailPageSurface(artworkUrl, artworkThumbhash, tint, modifier) {
         BoxWithConstraints(
-            modifier = Modifier.fillMaxSize().semantics { contentDescription = "Loading details" },
+            modifier = Modifier.fillMaxSize().semantics { contentDescription = loadingDescription },
         ) {
             if (maxWidth >= ExpandedDetailBreakpoint) {
                 val horizontalPadding = expandedDetailHorizontalPadding(maxWidth)
@@ -79,7 +84,7 @@ internal fun DetailLoadingSkeleton(
                 }
             } else {
                 Column(Modifier.fillMaxWidth()) {
-                    DetailHeroArtwork(artworkUrl, artworkThumbhash) {
+                    DetailHeroArtwork(artworkUrl, artworkThumbhash, heightFactor = compactArtworkHeightFactor) {
                         TitlePlaceholder(shimmer)
                     }
                     Column(
@@ -103,18 +108,27 @@ private fun TitlePlaceholder(shimmer: Float) {
     Box(Modifier.fillMaxWidth(0.68f).height(38.dp).skeleton(shimmer))
 }
 
+/** The facts row over the ratings row, spaced like [DetailHero]'s metadata column. */
 @Composable
 private fun MetadataPlaceholder(shimmer: Float) {
-    Box(Modifier.fillMaxWidth(0.72f).height(20.dp).skeleton(shimmer))
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(Modifier.fillMaxWidth(0.72f).height(22.dp).skeleton(shimmer))
+        Box(Modifier.fillMaxWidth(0.32f).height(20.dp).skeleton(shimmer))
+    }
 }
 
+/** Play pill and the five equal-width circle columns of [HeroActionStack]. */
 @Composable
 private fun ActionPlaceholders(shimmer: Float) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.fillMaxWidth().height(52.dp).skeleton(shimmer, CircleShape))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            repeat(4) {
+        Row(Modifier.fillMaxWidth()) {
+            repeat(5) {
                 Column(
+                    modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {

@@ -103,6 +103,40 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
+    fun activeQualityIsReportedOnlyWhenTheDecisionAdvertisesIt() {
+        fun decision(features: String) = SiloJson.decodeFromString<PlaybackDecisionResponseV3>(
+            """
+            {
+              "protocol_version": 3,
+              "server_features": [$features],
+              "outcome": "playable",
+              "session_id": "session-1",
+              "playback_plan": {
+                "plan_id": "plan-1",
+                "plan_attempt_key": "v3:0000000000000001",
+                "delivery": "server_transcode_hls",
+                "stream": {"url": "/stream/session-1/master.m3u8", "protocol": "hls"},
+                "available_qualities": [{"label": "1080p-low", "height": 1080, "bitrate_kbps": 3000}],
+                "active_quality": "1080p-low",
+                "decision_reason": "bandwidth_cap"
+              }
+            }
+            """.trimIndent(),
+        )
+        val neutral = neutralServerFeatures.joinToString { "\"$it\"" }
+
+        val reported = assertIs<PlaybackV3Validation.Playable>(
+            decision("$neutral, \"$PLAN_ACTIVE_QUALITY_V1_FEATURE\"").validateForMedia3(),
+        ).plan
+        assertEquals("1080p-low", reported.activeQuality)
+        assertEquals(ReportedPlaybackQuality("1080p-low"), reported.reportedQuality)
+
+        // An older server's plan says nothing about the active entry.
+        val unreported = assertIs<PlaybackV3Validation.Playable>(decision(neutral).validateForMedia3()).plan
+        assertEquals(null, unreported.reportedQuality)
+    }
+
+    @Test
     fun playablePlanValidatesOnDeliveryAlone() {
         // The neutral contract names a delivery class, not a client engine, so
         // there is nothing left for the client to disagree with the server
@@ -543,7 +577,7 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
-    fun startAndReplanRequestsCarryCurrentNetworkEvidence() {
+    fun startAndReplanRequestsCarryTheBitrateCapButNoNetworkEstimate() {
         val start = SiloJson.encodeToString(
             PlaybackStartRequestV3(
                 clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
@@ -551,8 +585,6 @@ class PlaybackProtocolV3Test {
                 profileId = "profile",
                 playbackAttemptId = "attempt",
                 subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
-                metered = true,
-                bandwidthEstimateKbps = 22_000,
                 bandwidthCapKbps = 15_000,
                 capabilities = ClientCodecCapabilities(),
                 clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
@@ -569,8 +601,6 @@ class PlaybackProtocolV3Test {
                 attemptedPlanKeys = listOf("key"),
                 attemptCount = 2,
                 positionSeconds = 10.0,
-                metered = true,
-                bandwidthEstimateKbps = 9_000,
                 bandwidthCapKbps = 8_000,
                 selectedTracks = SelectedPlaybackTracksV3(),
                 failure = PlaybackFailureV3("transport_stall"),
@@ -579,10 +609,15 @@ class PlaybackProtocolV3Test {
             ),
         )
 
-        assertTrue(start.contains("\"bandwidth_estimate_kbps\":22000"))
         assertTrue(start.contains("\"bandwidth_cap_kbps\":15000"))
-        assertTrue(replan.contains("\"bandwidth_estimate_kbps\":9000"))
         assertTrue(replan.contains("\"bandwidth_cap_kbps\":8000"))
+        // No estimate: Media3's figure can understate the link and make Auto
+        // convert. `metered` goes out false: older servers require it on
+        // /api/v2 and drop Auto to their metered limit on a true one.
+        for (body in listOf(start, replan)) {
+            assertTrue(body.contains("\"metered\":false"))
+            assertFalse(body.contains("\"bandwidth_estimate_kbps\""))
+        }
         assertFalse(replan.contains("\"operation\""))
     }
 

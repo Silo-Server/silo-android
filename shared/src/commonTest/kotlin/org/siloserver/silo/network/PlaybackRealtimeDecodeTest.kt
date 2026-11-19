@@ -19,6 +19,20 @@ class PlaybackRealtimeDecodeTest {
         assertEquals("s1", ev.sessionId)
     }
 
+    @Test fun decodesTheCommandIssuer() {
+        val raw = """{"type":"command","command_id":"c1","session_id":"s1","name":"terminate","issued_by":{"kind":"admin"}}"""
+        val ev = decodePlaybackFrame(json, raw) as PlaybackRealtimeEvent.Command
+        assertEquals("admin", ev.issuedBy)
+    }
+
+    @Test fun aMissingOrMalformedIssuerDecodesAsNone() {
+        val base = """{"type":"command","command_id":"c1","session_id":"s1","name":"stop"""
+        listOf("", ",\"issued_by\":\"admin\"", ",\"issued_by\":{\"kind\":7}", ",\"issued_by\":{}").forEach { issuer ->
+            val ev = decodePlaybackFrame(json, "$base\"$issuer}") as PlaybackRealtimeEvent.Command
+            assertNull(ev.issuedBy, issuer)
+        }
+    }
+
     @Test fun decodesMarkersEvent() {
         val raw = """{"type":"event","session_id":"s1","name":"markers_updated","payload":{"file_id":7}}"""
         val ev = decodePlaybackFrame(json, raw)

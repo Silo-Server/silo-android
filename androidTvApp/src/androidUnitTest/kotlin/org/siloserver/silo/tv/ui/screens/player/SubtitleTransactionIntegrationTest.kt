@@ -34,12 +34,14 @@ import kotlinx.coroutines.yield
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.intOrNull
+import org.siloserver.silo.common.player.PlaybackQualityPair
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.SessionState
@@ -52,6 +54,7 @@ import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.CommittedSubtitle
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
@@ -64,6 +67,8 @@ import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackStreamV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleArtifactV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleDecisionV3
+import org.siloserver.silo.model.playback.PlaybackSubtitleHlsRenditionV3
+import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryHlsRenditionV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
 import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
@@ -72,8 +77,10 @@ import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.SubtitleFidelityPreference
+import org.siloserver.silo.model.playback.SubtitleHlsRendition
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
+import org.siloserver.silo.model.playback.videoQualityPreference
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
 import org.siloserver.silo.network.AuthScopeSnapshot
@@ -176,6 +183,105 @@ class SubtitleTransactionIntegrationTest {
         assertEquals("file:$FILE_ID:subtitle:$B_INDEX", persistedSidecar.media?.trackId)
         assertEquals("s1", harness.persistence.single().second.sessionId)
         harness.assertNoOrphans()
+    }
+
+    @Test
+    fun `an every-track rendition switch is shown at once and adopted on the same stream`() = runTest {
+        // Holds the server's answer until the player has mounted the switch.
+        // MockEngine answers on its own thread, so without the hold the replan
+        // could be adopted before the first mount report.
+        val replanAnswer = CompletableDeferred<Unit>()
+        val harness = harness(
+            replanResponse = { _, _ ->
+                replanAnswer.await()
+                response(everyTrackRenditionPlan("s1", FILE_ID, B_INDEX).asReplan("b"))
+            },
+            startPlan = everyTrackRenditionPlan("s1", FILE_ID, A_INDEX),
+            canSwitchInPlace = { committed, target -> target != committed },
+        )
+        // The rows the session projects for that plan: every track is its rendition.
+        // `forced` is false as projected, so the picked identity equals the one
+        // the adopted plan carries, whichever the snapshot holds when checked.
+        val rows = (0..4).map { index ->
+            PlayerSubtitleInfo(
+                index = index,
+                language = "en",
+                codec = "subrip",
+                forced = false,
+                label = "Subtitle $index",
+                source = "embedded",
+                url = "",
+                catalogLabel = "Subtitle $index",
+                catalogSource = "embedded",
+                serverTrackId = "file:$FILE_ID:subtitle:$index",
+                serverDelivery = SUBTITLE_DELIVERY_SIDECAR,
+                hlsRendition = SubtitleHlsRendition("subs", "Subtitle $index", index + 1),
+            )
+        }
+        val renditionA = tvSubtitleIdentity(rows.single { it.index == A_INDEX })
+        val renditionB = assertIs<SubtitleIdentity.Embedded>(tvSubtitleIdentity(rows.single { it.index == B_INDEX }))
+        harness.start(renditionA, subtitleTracks = rows)
+        val tracks = rows.map { row ->
+            media3Track(index = row.index, trackId = row.hlsRendition!!.media3TrackId, label = row.hlsRendition!!.name)
+        }
+
+        harness.adapter.select(renditionB)
+        runCurrent()
+        // Selected on the player before the server answers, with the replan out.
+        assertEquals(renditionB, harness.adapter.snapshot.localMountIdentity)
+        harness.awaitReplans(1)
+        harness.mountPending(expectedSessionId = "s1", tracks = tracks)
+        replanAnswer.complete(Unit)
+        harness.awaitAdoptions(1)
+        runCurrent()
+
+        assertReplan(harness.replanBodies.single(), audioIndex = 0, subtitleIndex = B_INDEX)
+        assertEquals(listOf(true), harness.adoptedInPlace)
+        harness.mountPending(expectedSessionId = "s1", tracks = tracks)
+        runCurrent()
+        harness.awaitPersistence(1)
+        runCurrent()
+
+        assertEquals(listOf(B_INDEX, B_INDEX), harness.media3Selections.map { it.trackIndex })
+        harness.assertActiveSession("s1")
+        assertEquals(emptyMap(), harness.stopCounts())
+        val persisted = assertIs<SubtitleIdentity.Embedded>(harness.persistence.single().first.identity)
+        assertEquals(renditionB.hlsRendition, persisted.hlsRendition)
+        harness.assertNoOrphans()
+    }
+
+    @Test
+    fun `a subtitle change keeps the session's cap under an Auto preference`() = runTest {
+        // The committed quality is "original", which reads as Auto.
+        val harness = harness(
+            replanResponse = { _, _ -> response(sidecarPlan("s1", FILE_ID, B_INDEX).asReplan("s2")) },
+            inPlayerQuality = ::savedAutoPair,
+        )
+        harness.start(sidecarA)
+
+        harness.adapter.select(sidecarB)
+        runCurrent()
+        harness.awaitReplans(1)
+
+        val cap = harness.replanBodies.single()["bandwidth_cap_kbps"]
+        assertTrue(cap == null || cap is JsonNull, "the session started uncapped and stays so: $cap")
+    }
+
+    @Test
+    fun `picking Auto in the player sends the saved cap`() = runTest {
+        val harness = harness(
+            replanResponse = { _, _ -> response(basePlan("s1", FILE_ID, audioIndex = 0).asReplan("s2")) },
+            inPlayerQuality = ::savedAutoPair,
+        )
+        harness.start(sidecarA)
+
+        harness.adapter.selectQuality("auto")
+        runCurrent()
+        harness.awaitReplans(1)
+
+        val body = harness.replanBodies.single()
+        assertEquals("auto", body.getValue("quality_preference").jsonPrimitive.content)
+        assertEquals(2_000, body.getValue("bandwidth_cap_kbps").jsonPrimitive.int)
     }
 
     @Test
@@ -423,16 +529,27 @@ class SubtitleTransactionIntegrationTest {
         assertTrue(harness.replanBodies.isEmpty())
     }
 
+    /** The pair an Auto picked in the player sends with a saved 2 Mbps cap. */
+    private suspend fun savedAutoPair(preference: String?): PlaybackQualityPair? =
+        PlaybackQualityPair(PLAYBACK_QUALITY_AUTO, 2_000)
+            .takeIf { videoQualityPreference(preference) == PLAYBACK_QUALITY_AUTO }
+
     private fun TestScope.harness(
         replanResponse: suspend (Int, JsonObject) -> PlaybackDecisionResponseV3,
         committedSessionCleanupScope: CoroutineScope = backgroundScope,
         committedSessionCleanupScheduler: TestCoroutineScheduler = testScheduler,
+        inPlayerQuality: suspend (String?) -> PlaybackQualityPair? = { null },
+        startPlan: PlaybackPlanV3? = null,
+        canSwitchInPlace: (SubtitleIdentity, SubtitleIdentity) -> Boolean = { _, _ -> false },
     ): Harness = Harness(
         scope = backgroundScope,
         transactionScheduler = testScheduler,
         committedSessionCleanupScope = committedSessionCleanupScope,
         committedSessionCleanupScheduler = committedSessionCleanupScheduler,
         replanResponse = replanResponse,
+        inPlayerQuality = inPlayerQuality,
+        startPlan = startPlan,
+        canSwitchInPlace = canSwitchInPlace,
     )
 
     private class Harness(
@@ -441,7 +558,12 @@ class SubtitleTransactionIntegrationTest {
         committedSessionCleanupScope: CoroutineScope,
         private val committedSessionCleanupScheduler: TestCoroutineScheduler,
         private val replanResponse: suspend (Int, JsonObject) -> PlaybackDecisionResponseV3,
+        private val inPlayerQuality: suspend (String?) -> PlaybackQualityPair?,
+        private val startPlan: PlaybackPlanV3? = null,
+        private val canSwitchInPlace: (SubtitleIdentity, SubtitleIdentity) -> Boolean = { _, _ -> false },
     ) {
+        /** Whether each adopted candidate was marked to keep the playing transport. */
+        val adoptedInPlace: MutableList<Boolean> = Collections.synchronizedList(mutableListOf())
         val stoppedSessions: MutableList<String> =
             Collections.synchronizedList(mutableListOf())
         val replanBodies: MutableList<JsonObject> =
@@ -498,7 +620,9 @@ class SubtitleTransactionIntegrationTest {
                         ).jsonObject
                         startBodies += body
                         when (startIndex.getAndIncrement()) {
-                            0 -> if (
+                            0 -> if (startPlan != null) {
+                                response(startPlan)
+                            } else if (
                                 (body["subtitle_track_index"]?.jsonPrimitive?.intOrNull ?: -1) == -1
                             ) {
                                 response(basePlan("s1", FILE_ID, audioIndex = 0))
@@ -602,7 +726,7 @@ class SubtitleTransactionIntegrationTest {
             mountedSubtitleIdentity = committedIdentity
             adapter = TvSubtitleTransactionAdapter(
                 scope = scope,
-                stagedPort = PlaybackSessionManagerTvSubtitleStagedReplanPort(manager, lifecycle),
+                stagedPort = PlaybackSessionManagerTvSubtitleStagedReplanPort(manager, lifecycle, inPlayerQuality),
                 persistencePort = object : TvSubtitlePersistencePort {
                     override suspend fun persist(
                         committed: CommittedSubtitle,
@@ -615,9 +739,14 @@ class SubtitleTransactionIntegrationTest {
                 },
                 durablePersistenceScope = scope,
                 settlementScope = scope,
-                isLocallyMountable = { identity -> identity == mountedSubtitleIdentity },
+                isLocallyMountable = { identity ->
+                    identity == mountedSubtitleIdentity ||
+                        canSwitchInPlace(mountedSubtitleIdentity ?: SubtitleIdentity.Off, identity)
+                },
+                canSwitchInPlace = canSwitchInPlace,
                 onCommittedPlayback = { adoption ->
                     val candidate = requireNotNull(adoption.playback.ready)
+                    adoptedInPlace += candidate.inPlace
                     val adopted = lifecycle.adoptActiveSessionIfCurrent(
                         params = startParams(
                             contentId = CONTENT_ID,
@@ -965,6 +1094,44 @@ class SubtitleTransactionIntegrationTest {
                     fileId = fileId,
                     lastIndex = subtitleIndex,
                 ),
+            ),
+        )
+
+        /** An HLS plan that lists embedded tracks 0..4 as renditions and selects [subtitleIndex]. */
+        fun everyTrackRenditionPlan(
+            sessionId: String,
+            fileId: Int,
+            subtitleIndex: Int,
+        ) = basePlan(sessionId, fileId, audioIndex = 0).copy(
+            selectedTracks = SelectedPlaybackTracksV3(
+                audio = PlaybackTrackIdentityV3("file:$fileId:audio:0", 0),
+                subtitle = PlaybackTrackIdentityV3("file:$fileId:subtitle:$subtitleIndex", subtitleIndex),
+            ),
+            subtitle = PlaybackSubtitleDecisionV3(
+                mode = PlaybackSubtitleModeV3.RENDER,
+                trackId = "file:$fileId:subtitle:$subtitleIndex",
+                hlsRendition = PlaybackSubtitleHlsRenditionV3(
+                    groupId = "subs",
+                    name = "Subtitle $subtitleIndex",
+                    format = "vtt",
+                    mimeType = "text/vtt",
+                    index = subtitleIndex + 1,
+                ),
+                inventory = (0..4).map { index ->
+                    PlaybackSubtitleInventoryItemV3(
+                        trackId = "file:$fileId:subtitle:$index",
+                        combinedIndex = index,
+                        source = "embedded",
+                        codec = "subrip",
+                        language = "en",
+                        label = "Subtitle $index",
+                        delivery = SUBTITLE_DELIVERY_SIDECAR,
+                        url = "/api/v2/stream/$sessionId/subtitles/$index.vtt",
+                        streamIndex = index + 2,
+                        containerTrackId = "${index + 3}",
+                        hlsRendition = PlaybackSubtitleInventoryHlsRenditionV3("subs", "Subtitle $index", index + 1),
+                    )
+                },
             ),
         )
 

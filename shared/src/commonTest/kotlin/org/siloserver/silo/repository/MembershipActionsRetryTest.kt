@@ -14,7 +14,7 @@ class MembershipActionsRetryTest {
         val port = FakePort(confirmOnRetry = null)
         val actions = MembershipActions(port, DefaultIdentityTransitionBarrier())
         val failures = mutableListOf<MembershipActions.Key>()
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { actions.failures.collect { failures += it } }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { actions.unconfirmedAttempts.collect { failures += it.key } }
         val intent = actions.begin("item", MembershipPort.Kind.WATCHLIST, true)
         actions.perform(intent)
         assertEquals(1, port.sends); assertEquals(3, port.retries)
@@ -26,7 +26,7 @@ class MembershipActionsRetryTest {
         val port = FakePort(confirmOnRetry = 2)
         val actions = MembershipActions(port, DefaultIdentityTransitionBarrier())
         val failures = mutableListOf<MembershipActions.Key>()
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { actions.failures.collect { failures += it } }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { actions.unconfirmedAttempts.collect { failures += it.key } }
         val intent = actions.begin("item", MembershipPort.Kind.FAVORITE, true)
         val performing = async { actions.perform(intent) }
         runCurrent(); performing.cancel() // The screen closes while the first retry waits.

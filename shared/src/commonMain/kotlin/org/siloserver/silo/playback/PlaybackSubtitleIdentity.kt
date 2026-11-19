@@ -36,6 +36,9 @@ fun playbackSubtitleIdentity(subtitle: PlayerSubtitleInfo): SubtitleIdentity {
         ).takeIf { it },
     )
 
+    subtitle.hlsRendition?.let {
+        return SubtitleIdentity.Embedded(subtitle.index, media, hlsRendition = it)
+    }
     subtitle.nativeContainerTrackId?.let {
         return SubtitleIdentity.Embedded(subtitle.index, media, containerTrackId = it)
     }

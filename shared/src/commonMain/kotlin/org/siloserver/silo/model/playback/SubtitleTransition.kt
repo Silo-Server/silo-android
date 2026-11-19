@@ -18,7 +18,24 @@ sealed interface SubtitleIdentity {
         val media: SubtitleMediaIdentity,
         /** Exact server-probed container identity; never permit metadata fallback. */
         val containerTrackId: String? = null,
-    ) : SubtitleIdentity
+        /**
+         * The HLS `SUBTITLES` rendition a transcode plan carries this track in.
+         * Like [containerTrackId] it is an exact server decision the player
+         * selects from its own media, never from a sidecar.
+         */
+        val hlsRendition: SubtitleHlsRendition? = null,
+    ) : SubtitleIdentity {
+        /** The server chose this exact track inside the media; it has no sidecar to fall back to locally. */
+        val isServerSelected: Boolean
+            get() = containerTrackId != null || hlsRendition != null
+
+        /** Whether a staged plan in [mode], with or without a sidecar, carries this exact server selection. */
+        fun matchesServerSelectedPlan(mode: PlaybackSubtitleModeV3, hasSidecar: Boolean): Boolean = !hasSidecar && when {
+            hlsRendition != null -> mode == PlaybackSubtitleModeV3.RENDER || mode == PlaybackSubtitleModeV3.CONVERT
+            containerTrackId != null -> mode == PlaybackSubtitleModeV3.RENDER
+            else -> false
+        }
+    }
 
     data class Downloaded(
         val downloadId: Int,
@@ -27,6 +44,15 @@ sealed interface SubtitleIdentity {
 
     data class LocalMedia3(val media: SubtitleMediaIdentity) : SubtitleIdentity
 }
+
+/**
+ * A pick of a track the server places in the media (a native track or a
+ * rendition) other than [committed]. Only the server can move its session
+ * there, so such a pick never commits locally without a replan, even when it
+ * switches on the playing stream.
+ */
+fun SubtitleIdentity.isServerPick(committed: SubtitleIdentity): Boolean =
+    this is SubtitleIdentity.Embedded && isServerSelected && this != committed
 
 data class SubtitleMediaIdentity(
     val trackId: String? = null,

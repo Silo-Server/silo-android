@@ -7,6 +7,7 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.Transient
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
@@ -56,6 +57,8 @@ data class PlayerSubtitleInfo(
     val source: String? = null,
     val forced: Boolean? = null,
     val url: String,
+    /** The server's SDH flag; a label naming SDH counts too ([isHearingImpaired]). */
+    @SerialName("hearing_impaired") val hearingImpaired: Boolean? = null,
     /** Catalog-facing identity retained when a mounted artifact has a generic runtime label. */
     @SerialName("catalog_label") val catalogLabel: String? = null,
     /** Catalog provenance retained separately from the runtime artifact source. */
@@ -72,9 +75,44 @@ data class PlayerSubtitleInfo(
     @SerialName("server_delivery") val serverDelivery: String? = null,
     /** Exact original-container track ID selected by a v3 embedded decision. */
     @SerialName("native_container_track_id") val nativeContainerTrackId: String? = null,
+    /**
+     * The HLS rendition a v3 transcode decision carries this selected row in.
+     * Such a row has no URL: the stream itself delivers the track.
+     */
+    @SerialName("hls_rendition") val hlsRendition: SubtitleHlsRendition? = null,
     /** The inventory's `sync_key`: present when the server can sync this track to the audio. */
     @SerialName("sync_key") val syncKey: String? = null,
+    /**
+     * No route can show this server track ([isUnplayableSubtitle]). Pickers
+     * list it disabled and Auto never picks it; the row stays so the
+     * combined ordinals keep their places.
+     */
+    val unplayable: Boolean = false,
 )
+
+/**
+ * An HLS `SUBTITLES` rendition (`EXT-X-MEDIA` with `GROUP-ID` [groupId] and
+ * `NAME` [name]) in the stream Media3 is playing.
+ */
+@Serializable
+data class SubtitleHlsRendition(
+    @SerialName("group_id") val groupId: String,
+    val name: String,
+    /**
+     * 1-based place in the group, present only when the stream lists every
+     * embedded text track as a rendition: the player can then switch to this
+     * track on the stream it already plays.
+     */
+    val index: Int? = null,
+) {
+    /**
+     * The `Format.id` Media3's `HlsPlaylistParser` gives the rendition:
+     * `"<GROUP-ID>:<NAME>"`, kept unchanged by `HlsMediaPeriod`. A merged
+     * source prefixes it with its child index (`0:subs:Subtitles`).
+     */
+    val media3TrackId: String
+        get() = "$groupId:$name"
+}
 
 /**
  * Whether this row represents a subtitle artifact downloaded onto this Android
@@ -254,6 +292,18 @@ data class PlaybackExecutionPlan(
      * to mark the entry a stored resolution preference actually landed on.
      */
     @SerialName("effective_recipe") val effectiveRecipe: PlaybackEffectiveRecipeV3? = null,
+    /**
+     * The source file as the server describes it, unlike [source], which
+     * describes what is delivered. The Quality menu reads its height and
+     * bitrate to tell a plan that plays the source from a conversion.
+     */
+    @SerialName("source_file") val sourceFile: PlaybackSourceDescriptorV3 = PlaybackSourceDescriptorV3(),
+    /** [PlaybackPlanV3.bandwidthLimit]: a learned limit lowered this Auto plan. */
+    @SerialName("bandwidth_limit") val bandwidthLimit: PlaybackBandwidthLimitV3? = null,
+    /** [PlaybackPlanV3.activeQuality]. */
+    @SerialName("active_quality") val activeQuality: String? = null,
+    /** [PlaybackPlanV3.activeQualityReported]; never read from the wire. */
+    @Transient val activeQualityReported: Boolean = false,
 )
 
 /**
@@ -382,12 +432,12 @@ data class ClientPlaybackContext(
     @SerialName("form_factor") val formFactor: String,
     @SerialName("app_version") val appVersion: String,
     /**
-     * CI's per-marketing-version build counter behind [appVersion], so two
-     * builds sharing a version name are still distinguishable in the server's
-     * session/activity views. Null where the platform has no such value.
+     * CI's build counter behind [appVersion], so two builds sharing a version
+     * name are still distinguishable in the server's session/activity views.
+     * Null where the platform has no such value.
      */
     @SerialName("app_build") val appBuild: String? = null,
-    /** How this build was distributed — "release" / "beta" / "sideload" / "dev". */
+    /** How this build was distributed — "release" / "sideload" / "dev". */
     @SerialName("app_channel") val appChannel: String? = null,
     val device: PlaybackDeviceContext = PlaybackDeviceContext(),
     val output: PlaybackOutputContext = PlaybackOutputContext(),

@@ -8,6 +8,7 @@ import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -29,11 +30,18 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
     private val mutableActions = MutableStateFlow<Map<Key, Action>>(emptyMap())
     val actions = mutableActions.asStateFlow()
     val generation get() = identity.generation
-    private val mutableFailures = MutableSharedFlow<Key>(extraBufferCapacity = 8)
-    /** Changes still unconfirmed after automatic retries; the UI briefly reports them. */
-    val failures = mutableFailures.asSharedFlow()
     private val mutableLegacyNotice = MutableStateFlow(false)
     val legacyNotice = mutableLegacyNotice.asStateFlow()
+    private val mutableUnconfirmedAttempts = MutableSharedFlow<Intent>(extraBufferCapacity = 16)
+
+    /**
+     * The viewer's own attempts ([perform]) still unconfirmed after their automatic
+     * retries, including one whose caller was cancelled. Commands restored by
+     * [restorePending] never appear here, so a notice raised from this flow answers
+     * something the viewer just did. NOT_CLAIMED is left out: another sender owns the
+     * command and its result arrives through [restorePending].
+     */
+    val unconfirmedAttempts: SharedFlow<Intent> = mutableUnconfirmedAttempts.asSharedFlow()
 
     init {
         identity.installGate { mutableActions.value = emptyMap(); mutableLegacyNotice.value = false }
@@ -87,7 +95,7 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
             withContext(NonCancellable) {
                 command?.let { recover(intent, it) }
                 update(intent) { it.copy(busy = false) }
-                if (needsRetry(intent)) mutableFailures.tryEmit(intent.key)
+                reportIfUnconfirmed(intent)
             }
         }
     }
@@ -100,6 +108,14 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
             delay(delayMs)
             if (!current(intent)) return
             complete(intent, try { activePort.retry(command) } catch (_: Exception) { UNCONFIRMED })
+        }
+    }
+
+    private fun reportIfUnconfirmed(intent: Intent) {
+        val action = mutableActions.value[intent.key]
+        if (current(intent) && action != null && !action.busy && !action.confirmed &&
+            action.completion?.disposition != MembershipPort.Disposition.NOT_CLAIMED) {
+            mutableUnconfirmedAttempts.tryEmit(intent)
         }
     }
 

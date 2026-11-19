@@ -43,6 +43,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -54,6 +56,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.marquee.MarqueeIconButton
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.marquee.marqueeShake
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeProfileAvatar
@@ -82,7 +86,7 @@ fun PINEntryOverlay(
     errorCount: Int,
     onPinComplete: (String) -> Unit,
     onDismiss: () -> Unit,
-    prompt: String = "Enter your PIN",
+    prompt: String = stringResource(CommonR.string.pin_prompt),
 ) {
     // Deliberately NOT rememberSaveable: saved-instance state is serialized by
     // the OS across configuration change and process death, which would put the
@@ -118,14 +122,15 @@ fun PINEntryOverlay(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 6.dp)) {
-                    MarqueeIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onDismiss)
+                    MarqueeIconButton(Icons.AutoMirrored.Filled.ArrowBack, stringResource(CommonR.string.common_back), onDismiss)
                 }
                 Spacer(if (scrolls) Modifier.height(8.dp) else Modifier.weight(1f))
 
+                val enterPinFor = stringResourceWithNames(CommonR.string.pin_audio, profile.name)
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.clearAndSetSemantics { contentDescription = "Enter PIN for ${profile.name}" },
+                    modifier = Modifier.clearAndSetSemantics { contentDescription = enterPinFor },
                 ) {
                     MarqueeProfileAvatar(profile, size = if (compact) 64.dp else 88.dp, showsBadges = false, modifier = Modifier.padding(bottom = 8.dp))
                     Text(
@@ -168,7 +173,7 @@ fun PINEntryOverlay(
                 Spacer(if (scrolls) Modifier.height(8.dp) else Modifier.weight(1f))
                 if (!compact) {
                     Text(
-                        "Forgot your PIN? The account admin can reset it.",
+                        stringResource(CommonR.string.pin_forgot),
                         color = MarqueeColors.InkTertiary,
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center,
@@ -183,8 +188,9 @@ fun PINEntryOverlay(
 @Composable
 private fun PinDots(filled: Int, error: Boolean, modifier: Modifier = Modifier) {
     val color = if (error) MarqueeColors.Error else MarqueeColors.Ink
+    val progress = pluralStringResource(CommonR.plurals.pin_progress, PIN_LENGTH, filled, PIN_LENGTH)
     Row(
-        modifier.semantics { contentDescription = "$filled of $PIN_LENGTH digits entered" },
+        modifier.semantics { contentDescription = progress },
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         repeat(PIN_LENGTH) { index ->
@@ -224,7 +230,7 @@ private fun NumberPad(
         Row(horizontalArrangement = Arrangement.spacedBy(26.dp)) {
             Spacer(Modifier.size(PadKeySize))
             PadKey(enabled, "0", onClick = { onDigit("0") }) { PadDigit("0", null) }
-            PadKey(enabled, "Delete", onClick = onBackspace, filled = false) {
+            PadKey(enabled, stringResource(CommonR.string.pin_deleteKey), onClick = onBackspace, filled = false) {
                 Icon(Icons.AutoMirrored.Outlined.Backspace, contentDescription = null, tint = MarqueeColors.Ink, modifier = Modifier.size(24.dp))
             }
         }

@@ -184,6 +184,30 @@ fun buildAudiobookTimeline(
 }
 
 /**
+ * True only when [fileId] by itself holds the whole book, so a position in that
+ * file is a position in the book: the detail lists at most one logical part, the
+ * file is one of its audio files, and, when the server reports the book's total,
+ * the file covers nearly all of it. A file the detail can't vouch for is false,
+ * so one part's local time never becomes the book's position.
+ */
+fun isWholeBookFile(versions: List<FileVersion>, fileId: Int, serverTotalSeconds: Double?): Boolean {
+    val audio = versions.filter { it.isAudioPartCandidate() }
+    val file = audio.firstOrNull { it.fileId == fileId } ?: return false
+    if (audio.mapNotNull { it.presentationPartIndex }.distinct().size > 1) return false
+    // Without the server's total, several unlabeled audio files could be parts;
+    // files sharing one part index are alternates of that part.
+    val total = serverTotalSeconds?.takeIf { it.isFinite() && it > 0.0 }
+        ?: return audio.size == 1 || audio.all { it.presentationPartIndex != null }
+    return partDuration(file) >= total * WHOLE_BOOK_MIN_SHARE
+}
+
+/** How much of the server's total a file must cover to count as the whole book. */
+private const val WHOLE_BOOK_MIN_SHARE = 0.9
+
+private fun FileVersion.isAudioPartCandidate(): Boolean =
+    presentationKind == AUDIOBOOK_PART_KIND || codecAudio != null || duration > 0.0
+
+/**
  * Selects one playable file for each ordered audiobook part. A version is
  * playable when it is tagged `audiobook_part`, or (fallback for un-tagged
  * libraries) when it carries an audio codec or a positive duration. Alternate
@@ -193,11 +217,7 @@ fun buildAudiobookTimeline(
  * Mirrors Apple `AudiobookPlaybackContext.audioParts(of:)` (AudiobookPlaybackContext.swift:89-101).
  */
 internal fun audioParts(versions: List<FileVersion>, preferredFileId: Int? = null): List<FileVersion> {
-    val candidates = versions
-        .filter { version ->
-            if (version.presentationKind == AUDIOBOOK_PART_KIND) return@filter true
-            version.codecAudio != null || version.duration > 0.0
-        }
+    val candidates = versions.filter { it.isAudioPartCandidate() }
 
     if (candidates.isEmpty()) return emptyList()
 

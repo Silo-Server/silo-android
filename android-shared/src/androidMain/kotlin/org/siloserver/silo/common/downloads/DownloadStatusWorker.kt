@@ -11,6 +11,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadStatusEvent
 import org.siloserver.silo.network.ApiResult
@@ -66,9 +68,11 @@ class DownloadStatusWorker(
             }
             DownloadStatusReportOutcome.Reconcile -> {
                 // The entry's revision moved on, so this event describes replaced
-                // bytes. Drop it and read the registry instead.
+                // bytes. Drop it and read the registry instead. The read can
+                // remove a revoked download, whose stopped transfer cancels this
+                // job; let the removal finish.
                 Log.i(TAG, "status report superseded id=$downloadId revision=${event.revision}")
-                repository.refresh()
+                withContext(NonCancellable) { repository.refresh() }
                 Result.success()
             }
             DownloadStatusReportOutcome.RetryLater -> {

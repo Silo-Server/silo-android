@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.cast
 
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,10 +14,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -31,12 +34,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
 import org.siloserver.silo.android.cast.SiloCastController
+import org.siloserver.silo.android.cast.resolve
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.cast.SiloCastLaunchRequest
 import org.siloserver.silo.cast.SiloCastProtocol
 import org.siloserver.silo.common.cast.SiloCastTarget
@@ -52,6 +58,11 @@ import org.siloserver.silo.network.ServerRegistry
  * With a [launchRequest] the sheet lists every discovered TV (cross-server
  * casts do the v2 profile handoff); without one it filters to TVs on the
  * active server, which are the only ones controllable without a handoff.
+ *
+ * Rokus (silo-roku `docs/silocontrol.md` section 4.4) list beside the other
+ * TVs. A phone cannot open the Roku app, so a remembered Roku that discovery
+ * doesn't find gets "Open Silo on your Roku". Scanning a Roku's pairing code
+ * with the camera adds one on networks that block multicast.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,11 +74,26 @@ fun SiloCastTargetPickerSheet(
     serverRegistry: ServerRegistry = koinInject(),
 ) {
     val state by controller.state.collectAsState()
-    val activeServerId = serverRegistry.activeEntry.collectAsState().value?.id
+    val activeServer = serverRegistry.activeEntry.collectAsState().value
+    val activeServerId = activeServer?.id
+    val activeServerIdentity = activeServer?.verifiedServerId
     var searchTimedOut by remember { mutableStateOf(false) }
     // Remote-only mode keeps the sheet open through the connect (the row shows
     // a spinner, like Apple's picker) and dismisses once the session is up.
     var pendingConnectDeviceId by remember { mutableStateOf<String?>(null) }
+
+    fun select(target: SiloCastTarget) {
+        if (launchRequest == null) {
+            pendingConnectDeviceId = target.deviceId
+            controller.connect(target)
+        } else {
+            // Launch mode dismisses straight into the remote — the
+            // connect/handoff handshake renders there (Apple's auto-present).
+            controller.launchOnTarget(target, launchRequest)
+            onDismiss()
+            onLaunched()
+        }
+    }
 
     LaunchedEffect(controller) {
         controller.startBrowsing()
@@ -89,7 +115,7 @@ fun SiloCastTargetPickerSheet(
         state.targets
     } else {
         state.targets.filter {
-            AndroidServerRegistry.serverIdsMatch(it.serverId, activeServerId)
+            AndroidServerRegistry.serversMatch(it.serverId, it.serverIdentity, activeServerId, activeServerIdentity)
         }
     }
 
@@ -106,9 +132,11 @@ fun SiloCastTargetPickerSheet(
                 TextButton(
                     onClick = onDismiss,
                     modifier = Modifier.align(Alignment.CenterStart),
-                ) { Text("Done") }
+                ) { Text(stringResource(CommonR.string.common_done)) }
                 Text(
-                    if (launchRequest == null) "Remote Control" else "Play on Silo TV",
+                    stringResource(
+                        if (launchRequest == null) CommonR.string.cast_picker_remoteControl else CommonR.string.cast_picker_playOnSiloTv,
+                    ),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.align(Alignment.Center),
@@ -122,19 +150,14 @@ fun SiloCastTargetPickerSheet(
                             target = target,
                             launchRequest = launchRequest,
                             activeServerId = activeServerId,
+                            activeServerIdentity = activeServerIdentity,
                             isConnectingToThis = state.connectingDeviceId == target.deviceId,
-                            onSelect = {
-                                if (launchRequest == null) {
-                                    pendingConnectDeviceId = target.deviceId
-                                    controller.connect(target)
-                                } else {
-                                    // Launch mode dismisses straight into the
-                                    // remote — the connect/handoff handshake
-                                    // renders there (Apple's auto-present).
-                                    controller.launchOnTarget(target, launchRequest)
-                                    onDismiss()
-                                    onLaunched()
-                                }
+                            needsPairing = controller.needsPairing(target),
+                            onSelect = { select(target) },
+                            onForget = if (controller.isRememberedRoku(target.deviceId)) {
+                                { controller.forgetRoku(target.deviceId) }
+                            } else {
+                                null
                             },
                         )
                     }
@@ -154,11 +177,11 @@ fun SiloCastTargetPickerSheet(
                             modifier = Modifier.size(36.dp),
                         )
                         Text(
-                            "No Silo TVs Found",
+                            stringResource(CommonR.string.cast_picker_noneFound),
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text(
-                            "Foreground Silo TVs on this network appear here.",
+                            stringResource(CommonR.string.cast_picker_noneFoundHint),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center,
@@ -175,7 +198,7 @@ fun SiloCastTargetPickerSheet(
                     ) {
                         CircularProgressIndicator()
                         Text(
-                            "Searching for Silo TVs…",
+                            stringResource(CommonR.string.cast_picker_searching),
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -183,9 +206,22 @@ fun SiloCastTargetPickerSheet(
                 }
             }
 
+            // Rokus can't be opened from a phone; say what to do instead.
+            val missingRoku = remember(state.targets, searchTimedOut) {
+                if (searchTimedOut) controller.missingRememberedRoku() else null
+            }
+            missingRoku?.let { roku ->
+                Text(
+                    stringResourceWithNames(CommonR.string.cast_picker_rokuMissing, roku.name),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+
             state.error?.let { error ->
                 Text(
-                    error,
+                    error.resolve(),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 8.dp),
@@ -202,12 +238,20 @@ private fun TargetRow(
     target: SiloCastTarget,
     launchRequest: SiloCastLaunchRequest?,
     activeServerId: String?,
+    activeServerIdentity: String?,
     isConnectingToThis: Boolean,
+    needsPairing: Boolean,
     onSelect: () -> Unit,
+    /** A Roku added by link or address: forgets it and its pairing key. */
+    onForget: (() -> Unit)?,
 ) {
     val needsUpdate = target.version < SiloCastProtocol.version
-    val enabled = !needsUpdate
-    val targetsActiveServer = AndroidServerRegistry.serverIdsMatch(target.serverId, activeServerId)
+    val targetsActiveServer =
+        AndroidServerRegistry.serversMatch(target.serverId, target.serverIdentity, activeServerId, activeServerIdentity)
+    // A Roku plays only from its own server for now (silo-roku
+    // `docs/silocontrol.md` section 8.4); it would refuse the handoff.
+    val rokuOnOtherServer = target.isRoku && target.serverId != null && !targetsActiveServer
+    val enabled = !needsUpdate && !rokuOnOtherServer
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -239,13 +283,20 @@ private fun TargetRow(
             )
             val subtitle: Pair<String, androidx.compose.ui.graphics.Color>? = when {
                 needsUpdate ->
-                    "Update Silo on this TV to use your profile" to MaterialTheme.colorScheme.onSurfaceVariant
+                    stringResource(CommonR.string.cast_picker_updateTv) to MaterialTheme.colorScheme.onSurfaceVariant
+                rokuOnOtherServer ->
+                    (
+                        target.serverName?.let { stringResourceWithNames(CommonR.string.cast_picker_playsFrom, it) }
+                            ?: stringResource(CommonR.string.cast_picker_playsFromOther)
+                        ) to MaterialTheme.colorScheme.onSurfaceVariant
+                needsPairing ->
+                    stringResource(CommonR.string.cast_picker_scanPairing) to MaterialTheme.colorScheme.onSurfaceVariant
                 target.isPlaying ->
-                    "Playing now" to MaterialTheme.colorScheme.primary
+                    stringResource(CommonR.string.cast_picker_playingNow) to MaterialTheme.colorScheme.primary
                 targetsActiveServer && target.serverName != null ->
                     target.serverName!! to MaterialTheme.colorScheme.onSurfaceVariant
                 target.serverId != null && !targetsActiveServer ->
-                    "Will temporarily use your server" to MaterialTheme.colorScheme.onSurfaceVariant
+                    stringResource(CommonR.string.cast_picker_temporaryServer) to MaterialTheme.colorScheme.onSurfaceVariant
                 else -> null
             }
             subtitle?.let { (text, color) ->
@@ -255,6 +306,15 @@ private fun TargetRow(
 
         if (isConnectingToThis) {
             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+        } else if (onForget != null) {
+            IconButton(onClick = onForget) {
+                Icon(
+                    Icons.Outlined.Close,
+                    contentDescription = stringResourceWithNames(CommonR.string.cast_picker_forget, target.name),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }

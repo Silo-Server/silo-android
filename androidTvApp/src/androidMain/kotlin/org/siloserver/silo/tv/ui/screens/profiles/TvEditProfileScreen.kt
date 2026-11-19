@@ -8,6 +8,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -48,24 +51,24 @@ fun TvEditProfileScreen(
 
     TvProfileForm(
         state = TvProfileFormState(
-            title = "Edit Profile",
-            subtitle = "Pick a look and update this profile.",
+            title = stringResource(CommonR.string.profiles_edit_title),
+            subtitle = stringResource(CommonR.string.profiles_edit_subtitle),
             name = state.name,
             selectedAvatar = state.selectedAvatar,
             selectedAvatarUrl = state.selectedAvatarUrl,
             avatarStyleId = state.avatarStyleId,
             selectedAvatarSeed = state.selectedAvatarSeed,
             avatarBatch = state.avatarBatch,
-            isChild = state.isChild,
-            maxContentRating = state.maxContentRating,
+            access = state.access,
+            libraries = state.libraries,
             pinEnabled = state.pinEnabled,
             pin = state.pin,
             qualityPreference = state.qualityPreference,
             subtitleMode = state.subtitleMode,
-            pinHelper = "New 4-Digit PIN (leave blank to keep)",
-            submitLabel = "Save Changes",
+            pinHelper = stringResource(CommonR.string.profiles_edit_pinHintTv),
+            submitLabel = stringResource(CommonR.string.profiles_edit_save),
             isSubmitting = state.isSaving,
-            error = state.error,
+            error = state.error?.text(),
         ),
         callbacks = TvProfileFormCallbacks(
             onNameChanged = viewModel::onNameChanged,
@@ -75,6 +78,9 @@ fun TvEditProfileScreen(
             onAvatarShuffle = viewModel::onAvatarShuffle,
             onChildToggled = viewModel::onChildToggled,
             onContentRatingSelected = viewModel::onContentRatingSelected,
+            onLibraryRestrictionsToggled = viewModel::onLibraryRestrictionsToggled,
+            onLibraryToggled = viewModel::onLibraryToggled,
+            onRetryLibraries = viewModel::loadLibraries,
             onPinToggled = viewModel::onPinToggled,
             onPinChanged = viewModel::onPinChanged,
             onQualitySelected = viewModel::onQualitySelected,

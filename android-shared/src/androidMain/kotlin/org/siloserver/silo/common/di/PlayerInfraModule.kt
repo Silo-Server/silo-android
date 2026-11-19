@@ -1,5 +1,8 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package org.siloserver.silo.common.di
 
+import org.siloserver.silo.common.i18n.AppLanguageStore
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.player.ActivePlayerHolder
@@ -37,13 +40,30 @@ import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.repository.LibraryPlaybackPrefsRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SettingsRepository
+import org.siloserver.silo.common.player.probe.BandwidthProbeScheduler
+import org.siloserver.silo.common.player.probe.PlaybackBandwidthEstimates
+import org.siloserver.silo.common.player.probe.PlaybackV2BandwidthProbeServer
+import org.siloserver.silo.common.player.probe.PlayerMediaActivity
+import org.siloserver.silo.common.player.probe.profileSwitches
+import org.siloserver.silo.model.server.ServerEntry
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import org.koin.android.ext.koin.androidContext
 import org.koin.dsl.module
+
+/** The entry's id while it is signed in with a profile: what the bandwidth probe measures. */
+private fun ServerEntry?.signedInServerId(): String? = this?.takeIf { !it.profileId.isNullOrBlank() }?.id
 
 /**
  * Phase 0 player infrastructure DI module.
@@ -62,8 +82,79 @@ val playerInfraModule = module {
         org.siloserver.silo.common.player.AndroidPlaybackJournalStore(androidContext())
     }
     single { org.siloserver.silo.network.apiv2.PlaybackV2Api(get(), get()) }
+    // The buffering-quality connection state and learned-limit reset Settings shows.
+    single { org.siloserver.silo.repository.PlaybackConnectionRepository(get(), get()) }
+    // The bandwidth probe: one schedule per process, which each app's
+    // Application starts on the process lifecycle. Playback starts read its
+    // estimate through PlaybackBandwidthEstimates.
     single {
-        org.siloserver.silo.repository.SequencedPlayback(get(), get(), get(), get()) {
+        val registry = get<ServerRegistry>()
+        // One coroutine at a time: the scheduler's state is confined to it.
+        val probeScope = CoroutineScope(
+            SupervisorJob() + Dispatchers.Default.limitedParallelism(1) +
+                CoroutineExceptionHandler { _, failure ->
+                    // Class name only: the message can carry the server's address.
+                    android.util.Log.w("BandwidthProbe", "bandwidth probe failed: ${failure::class.simpleName}")
+                },
+        )
+        BandwidthProbeScheduler(
+            server = PlaybackV2BandwidthProbeServer(get(), get()),
+            network = get(),
+            mediaActive = PlayerMediaActivity(
+                holder = get(),
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            ).active,
+            activeServer = registry.activeEntry
+                .map { it.signedInServerId() }
+                .stateIn(probeScope, SharingStarted.Eagerly, registry.activeEntry.value.signedInServerId()),
+            scope = probeScope,
+            // The account is part of the profile: two accounts on one server
+            // both have a `default` profile.
+            profileSwitches = registry.activeEntry
+                .map { entry -> entry?.id to entry?.profileId?.takeIf(String::isNotBlank)?.let { "${entry.accountId}|$it" } }
+                .distinctUntilChanged()
+                .profileSwitches(),
+            localRoute = org.siloserver.silo.network.localroute.LocalRoutes.state.active,
+        )
+    }
+    single<PlaybackBandwidthEstimates> { get<BandwidthProbeScheduler>() }
+    // The video player and its session manager, the same on phone and TV: the
+    // subtitle manager each app registers carries the form factor's policy.
+    single {
+        org.siloserver.silo.common.player.SiloPlayerFactory(
+            context = androidContext(),
+            tokenManager = get(),
+            subtitleManager = get(),
+            httpDataSourceFactory = get(PLAYER_HTTP_DATA_SOURCE_FACTORY_QUALIFIER),
+            mediaAuthSession = get(),
+            bandwidthMeter = get(),
+            delayProcessor = get(),
+            subtitleOffsetHolder = get(),
+            libassBridge = get(),
+            playbackAnalytics = get(),
+            throughputMeter = get(),
+            sidecarSubtitleHttpDataSourceFactory = get(PLAYER_SIDECAR_SUBTITLE_HTTP_DATA_SOURCE_FACTORY_QUALIFIER),
+        )
+    }
+    // Video starts send the bandwidth probe's estimate, and plan summaries the
+    // video's throughput; the audiobook managers the apps register do neither.
+    single {
+        val playerSettings = get<PlayerSettingsStore>()
+        org.siloserver.silo.common.player.PlaybackSessionManager(
+            get(), get(), get(),
+            bandwidthEstimates = get(),
+            throughputKbps = get<org.siloserver.silo.common.player.PlaybackThroughputMeter>()::takeKbps,
+            playingPlanThroughputKbps = get<org.siloserver.silo.common.player.PlaybackThroughputMeter>()::peekKbps,
+            // The profile's mode as last stored on this device, which the
+            // store answers locally, so no start goes out before it is known.
+            bufferingQualityMode = { playerSettings.bufferingQualityModeFlow.first() },
+        )
+    }
+    single {
+        org.siloserver.silo.repository.SequencedPlayback(
+            get(), get(), get(), get(),
+            log = { android.util.Log.i("SequencedPlayback", it) },
+        ) {
             java.util.UUID.randomUUID().toString()
         }
     }
@@ -80,19 +171,42 @@ val playerInfraModule = module {
 
     single {
         val userItemState = get<org.siloserver.silo.repository.port.UserItemStatePort>()
-        val syncScheduler = get<org.siloserver.silo.common.data.sync.OutboxSyncScheduler>()
+        val tokenManager = get<TokenManager>()
         FinalPlaybackPositionWriter(
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-            scopeProvider = { get<TokenManager>().snapshotCurrentScope() },
+            scopeProvider = { tokenManager.snapshotCurrentScope() },
         ) { snapshot ->
-            val written = userItemState.recordPosition(
-                snapshot.scope,
-                snapshot.contentId,
-                snapshot.fileId,
-                snapshot.positionSeconds,
-                snapshot.durationSeconds,
-            )
-            if (written) syncScheduler.requestSync()
+            val serverTrackedAtMs = snapshot.serverTrackedAtMs
+            if (serverTrackedAtMs != null) {
+                // Otherwise an older local sample outlives the server's answer:
+                // a finished title kept offering Resume at it (#842). Same scope
+                // check as recordPosition, so a switch since exit clears nothing.
+                val current = tokenManager.snapshotCurrentScope()
+                if (current != null &&
+                    current.serverId == snapshot.scope.serverId &&
+                    current.profileId == snapshot.scope.profileId &&
+                    current.credentialGenerationId == snapshot.scope.credentialGenerationId &&
+                    current.identityGeneration == snapshot.scope.identityGeneration
+                ) {
+                    userItemState.clearLocalPlaybackProgressBefore(
+                        listOf(snapshot.contentId),
+                        admittedAtMs = serverTrackedAtMs,
+                        identityGeneration = snapshot.scope.identityGeneration,
+                    )
+                }
+            } else if (snapshot.runStartedAtMs != null) {
+                // Downloaded playback: queued for the server. A stream's session
+                // already reports its progress, so it writes nothing locally.
+                userItemState.recordPosition(
+                    snapshot.scope,
+                    snapshot.contentId,
+                    snapshot.fileId,
+                    snapshot.positionSeconds,
+                    snapshot.durationSeconds,
+                    eventTimeMs = snapshot.eventTimeMs,
+                    runStartedAtMs = snapshot.runStartedAtMs,
+                )
+            }
         }
     }
 
@@ -103,6 +217,7 @@ val playerInfraModule = module {
         SettingsContractRevision(
             fetchCapabilities = { settingsApi.getContractCapabilities() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
+            fetchManifestKeys = { settingsApi.getContractKeys() },
         )
     }
 
@@ -121,6 +236,31 @@ val playerInfraModule = module {
         )
     }
 
+    // Manual audio and subtitle choices remembered per series on the server.
+    // App-scoped so a retry outlives the player that made the choice.
+    single<org.siloserver.silo.common.settings.SeriesTrackChoiceWriter> {
+        val v2 = get<org.siloserver.silo.network.apiv2.SettingsV2Api>()
+        org.siloserver.silo.common.settings.DefaultSeriesTrackChoiceWriter(
+            putSubtitle = { key, choice, owner -> v2.putSubtitlePreference(key, choice, owner) },
+            deleteSubtitle = { key, owner -> v2.deleteSubtitlePreference(key, owner) },
+            putAudio = { key, choice, owner -> v2.putAudioPreference(key, choice, owner) },
+            deleteAudio = { key, owner -> v2.deleteAudioPreference(key, owner) },
+            captureOwner = {
+                get<TokenManager>().snapshotCurrentScope()?.takeIf { !it.profileId.isNullOrBlank() }
+            },
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            identityChanges = get<org.siloserver.silo.network.IdentityTransitionBarrier>().transitions,
+            // Each successful probe: the server is back, or the app returned
+            // to the foreground and checked it again.
+            resumeSignals = get<ServerReachabilityMonitor>().state
+                .filter { it.status == org.siloserver.silo.common.network.ServerReachabilityStatus.Reachable }
+                .map { it.lastCheckedAtMs }
+                .distinctUntilChanged()
+                .map { },
+            autoResets = org.siloserver.silo.common.settings.SharedPreferencesSeriesAutoResetStore(androidContext()),
+        )
+    }
+
     // Per-profile DataStore-backed settings store with legacy SharedPreferences
     // migration. We resolve the active profile on demand via ProfileRepository,
     // and the current server URL via TokenManager — both of which the auth
@@ -129,7 +269,7 @@ val playerInfraModule = module {
     single<PlayerSettingsStore> {
         val registry = get<ServerRegistry>()
         val profileChangeSignal = registry.activeEntry
-            .map { it?.profileId }
+            .map { it?.accountId to it?.profileId }
             .distinctUntilChanged()
             .map { Unit }
         val serverChangeSignal = registry.activeEntry
@@ -151,6 +291,7 @@ val playerInfraModule = module {
             // server records as `device_id` for each override.
             getDeviceId = { get<DeviceMetadataProvider>().current()?.id },
             contractRevision = get(),
+            getActiveAccountId = { get<TokenManager>().getCurrentAccountId() },
         )
     }
 
@@ -170,7 +311,7 @@ val playerInfraModule = module {
         )
     }
 
-    // Card-presentation preference (poster size + captions). Same lifetime
+    // Card-presentation preference (poster size). Same lifetime
     // rationale as the overlay store; the extra lambdas feed the last-known
     // SharedPreferences cache identity (server|profile|family|device).
     single<CardPresentationStore> {
@@ -181,6 +322,7 @@ val playerInfraModule = module {
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
             getDeviceMetadata = { get<DeviceMetadataProvider>().current() },
+            getActiveAccountId = { get<TokenManager>().getCurrentAccountId() },
         )
     }
 
@@ -190,7 +332,7 @@ val playerInfraModule = module {
     single<SeekIntervalStore> {
         val registry = get<ServerRegistry>()
         val identityChanges = registry.activeEntry
-            .map { it?.url to it?.profileId }
+            .map { Triple(it?.url, it?.accountId, it?.profileId) }
             .distinctUntilChanged()
             .map { Unit }
         DefaultSeekIntervalStore(
@@ -199,6 +341,7 @@ val playerInfraModule = module {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
+            getActiveAccountId = { get<TokenManager>().getCurrentAccountId() },
             identityChanges = identityChanges,
         )
     }
@@ -210,7 +353,7 @@ val playerInfraModule = module {
     // Add Server → sign in → pick profile clears nothing on its own.
     single<EpisodeSpoilerStore> {
         val identityChanges = get<ServerRegistry>().activeEntry
-            .map { it?.url to it?.profileId }
+            .map { Triple(it?.url, it?.accountId, it?.profileId) }
             .distinctUntilChanged()
             .map { Unit }
         DefaultEpisodeSpoilerStore(
@@ -219,6 +362,29 @@ val playerInfraModule = module {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
+            captureAuthority = { get<TokenManager>().snapshotCurrentScope() },
+            getActiveAccountId = { get<TokenManager>().getCurrentAccountId() },
+            identityChanges = identityChanges,
+        )
+    }
+
+    // App language (settings revision 28): applies the active profile's
+    // ui.app_language to the per-app language and writes a system-settings
+    // change back as this device's value. Resets on a server, account or
+    // profile change like the other settings stores.
+    single {
+        val identityChanges = get<ServerRegistry>().activeEntry
+            .map { Triple(it?.url, it?.accountId, it?.profileId) }
+            .distinctUntilChanged()
+            .map { Unit }
+        AppLanguageStore(
+            context = androidContext(),
+            repository = get<SettingsRepository>(),
+            // Off the main thread: it commits preferences synchronously.
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
+            getServerUrl = { get<TokenManager>().getServerUrl() },
+            getActiveAccountId = { get<TokenManager>().getCurrentAccountId() },
             captureAuthority = { get<TokenManager>().snapshotCurrentScope() },
             identityChanges = identityChanges,
         )
@@ -230,7 +396,7 @@ val playerInfraModule = module {
     single<TitleArtStore> {
         val registry = get<ServerRegistry>()
         val identityChanges = registry.activeEntry
-            .map { it?.url to it?.profileId }
+            .map { Triple(it?.url, it?.accountId, it?.profileId) }
             .distinctUntilChanged()
             .map { Unit }
         DefaultTitleArtStore(
@@ -239,6 +405,29 @@ val playerInfraModule = module {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             getAuthScope = { get<TokenManager>().snapshotCurrentScope() },
             identityChanges = identityChanges,
+        )
+    }
+
+    // Theme music on the phone and TV detail pages. One instance, so a theme
+    // continues from one detail page to the next one with the same theme.
+    single {
+        val identityChanges = get<ServerRegistry>().activeEntry
+            .map { Triple(it?.url, it?.accountId, it?.profileId) }
+            .distinctUntilChanged()
+            .drop(1)
+            .map { Unit }
+        org.siloserver.silo.common.thememusic.ThemeMusicService(
+            context = androidContext(),
+            api = get(),
+            tokens = get(),
+            settings = get(),
+            identityChanges = identityChanges,
+            playbackStarts = org.siloserver.silo.common.thememusic.playbackStarts(get<ActivePlayerHolder>().player),
+            // The grant URL carries its own token and may be on a proxy's
+            // origin, so it goes out on the raw transport without account auth.
+            dataSourceFactory = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(
+                get<okhttp3.OkHttpClient>(PLAYER_TRANSPORT_OKHTTP_QUALIFIER),
+            ),
         )
     }
 
@@ -252,6 +441,7 @@ val playerInfraModule = module {
             episodeSpoilerStore = get(),
             titleArtStore = get(),
             hiddenLibrariesStore = get(),
+            appLanguageStore = get(),
             hasAuthenticatedProfile = {
                 !get<ProfileRepository>().getActiveProfileId().isNullOrBlank()
             },
@@ -262,6 +452,7 @@ val playerInfraModule = module {
         val registry = get<ServerRegistry>()
         val transitions = get<org.siloserver.silo.network.IdentityTransitionBarrier>()
         val discovery = get<org.siloserver.silo.network.apiv2.ApiV2Probe>()
+        val outboxWakeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         ServerReachabilityMonitor(
             probe = discovery::probeFresh,
             captureTarget = {
@@ -274,6 +465,21 @@ val playerInfraModule = module {
             onServerReconnected = {
                 get<ServerDrivenConfigRefresher>().forceRefresh()
             },
+            onServerReachable = {
+                // Download playback progress waits for the server; send it now,
+                // not at the end of its backoff. Off the probe lock and main thread.
+                outboxWakeScope.launch {
+                    try {
+                        val queued = get<org.siloserver.silo.common.data.db.SiloDatabase>().dirtyOperationDao()
+                            .makeDownloadProgressDue(System.currentTimeMillis())
+                        if (queued > 0) org.siloserver.silo.common.data.sync.SyncWorker.enqueueNow(androidContext())
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        android.util.Log.w("ServerReachability", "couldn't start the outbox drain", e)
+                    }
+                }
+            },
         )
     }
 
@@ -283,13 +489,14 @@ val playerInfraModule = module {
     single {
         val registry = get<ServerRegistry>()
         val profileChangeSignal = registry.activeEntry
-            .map { it?.profileId }
+            .map { it?.accountId to it?.profileId }
             .distinctUntilChanged()
             .map { Unit }
         AudiobookSettingsStore(
             context = androidContext(),
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             profileChangeSignal = profileChangeSignal,
+            getActiveAccountId = { get<TokenManager>().getCurrentAccountId() },
         )
     }
 

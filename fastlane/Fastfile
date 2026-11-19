@@ -1,47 +1,25 @@
-require "base64"
-require "fileutils"
-require "tmpdir"
-require_relative "play_bundle_manifest"
-
-# Root-level Fastfile — Android lane for Google Play releases. Mirrors the
-# structure of silo-apple's Fastfile:
+# Google Play lanes for the Silo Android apps. release.yml builds the signed
+# App Bundles and runs `upload`; promote.yml runs `promote`. See
+# docs/releasing.md.
 #
-#   android beta — build both App Bundles, upload to a Play testing track
+# Phone and TV share one applicationId, so they always ship together in one
+# Play release (phone versionCode = base*2, TV = base*2+1; see
+# scripts/release-version.py).
 #
-# All identifying values come from environment variables or committed
-# constants. Nothing secret is hardcoded — this file is safe to commit to a
-# public repo.
-#
-# Play keys everything on versionCode and has no version/build split, but
-# versionName is a free-form display string that may repeat. So Apple's
-# marketing-version + build-number model is reproduced by folding the build
-# into the versionCode while versionName stays put — 1.0.0 can ship as build
-# 1, 2, 3 the way TestFlight does:
-#
-#   base = VERSION_CODE_EPOCH + (major*10_000 + minor*100 + patch)*1_000 + build
-#
-# Gradle then ships phone = base*2, TV = base*2+1. Both artifacts always ship
-# together: they share one applicationId, and a new track release supersedes
-# the previous one, so releasing one artifact would drop the other from the
-# track.
+# Nothing secret is hardcoded — this file is safe to commit to a public repo.
 
 default_platform(:android)
 
 PACKAGE_NAME = "org.siloserver.silo"
-# Keeps every versionCode from the version+build scheme above the largest the
-# previous major*1e6+minor*1e3+patch scheme could emit. Must match release.yml.
-VERSION_CODE_EPOCH = 100_000_000
-PHONE_AAB = File.expand_path("../androidApp/build/outputs/bundle/release/androidApp-release.aab", __dir__)
-TV_AAB = File.expand_path("../androidTvApp/build/outputs/bundle/release/androidTvApp-release.aab", __dir__)
+BUNDLES = %w[
+  androidApp/build/outputs/bundle/release/androidApp-release.aab
+  androidTvApp/build/outputs/bundle/release/androidTvApp-release.aab
+].map { |path| File.expand_path("../#{path}", __dir__) }
+# Play's "What's new", written by the workflow from the release notes.
+CHANGELOG = File.expand_path("metadata/android/en-US/changelogs/default.txt", __dir__)
 
-# ── Private helpers ──────────────────────────────────────────────────────────
-
-# Loads the Play publisher service-account key.
-#
-# CI path:   raw JSON from the PLAY_SERVICE_ACCOUNT_JSON env var.
-# Local path: read ~/.playstore/silo-play-publisher.json from disk.
-#
-# Same CI/local duality as silo-apple's setup_api_key.
+# The Play publisher service-account key: PLAY_SERVICE_ACCOUNT_JSON in CI, or
+# ~/.playstore/silo-play-publisher.json locally.
 def play_json_key_data
   raw = ENV["PLAY_SERVICE_ACCOUNT_JSON"].to_s
   return raw unless raw.strip.empty?
@@ -54,251 +32,59 @@ def play_json_key_data
   File.read(key_path)
 end
 
-# Resolves and validates the marketing version and build number, returning
-# [version, base_code, build].
-#
-# Only a plain dotted version is accepted. A prerelease suffix (1.4.0-rc.1)
-# would strip to the same versionCode as the base version, so re-releasing the
-# same marketing version is expressed with SILO_BUILD_NUMBER instead — the
-# TestFlight model, folded into the versionCode because Play has no separate
-# build-number field. The value also flows into Gradle -P properties, so the
-# strict format doubles as the last gate against shell/property injection
-# (same threat model as silo-apple's marketing_version_xcarg).
-def resolve_release_version
-  version = ENV["SILO_VERSION_NAME"].to_s.strip
-  UI.user_error!("SILO_VERSION_NAME must be set (e.g. 1.4.0)") if version.empty?
-
-  unless version.match?(/\A\d+\.\d+\.\d+\z/)
-    UI.user_error!(
-      "Invalid SILO_VERSION_NAME #{version.inspect}; expected a plain dotted " \
-      "version like 1.4.0. Prerelease suffixes are not supported for Play " \
-      "releases because the versionCode is derived from major.minor.patch."
-    )
-  end
-
-  build = ENV.fetch("SILO_BUILD_NUMBER", "1").to_s.strip
-  build = "1" if build.empty?
-  unless build.match?(/\A\d+\z/)
-    UI.user_error!("SILO_BUILD_NUMBER must be a plain integer (got #{build.inspect}).")
-  end
-  build = build.to_i
-
-  major, minor, patch = version.split(".").map(&:to_i)
-  UI.user_error!("Major version must be <= 94 to stay under Play's versionCode ceiling.") if major > 94
-  if minor > 99 || patch > 99
-    UI.user_error!(
-      "minor and patch must each be <= 99 — the versionCode packs them into " \
-      "two decimal digits each."
-    )
-  end
-  UI.user_error!("Build number must be between 1 and 999 (got #{build}).") unless build.between?(1, 999)
-
-  # Mirrors release.yml. VERSION_CODE_EPOCH lifts this scheme above every code
-  # the previous major*1e6+minor*1e3+patch scheme could emit, so codes stay
-  # strictly increasing across the switchover — Play rejects any reuse.
-  base_code = VERSION_CODE_EPOCH + (major * 10_000 + minor * 100 + patch) * 1_000 + build
-  UI.user_error!("Version code base must be positive (0.0.0 is not releasable).") unless base_code.positive?
-  # Gradle additionally enforces base <= 1_049_999_999 so base*2+1 stays
-  # under Play's 2_100_000_000 versionCode ceiling.
-  if base_code > 1_049_999_999
-    UI.user_error!("Version code base #{base_code} exceeds Gradle's 1_049_999_999 cap.")
-  end
-
-  [version, base_code, build]
+def required_env(name)
+  value = ENV[name].to_s.strip
+  UI.user_error!("#{name} must be set.") if value.empty?
+  value
 end
 
-def play_track
-  track = ENV.fetch("PLAY_TRACK", "beta").strip.downcase
-  track = "beta" if track.empty?
-  unless %w[internal alpha beta production].include?(track)
-    UI.user_error!(
-      "Unsupported PLAY_TRACK=#{track.inspect}. " \
-      "Use internal, alpha, beta, or production."
-    )
-  end
-  track
+def require_changelog!
+  UI.user_error!("Play release notes not found at #{CHANGELOG}.") unless File.file?(CHANGELOG)
 end
 
-# Resolves the release keystore for Gradle signing.
-#
-# CI path:   base64-decode SILO_RELEASE_KEYSTORE_B64 into a temp file.
-# Local paths: an explicit SILO_RELEASE_KEYSTORE path, falling back to
-#              ~/keystores/silo-android-release.jks.
-def resolve_release_keystore
-  b64 = ENV["SILO_RELEASE_KEYSTORE_B64"].to_s
-  unless b64.strip.empty?
-    keystore_path = File.join(Dir.mktmpdir("silo-release-keystore"), "silo-release.jks")
-    File.binwrite(keystore_path, Base64.decode64(b64))
-    return keystore_path
-  end
-
-  explicit = ENV["SILO_RELEASE_KEYSTORE"].to_s
-  unless explicit.strip.empty?
-    UI.user_error!("SILO_RELEASE_KEYSTORE points to #{explicit}, which does not exist.") unless File.exist?(explicit)
-    return explicit
-  end
-
-  local = File.expand_path("~/keystores/silo-android-release.jks")
-  return local if File.exist?(local)
-
-  UI.user_error!(
-    "No release keystore available. Set SILO_RELEASE_KEYSTORE_B64 (CI), " \
-    "SILO_RELEASE_KEYSTORE (explicit path), or place the keystore at #{local}."
-  )
-end
-
-# The keystore/key passwords and key alias are read by Gradle directly from
-# the environment (see signingConfigs in the app build scripts); fail fast
-# here so a missing secret surfaces before the ~10-minute bundle build.
-# SILO_RELEASE_KEY_PASSWORD is optional — Gradle falls back to the keystore
-# password when it is unset.
-def require_signing_env!
-  %w[SILO_RELEASE_KEYSTORE_PASSWORD SILO_RELEASE_KEY_ALIAS].each do |name|
-    UI.user_error!("#{name} must be set for release signing.") if ENV[name].to_s.strip.empty?
-  end
-end
-
-# FCM config for push notifications. The app degrades gracefully without it
-# (push registration is skipped), but store builds should ship with push
-# working. Encode with: base64 < androidApp/google-services.json | tr -d '\n'
-def materialize_google_services_json
-  target = File.expand_path("../androidApp/google-services.json", __dir__)
-  return if File.exist?(target)
-
-  b64 = ENV["SILO_GOOGLE_SERVICES_JSON_B64"].to_s
-  if b64.strip.empty?
-    UI.important(
-      "androidApp/google-services.json is absent and SILO_GOOGLE_SERVICES_JSON_B64 " \
-      "is not set — building without FCM push support."
-    )
-    return
-  end
-
-  File.binwrite(target, Base64.decode64(b64))
-  UI.message("Wrote androidApp/google-services.json from SILO_GOOGLE_SERVICES_JSON_B64.")
-end
-
-# Play's "What's new" note (500-char limit), written to the supply metadata
-# changelog that applies to every version code in the release (default.txt).
-# Set PLAY_RELEASE_NOTES for an explicit note; falls back to the released
-# commit's subject — same pattern as silo-apple's TESTFLIGHT_CHANGELOG.
-def write_play_changelog
-  notes = ENV["PLAY_RELEASE_NOTES"].to_s.strip
-  notes = sh("git log -1 --pretty=format:%s", log: false).strip if notes.empty?
-  notes = notes[0, 500]
-
-  changelog_dir = File.expand_path("metadata/android/en-US/changelogs", __dir__)
-  FileUtils.mkdir_p(changelog_dir)
-  File.write(File.join(changelog_dir, "default.txt"), notes)
-  notes
-end
-
-# ── Android ──────────────────────────────────────────────────────────────────
-
-def build_play_bundles(version:, base_code:, build:, track:)
-  PlayBundleManifest.identity(File.expand_path("..", __dir__), ENV)
-  require_signing_env!
-  ENV["SILO_RELEASE_KEYSTORE"] = resolve_release_keystore
-  materialize_google_services_json
-  yield if block_given?
-
-  # One invocation builds both bundles so shared modules compile once. Any
-  # task name containing "bundle" also disables the sideload APK ABI splits
-  # (see isBuildingBundle in the app build scripts) — the AABs do their own
-  # per-ABI delivery. R8 mapping files are embedded in the bundles
-  # (BUNDLE-METADATA), so Play picks up deobfuscation automatically.
-  gradle(
-    tasks: [":androidApp:bundleRelease", ":androidTvApp:bundleRelease"],
-    properties: {
-      "siloVersionName" => version,
-      "siloVersionCode" => base_code,
-      # The build counter as its own value: it is already folded into
-      # base_code, but the app reports it verbatim to the server.
-      "siloBuildNumber" => build,
-      # The track these bundles are actually uploaded to, so a beta-track
-      # tester and a production user are distinguishable in admin Activity
-      # instead of both reporting a generic "release".
-      "siloReleaseChannel" => track,
-    },
-    system_properties: {
-      "org.gradle.jvmargs" => "-Xmx4g -Dfile.encoding=UTF-8",
-    },
-    flags: "--max-workers=2",
-  )
-
-  [PHONE_AAB, TV_AAB].each do |aab|
-    UI.user_error!("Expected App Bundle not found at #{aab}") unless File.exist?(aab)
-  end
-
-  PlayBundleManifest.write!(root: File.expand_path("..", __dir__),
-                            version: version, base_code: base_code, build: build, track: track)
-end
-
-def publish_play_bundles(version:, base_code:, build:, track:, json_key: nil,
-                         manifest_sha256: ENV["SILO_PLAY_BUNDLE_MANIFEST_SHA256"], changelog_prepared: false)
-  PlayBundleManifest.verify!(root: File.expand_path("..", __dir__),
-                             version: version, base_code: base_code, build: build, track: track,
-                             producer_attempt: ENV["SILO_PLAY_BUNDLE_ATTEMPT"], manifest_sha256: manifest_sha256)
-  json_key ||= play_json_key_data
-  write_play_changelog unless changelog_prepared
-
-  # Both AABs go up in a single Play edit/release — phone and TV must ship
-  # together (see the header comment). Listing metadata and imagery stay
-  # managed in the Play Console; only the changelog is uploaded from here.
-  # If Google rejects the edit with "changes cannot be sent for review
-  # automatically", a manual review step is pending in the Play Console —
-  # pass changes_not_sent_for_review: true temporarily and submit there.
-  upload_to_play_store(
-    package_name: PACKAGE_NAME,
-    json_key_data: json_key,
-    track: track,
-    release_status: "completed",
-    version_name: version,
-    aab_paths: [PHONE_AAB, TV_AAB],
-    # Belt-and-braces: never let a stale APK from the gradle lane context
-    # conflict with the explicit aab_paths above.
-    skip_upload_apk: true,
-    skip_upload_metadata: true,
-    skip_upload_images: true,
-    skip_upload_screenshots: true,
-    skip_upload_changelogs: false,
-    changes_not_sent_for_review: false,
-    timeout: 900,
-  )
-
-  UI.success("Uploaded Silo #{version} build #{build} (phone #{base_code * 2} + TV #{base_code * 2 + 1}) to the #{track} track.")
-end
-
+# If Google rejects an edit with "changes cannot be sent for review
+# automatically", a manual step is pending in Play Console: finish it there and
+# re-run the job.
 platform :android do
-  desc "Prepare signed phone and TV App Bundles without publishing"
-  lane :prepare_bundles do
-    version, base_code, build = resolve_release_version
-    track = play_track
-    build_play_bundles(version: version, base_code: base_code, build: build, track: track)
+  desc "Upload the phone and TV App Bundles to a Play track as one release"
+  lane :upload do
+    BUNDLES.each { |path| UI.user_error!("App Bundle not found at #{path}.") unless File.file?(path) }
+    require_changelog!
+
+    upload_to_play_store(
+      package_name: PACKAGE_NAME,
+      json_key_data: play_json_key_data,
+      track: required_env("PLAY_TRACK"),
+      release_status: "completed",
+      # The release's name in Play Console, such as "1.1.0 (22)".
+      version_name: required_env("PLAY_RELEASE_NAME"),
+      aab_paths: BUNDLES,
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      timeout: 900,
+    )
   end
 
-  desc "Upload the verified prepared phone and TV App Bundles"
-  lane :upload_bundles do
-    version, base_code, build = resolve_release_version
-    track = play_track
-    publish_play_bundles(version: version, base_code: base_code, build: build, track: track)
-  end
+  desc "Copy a release to another Play track as a draft, without rebuilding"
+  lane :promote do
+    require_changelog!
 
-  desc "Build both App Bundles (phone + TV) and upload to a Google Play track"
-  lane :beta do
-    version, base_code, build = resolve_release_version
-    track = play_track
-    # Preserve the local lane's early publisher-key validation.
-    json_key = play_json_key_data
-    build_play_bundles(version: version, base_code: base_code, build: build, track: track) do
-      write_play_changelog
-      UI.message(
-        "Releasing Silo #{version} build #{build} to the #{track} track " \
-        "(base code #{base_code} → phone #{base_code * 2}, TV #{base_code * 2 + 1})"
-      )
-    end
-    manifest = File.join(File.expand_path("..", __dir__), PlayBundleManifest::FILE_NAME)
-    publish_play_bundles(version: version, base_code: base_code, build: build, track: track, json_key: json_key,
-                         manifest_sha256: Digest::SHA256.file(manifest).hexdigest, changelog_prepared: true)
+    upload_to_play_store(
+      package_name: PACKAGE_NAME,
+      json_key_data: play_json_key_data,
+      track: required_env("PLAY_TRACK"),
+      track_promote_to: required_env("PLAY_PROMOTE_TO"),
+      # A maintainer reviews the draft in Play Console and sends it for review.
+      track_promote_release_status: "draft",
+      # Picks the release that holds this build (its phone versionCode).
+      version_code: Integer(required_env("PLAY_VERSION_CODE"), 10),
+      skip_upload_apk: true,
+      skip_upload_aab: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+    )
   end
 end

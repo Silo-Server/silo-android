@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.marquee.MarqueeBackdrop
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeProfileAvatar
@@ -74,9 +77,10 @@ fun TvPinEntryDialog(
     onDismiss: () -> Unit,
     errorMessage: String? = null,
     isVerifying: Boolean = false,
-    prompt: String = "Enter your PIN",
+    prompt: String? = null,
 ) {
     var pin by remember { mutableStateOf("") }
+    val enterPinFor = stringResourceWithNames(CommonR.string.pin_audio, profile.name)
     val fiveFocusRequester = remember { FocusRequester() }
     val latestError = remember(errorMessage) { errorMessage }
     LaunchedEffect(isVerifying, latestError) {
@@ -120,14 +124,14 @@ fun TvPinEntryDialog(
                     maxLines = 1,
                     modifier = Modifier
                         .padding(top = 11.dp)
-                        .semantics { contentDescription = "Enter PIN for ${profile.name}" },
+                        .semantics { contentDescription = enterPinFor },
                 )
                 PinDots(pinLength = pin.length, error = latestError != null && pin.isEmpty(), modifier = Modifier.padding(top = 17.dp))
                 Box(Modifier.padding(top = 9.dp).height(17.dp), contentAlignment = Alignment.Center) {
                     when {
                         latestError != null -> Text(latestError, fontSize = 14.sp, color = MarqueeColors.Error)
-                        isVerifying -> Text("Checking…", fontSize = 14.sp, color = MarqueeColors.InkSecondary)
-                        else -> Text(prompt, fontSize = 14.sp, color = MarqueeColors.InkSecondary)
+                        isVerifying -> Text(stringResource(CommonR.string.pin_checking), fontSize = 14.sp, color = MarqueeColors.InkSecondary)
+                        else -> Text(prompt ?: stringResource(CommonR.string.pin_prompt), fontSize = 14.sp, color = MarqueeColors.InkSecondary)
                     }
                 }
                 Spacer(modifier = Modifier.height(15.dp))
@@ -146,7 +150,7 @@ fun TvPinEntryDialog(
                 // Not disabled while the PIN is checked: on TV a disabled
                 // control loses focus. The view model drops a late answer.
                 TvMarqueeButton(
-                    text = "Cancel",
+                    text = stringResource(CommonR.string.common_cancel),
                     onClick = onDismiss,
                     kind = TvMarqueeButtonKind.Plain,
                     compact = true,
@@ -274,7 +278,7 @@ private fun PinKey(
             } else if (icon != null) {
                 Icon(
                     imageVector = icon,
-                    contentDescription = "Backspace",
+                    contentDescription = stringResource(CommonR.string.shell_keypad_backspace),
                     tint = if (isFocused) FocusedContent else SiloOnSurface,
                     modifier = Modifier.size(17.dp),
                 )

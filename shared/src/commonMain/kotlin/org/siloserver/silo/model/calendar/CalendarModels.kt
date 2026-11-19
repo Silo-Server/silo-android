@@ -3,6 +3,8 @@ package org.siloserver.silo.model.calendar
 import org.siloserver.silo.model.catalog.isEpisodeItemType
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 
 /** Server filter presets for GET /api/v2/calendar. Web exposes Following / Trending / All. */
 object CalendarFilter {
@@ -24,7 +26,27 @@ object CalendarBadge {
     const val SeriesPremiere = "series_premiere"
     const val SeasonPremiere = "season_premiere"
     const val Finale = "finale"
+
+    /** A movie listed on its digital release (`/api/v2` only). */
+    const val Digital = "digital"
+
+    /** A movie listed on its physical (disc) release (`/api/v2` only). */
+    const val Physical = "physical"
 }
+
+/**
+ * Poster pill label for a calendar badge, or null to hide a badge this client
+ * does not know. Same labels as web, iOS, and tvOS. PREMIERE, not SERIES
+ * PREMIERE, fits a poster badge, and NEW SEASON already marks season premieres.
+ */
+fun calendarBadgeLabel(badge: String): UiText? = when (badge) {
+    CalendarBadge.SeriesPremiere -> SharedString.CalendarSeriesPremiere
+    CalendarBadge.SeasonPremiere -> SharedString.CalendarSeasonPremiere
+    CalendarBadge.Finale -> SharedString.CalendarFinale
+    CalendarBadge.Digital -> SharedString.CalendarDigital
+    CalendarBadge.Physical -> SharedString.CalendarPhysical
+    else -> null
+}?.let { UiText.Key(it) }
 
 @Serializable
 data class CalendarResponse(

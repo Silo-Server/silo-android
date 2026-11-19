@@ -264,6 +264,19 @@ class PlaybackCapabilityDetectorAudioSupportTest {
         assertEquals("alac", platformAudioCodecName(MimeTypes.AUDIO_ALAC))
         assertEquals(null, platformAudioCodecName("audio/x-unknown"))
     }
+
+    /**
+     * A WAV audiobook's track is `pcm_s16le` on the server (ffmpeg's name), and
+     * the audio-only planner direct-plays it only when the client lists that
+     * exact name. The platform raw decoder is what Media3 plays PCM through.
+     */
+    @Test
+    fun `the raw PCM decoder advertises the PCM codecs Media3 plays from WAV`() {
+        val raw = platformAudioCodecNames(MimeTypes.AUDIO_RAW)
+        assertTrue("pcm_s16le" in raw, "raw PCM names: $raw")
+        assertEquals(listOf("aac"), platformAudioCodecNames(MimeTypes.AUDIO_AAC))
+        assertEquals(emptyList(), platformAudioCodecNames("audio/x-unknown"))
+    }
 }
 
 /**
