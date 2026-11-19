@@ -60,7 +60,10 @@ enum class BufferingWaitCause { NETWORK, SEEK, PAUSE, RELOAD, RENDERER }
 /**
  * The `quality_change` replan the controller wants sent. The caller builds the
  * wire request and drops [bandwidthEstimateSource] and [learnedLimit] when the
- * server does not advertise `buffering_quality_v1`.
+ * server does not advertise `buffering_quality_v1`. A lowering's
+ * [bandwidthEstimateSource] is `observed_rebuffer` only when the plan's media
+ * measurably arrived more slowly than its delivered bitrate; otherwise the
+ * step-down estimate goes without one.
  */
 data class BufferingQualityReplan(
     val qualityPreference: String,
@@ -174,6 +177,15 @@ data class BufferingPlanSummary(
  * and each lowering's replacement would carry on the same wait. Without it no
  * trigger acts, the start's wait does not count once the plan plays, and the
  * start runs on to its deadline and the caller's failure path.
+ *
+ * Once a plan of the attempt has played, a stall lowers without that
+ * evidence, but the lowering claims a slow link
+ * ([BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER], which the server learns as
+ * the device's limit) only with it. Time the player spent waiting for the
+ * server to produce media (an encoder slower than real time, subtitle
+ * burn-in, a node starting) is not link time: the meter times only transfer
+ * from a request's first byte, so media that waited and then arrived fast is
+ * no evidence, and the step-down goes out without a source.
  *
  * The answer, the once-per-title notice and the re-offer wait belong to the
  * title: [onNewAttempt] keeps them, and only [reset] (different content) and a
@@ -853,10 +865,11 @@ class BufferingQualityController(
             // The exact integer floor of delivered × 7 / 10; see STEP_DOWN_RATIO.
             val estimate = (delivered.toLong() * 7L / 10L).toInt()
             if (estimate < MIN_ESTIMATE_KBPS) return null
+            // Sourced only with slow-transfer evidence; see the class notes.
             return BufferingQualityReplan(
                 qualityPreference = PLAYBACK_QUALITY_AUTO,
                 bandwidthEstimateKbps = estimate,
-                bandwidthEstimateSource = BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER,
+                bandwidthEstimateSource = BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER.takeIf { slowLinkEvidence(plan) },
             )
         }
         // The spec's lower rung: below the lower of the rung the plan names and

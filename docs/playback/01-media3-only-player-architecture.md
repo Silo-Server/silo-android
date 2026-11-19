@@ -281,8 +281,12 @@ A request sends `bandwidth_estimate_kbps` in two cases only:
   the server uses it only to rule out a source above 80% of the estimate, and
   only when playback starts. Replans never carry it.
 - **The step-down estimate, on lowering replans.** A replan that lowers Auto
-  after repeated rebuffering sends `floor(delivered bitrate × 7 / 10)` with
-  `bandwidth_estimate_source: "observed_rebuffer"`. Later Auto replans in the
+  after repeated rebuffering sends `floor(delivered bitrate × 7 / 10)`. It
+  carries `bandwidth_estimate_source: "observed_rebuffer"` only when the
+  plan's measured throughput is below its delivered bitrate; otherwise the
+  stall may be the server producing media slower than real time, and the
+  estimate goes without a source, which the server plans under but does not
+  learn. Later Auto replans in the
   same playback keep sending that estimate, without a source, so a failure or
   track replan does not lift it. The carry ends with **Restore quality**, a
   quality change the controller did not send, or a new playback attempt.
