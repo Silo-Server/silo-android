@@ -23,7 +23,7 @@ import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
-import org.siloserver.silo.tv.ui.util.isAudiobookMediaType
+import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -529,8 +529,8 @@ class TvFocusMarqueeState internal constructor() {
 internal fun SectionItem.heroCoverAspect(): Float? = when {
     type.equals("episode", ignoreCase = true) || posterIsEpisodeStill == true -> null
     !backdropUrl.isNullOrBlank() || posterUrl.isNullOrBlank() -> null
-    isAudiobookMediaType(type) -> TvSquareCoverAspect
-    else -> TvPosterCoverAspect
+    // The shape the item's card draws the same artwork at.
+    else -> tvArtworkAspectRatioForMediaType(type) ?: TvPosterCoverAspect
 }
 
 /** A framed cover's detail poster, and the width over height it is drawn at. */

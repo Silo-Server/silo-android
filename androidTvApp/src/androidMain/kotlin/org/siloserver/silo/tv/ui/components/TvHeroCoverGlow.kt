@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import android.util.LruCache
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
@@ -34,11 +35,18 @@ import kotlin.math.sqrt
  * nothing below API 31, so the blur runs on a small software bitmap made from
  * the 128 px decode the ambient tint sampler already requests. [aspect] is the
  * cover's width over height.
+ *
+ * Finished glows are cached, so a hero layer composed for the same cover (the
+ * crossfade to its detail poster, or a revisit) starts with its glow instead
+ * of fading it out and back in.
  */
 internal fun Modifier.coverGlow(url: String, aspect: Float): Modifier = composed {
     val context = LocalContext.current
-    val glow by produceState<ImageBitmap?>(initialValue = null, url, aspect) {
-        value = withContext(Dispatchers.Default) { blurredCover(context, url, aspect) }
+    val key = "$aspect|$url"
+    val glow by produceState(initialValue = GlowCache.get(key), key) {
+        value = GlowCache.get(key)
+            ?: withContext(Dispatchers.Default) { blurredCover(context, url, aspect) }
+                ?.also { GlowCache.put(key, it) }
     }
     drawBehind {
         val image = glow ?: return@drawBehind
@@ -64,6 +72,9 @@ private const val GlowScale = 1.12f
 /** tvOS blurs a 380 pt cover's glow with a 36 pt standard deviation. */
 private const val GlowSigmaPerCoverHeight = 36f / 380f
 private const val GlowOpacity = 0.55f
+
+/** Recent glows; each layer is about 50 KB. */
+private val GlowCache = LruCache<String, ImageBitmap>(16)
 
 private suspend fun blurredCover(context: Context, url: String, aspect: Float): ImageBitmap? {
     // A failed load comes back as an error result; cancellation propagates.

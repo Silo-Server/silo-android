@@ -53,6 +53,7 @@ import androidx.tv.material3.MaterialTheme
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
+import coil3.size.Scale
 import org.siloserver.silo.common.settings.LocalShowTitleArt
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.section.ResolvedSection
@@ -82,7 +83,6 @@ import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import org.siloserver.silo.tv.ui.util.isAudiobookMediaType
 import kotlinx.coroutines.CancellationException
-import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
@@ -624,10 +624,15 @@ fun TvSkylineSectionFeed(
     LaunchedEffect(marquee, heroPreload) {
         snapshotFlow { marquee.pendingCover }.collectLatest { cover ->
             if (cover == null) return@collectLatest
+            // The same size and FILL scale the framed cover's Crop request
+            // resolves to, so its memory-cache lookup accepts this decode. A
+            // FIT decode of an off-shape cover comes back too small for it.
+            val width = with(density) { (TvHeroCoverHeight * cover.aspect).roundToPx() }
             val result = SingletonImageLoader.get(context).execute(
                 ImageRequest.Builder(context)
                     .data(cover.url)
-                    .size((heroPreload.coverHeight * cover.aspect).roundToInt(), heroPreload.coverHeight)
+                    .size(width, heroPreload.coverHeight)
+                    .scale(Scale.FILL)
                     .build(),
             )
             if (result is SuccessResult) marquee.markCoverLoaded(cover.url)

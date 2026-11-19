@@ -177,7 +177,14 @@ private fun HeroArt(content: TvMarqueeContent) {
     val aspect = content.coverAspect
     when {
         url == null -> Box(modifier = Modifier.fillMaxSize())
-        aspect != null -> FramedCover(url = url, thumbhash = content.heroBackdropThumbhash, aspect = aspect)
+        aspect != null -> FramedCover(
+            url = url,
+            thumbhash = content.heroBackdropThumbhash,
+            aspect = aspect,
+            // The card's poster, so the glow stays put when the cover
+            // upgrades to the detail poster; blurred, the two look the same.
+            glowUrl = content.posterUrl ?: url,
+        )
         else -> CornerAnchoredArt(url = url, thumbhash = content.heroBackdropThumbhash)
     }
 }
@@ -188,7 +195,7 @@ private fun HeroArt(content: TvMarqueeContent) {
  * and the rows, over a soft glow of itself and a drop shadow.
  */
 @Composable
-private fun FramedCover(url: String, thumbhash: String?, aspect: Float) {
+private fun FramedCover(url: String, thumbhash: String?, aspect: Float, glowUrl: String) {
     val shape = RoundedCornerShape(CoverCornerRadius)
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
         ThumbhashImage(
@@ -201,7 +208,7 @@ private fun FramedCover(url: String, thumbhash: String?, aspect: Float) {
             modifier = Modifier
                 .padding(top = CoverTopInset, end = CoverTrailingInset)
                 .size(width = TvHeroCoverHeight * aspect, height = TvHeroCoverHeight)
-                .coverGlow(url, aspect)
+                .coverGlow(glowUrl, aspect)
                 .shadow(CoverShadowElevation, shape)
                 .clip(shape),
         )
