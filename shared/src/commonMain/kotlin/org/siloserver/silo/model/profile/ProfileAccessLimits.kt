@@ -121,8 +121,10 @@ fun CreateProfileRequest.withAccessLimits(
  *
  * A changed allowlist keeps only [assignable] libraries when that list is
  * known, so a library deleted since the profile was saved doesn't fail the save.
- * `requests_allowed` is sent on every save to a server that reports
- * [ProfilesResponse.requestsAllowedSupported], and never to an older one.
+ * `requests_allowed` is sent only when it differs from [loaded], so a save
+ * from a form opened before someone else blocked the profile doesn't lift
+ * the block, and never to a server that doesn't report
+ * [ProfilesResponse.requestsAllowedSupported].
  */
 fun UpdateProfileRequest.withAccessLimits(
     limits: ProfileAccessLimits,
@@ -144,7 +146,9 @@ fun UpdateProfileRequest.withAccessLimits(
         maxContentRating = if (ratingChanged) limits.maxContentRating ?: "" else null,
         libraryRestrictionsEnabled = limits.libraryRestrictionsEnabled.takeIf { restrictionsChanged },
         allowedLibraryIds = allowlist.takeIf { allowlistChanged },
-        requestsAllowed = limits.requestsAllowed.takeIf { requestsAllowedSupported },
+        requestsAllowed = limits.requestsAllowed.takeIf {
+            requestsAllowedSupported && it != loaded.requestsAllowed
+        },
     )
 }
 

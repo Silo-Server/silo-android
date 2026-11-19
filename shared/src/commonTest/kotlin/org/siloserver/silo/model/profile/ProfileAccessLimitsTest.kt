@@ -127,10 +127,13 @@ class ProfileAccessLimitsTest {
         assertNull(CreateProfileRequest("Kid").withAccessLimits(child).requestsAllowed)
         assertEquals(false, CreateProfileRequest("Kid").withAccessLimits(child, requestsAllowedSupported = true).requestsAllowed)
 
-        val loaded = ProfileAccessLimits(requestsAllowed = false)
-        assertFalse(patch(loaded, loaded).containsKey("requests_allowed"))
-        // Sent on every save to a supporting server, changed or not.
-        val update = UpdateProfileRequest(name = "Kid").withAccessLimits(loaded, loaded, requestsAllowedSupported = true)
-        assertEquals(JsonPrimitive(false), update.toProfileUpdate().toJsonObject()["requests_allowed"])
+        val loaded = ProfileAccessLimits(requestsAllowed = true)
+        val blocked = loaded.withRequestsAllowed(false)
+        assertFalse(patch(blocked, loaded).containsKey("requests_allowed"))
+        fun supportedPatch(limits: ProfileAccessLimits) = UpdateProfileRequest(name = "Kid")
+            .withAccessLimits(limits, loaded, requestsAllowedSupported = true).toProfileUpdate().toJsonObject()
+        assertEquals(JsonPrimitive(false), supportedPatch(blocked)["requests_allowed"])
+        // Unchanged: left out, so a stale form can't undo a block made elsewhere since it opened.
+        assertFalse(supportedPatch(loaded).containsKey("requests_allowed"))
     }
 }
