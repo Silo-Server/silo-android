@@ -78,6 +78,8 @@ data class ItemDetailUiState(
     val similarItems: List<org.siloserver.silo.model.catalog.BrowseItem> = emptyList(),
     /** The box set this movie belongs to, for the box set row after the extras; null for none. */
     val boxSet: org.siloserver.silo.model.catalog.CatalogBoxSetDetail? = null,
+    /** The collections row of a movie or series page; null for none. */
+    val collectionsRow: org.siloserver.silo.viewmodel.ItemCollectionsRow? = null,
     val seasons: List<Season> = emptyList(),
     val selectedSeasonNumber: Int = 1,
     val episodes: List<EpisodeListItem> = emptyList(),
@@ -198,6 +200,8 @@ class ItemDetailViewModel(
     private var similarJob: kotlinx.coroutines.Job? = null
     private var boxSetGeneration = 0L
     private var boxSetJob: Job? = null
+    private var collectionsGeneration = 0L
+    private var collectionsJob: Job? = null
     private var detailLoadJob: Job? = null
     private var quietDetailJob: Job? = null
     /** Whether [quietDetailJob] clears the page on a refusal (an access-change refresh). */
@@ -495,10 +499,12 @@ class ItemDetailViewModel(
         // gave under an older access policy never lands after it.
         detailLoadJob?.cancel()
         quietDetailJob?.cancel()
-        // A new load shows no box set row until its own read answers.
+        // A new load shows no box set or collections row until its own read answers.
         boxSetGeneration++
         boxSetJob?.cancel()
-        _uiState.update { it.copy(similarItems = emptyList(), boxSet = null) }
+        collectionsGeneration++
+        collectionsJob?.cancel()
+        _uiState.update { it.copy(similarItems = emptyList(), boxSet = null, collectionsRow = null) }
         detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository.captureSimilarAuthority()
             trackChoiceOwner = catalogRepository.captureWatchAuthority()
@@ -541,6 +547,7 @@ class ItemDetailViewModel(
                         similarJob = viewModelScope.launch { loadSimilar(detail, similarOwner, similarRun) }
                     }
                     loadBoxSet(detail)
+                    loadCollections(detail)
                     if (detail.type == "series" && !seasonsStarted) {
                         loadSeasons(detail.contentId)
                     }
@@ -617,6 +624,20 @@ class ItemDetailViewModel(
             val result = org.siloserver.silo.viewmodel.loadMovieBoxSet(catalogRepository, personalDataRepository, detail, libraryId)
             if (run != boxSetGeneration || _uiState.value.detail?.contentId != detail.contentId) return@launch
             if (result is ApiResult.Success) _uiState.update { it.copy(boxSet = result.data) }
+        }
+    }
+
+    /**
+     * Reads the collections row for a movie or series. A failed read keeps
+     * the row on screen, as [loadBoxSet] does.
+     */
+    private fun loadCollections(detail: ItemDetail) {
+        val run = ++collectionsGeneration
+        collectionsJob?.cancel()
+        collectionsJob = viewModelScope.launch {
+            val result = org.siloserver.silo.viewmodel.loadItemCollectionsRow(catalogRepository, detail, libraryId)
+            if (run != collectionsGeneration || _uiState.value.detail?.contentId != detail.contentId) return@launch
+            if (result is ApiResult.Success) _uiState.update { it.copy(collectionsRow = result.data) }
         }
     }
 
@@ -714,6 +735,8 @@ class ItemDetailViewModel(
         }
         // Watched badges in the box set row follow the player too.
         loadBoxSet(current)
+        // A collection edited elsewhere (or one the title joined) shows on return.
+        loadCollections(current)
         if (current.type == "series") {
             refreshSeasonsQuietly(current.contentId, fresh = afterWatchedChange)
             loadEpisodes(
