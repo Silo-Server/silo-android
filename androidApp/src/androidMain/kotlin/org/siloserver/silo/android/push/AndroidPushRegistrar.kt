@@ -552,8 +552,11 @@ class AndroidPushRegistrar internal constructor(
             // record this login session: it ignores the session on a replay. Once per
             // record, and only from here, so ordering and durability are the usual ones.
             // A server that does not advertise binding yet is asked again later.
+            // A record from before accounts has no account yet; the same login's
+            // account takes it over without changing what the server holds.
             val bindsSession = capability.data.bindsLoginSession
-            val rebinding = bindsSession && previous != null && previous.needsLoginSessionBinding && previous.intent == intent
+            val rebinding = bindsSession && previous != null && previous.needsLoginSessionBinding &&
+                previous.intent.copy(accountId = previous.intent.accountId ?: intent.accountId) == intent
             previous?.let {
                 check(it.generation > 0 && it.key.matches(Regex("[A-Za-z0-9_-]{43}")))
                 if (it.acknowledged && it.intent.registration != null) {
@@ -576,7 +579,7 @@ class AndroidPushRegistrar internal constructor(
             val entry = if (previous != null && !rebinding && (previous.intent == intent || reconciling)) previous else {
                 if (previous?.generation == Long.MAX_VALUE) return failure("push_generation_exhausted")
                 val generation = (previous?.generation ?: 0) + 1
-                if (rebinding) previous.copy(generation = generation, acknowledged = false, loginSessionBound = true)
+                if (rebinding) previous.copy(generation = generation, acknowledged = false, loginSessionBound = true, intent = intent)
                 else PushInstallation(owner.scope.serverUrl, device, previous?.key ?: newKey(), generation, intent, loginSessionBound = bindsSession)
             }
             check(entry.key.matches(Regex("[A-Za-z0-9_-]{43}")))

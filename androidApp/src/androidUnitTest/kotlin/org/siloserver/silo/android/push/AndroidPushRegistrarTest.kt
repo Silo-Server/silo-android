@@ -22,12 +22,14 @@ class AndroidPushRegistrarTest {
     private val proof = "k".repeat(43)
     /** Logins saved per server, which removal and token rotation act as whatever is active. */
     private val savedLogins = mutableMapOf("server" to "login", "cabin" to "login-cabin", "attic" to "login-attic")
+    /** The saved account each server's login belongs to; none for a login saved before accounts. */
+    private val savedAccounts = mutableMapOf<String, String>()
     private val authorities = object : DurableLoginAuthorityProvider {
         override suspend fun snapshotDurableLoginAuthority() = owner.also { afterCapture(); afterCapture = {} }
         override suspend fun savedLoginAuthority(serverId: String, profileId: String, profileToken: String?) =
             savedLogins[serverId]?.let {
                 val url = if (serverId == "server") "https://example.invalid" else "https://$serverId.invalid"
-                DurableLoginAuthority(it, AuthScopeSnapshot.savedLogin(serverId, url, profileId, profileToken, 5))
+                DurableLoginAuthority(it, AuthScopeSnapshot.savedLogin(serverId, url, profileId, profileToken, 5, savedAccounts[serverId]))
             }
     }
     private var removedAs: AuthScopeSnapshot? = null
@@ -169,6 +171,15 @@ class AndroidPushRegistrarTest {
         assertEquals(2L,store.entries.single { it.intent.serverId=="cabin" }.generation)
         assertEquals("cabin",store.entries.single { it.generation==2L }.intent.serverId); assertEquals(listOf(2L),generations)
         next.registerOtherServersIfBehind(); assertEquals(listOf(2L),generations)
+    }
+    @Test fun aSavedServerRegisteredBeforeAccountsKeepsItsReceiptWhileRebinding()=runTest {
+        savedServerAwaitingBinding(); savedAccounts["cabin"]="cabin-account"
+        uncertain=true; registrar().registerOtherServersIfBehind(); uncertain=false
+        val cabin=store.entries.single { it.serverUrl=="https://cabin.invalid" }
+        assertEquals(2L,cabin.generation); assertTrue(cabin.deliversPushes); assertEquals("cabin-account",cabin.intent.accountId)
+        registrar().registerOtherServersIfBehind()
+        assertEquals(listOf(1L,2L,2L),generations)
+        assertTrue(store.entries.single { it.serverUrl=="https://cabin.invalid" }.let { it.acknowledged && it.loginSessionBound })
     }
     @Test fun aRebindThatFailsIsRetriedExactlyAcrossRestartsUntilItLands()=runTest {
         registrar().registerToken(token); upgradedFromOlderApp()
