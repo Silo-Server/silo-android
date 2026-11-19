@@ -1,8 +1,12 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.border
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.platform.LocalContext
 import android.os.SystemClock
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -54,16 +58,22 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.player.rememberPlayerEndTimeLabel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.domain.player.MarkerKind
+import org.siloserver.silo.domain.player.MarkerTimeline
 
 /**
  * Glass-capsule scrubber matching `iosApp/.../tvOS/TVPlayerScrubber.swift`.
@@ -109,12 +119,11 @@ fun TvPlayerScrubber(
     scrubPreviewSec: Double,
     chapters: List<ChapterInfo>,
     cancelOnBlur: Boolean,
-    // Detected marker bands [startSec, endSec] drawn on the track when known.
-    // Null = no band. Mirrors tvOS TVPlayerScrubber.introRegion.
-    introRangeSec: ClosedRange<Double>? = null,
-    creditsRangeSec: ClosedRange<Double>? = null,
-    recapRangeSec: ClosedRange<Double>? = null,
-    previewRangeSec: ClosedRange<Double>? = null,
+    /** The server's preview of [scrubPreviewSec], shown above the puck while scrubbing; null keeps the bar alone. */
+    previewThumbnail: ImageBitmap? = null,
+    // Detected markers: every occurrence of each kind gets a band on the
+    // track. Mirrors tvOS TVPlayerScrubber.markerRegions.
+    markers: MarkerTimeline = MarkerTimeline.EMPTY,
     onSkipBack: () -> Unit,
     onSkipForward: () -> Unit,
     // Resolved video intervals; a tap while scrubbing nudges the preview by
@@ -265,8 +274,6 @@ fun TvPlayerScrubber(
 
     // The bar sits above its clock row, as on tvOS: elapsed on the left, time
     // left and the wall-clock finish on the right.
-    val context = LocalContext.current
-    val timeFormat = remember(context) { android.text.format.DateFormat.getTimeFormat(context) }
     Column(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth().height(28.dp)) {
 
@@ -372,8 +379,9 @@ fun TvPlayerScrubber(
             val barWidthPx = with(density) { barWidthDp.toPx() }
             val puckSizePx = with(density) { puckSize.toPx() }
 
-            // Track, marker bands, buffered-ahead and played fill, drawn as one
-            // segmented bar: chapter starts become 2dp gaps rather than ticks.
+            // Track, buffered-ahead and played fill, then marker bands over them,
+            // drawn as one segmented bar: chapter starts become 2dp gaps rather
+            // than ticks.
             val trackAlpha = when {
                 isTimelineScrubbing -> 0.45f
                 isFocused -> 0.32f
@@ -381,17 +389,14 @@ fun TvPlayerScrubber(
             }
             val bandAlpha = if (isTimelineScrubbing || isFocused) 0.45f else 0.34f
             val markerBands = if (durationSec > 0) {
-                listOfNotNull(
-                    introRangeSec?.let { it to Color(0xFF22D3EE) },
-                    recapRangeSec?.let { it to Color(0xFF8BC34A) },
-                    creditsRangeSec?.let { it to Color(0xFFFFB74D) },
-                    previewRangeSec?.let { it to Color(0xFFBA68C8) },
-                ).map { (range, color) ->
-                    Triple(
-                        (range.start / durationSec).toFloat().coerceIn(0f, 1f),
-                        (range.endInclusive / durationSec).toFloat().coerceIn(0f, 1f),
-                        color.copy(alpha = bandAlpha),
-                    )
+                MarkerKind.entries.flatMap { kind ->
+                    markers.ranges(kind).map { range ->
+                        Triple(
+                            (range.start / durationSec).toFloat().coerceIn(0f, 1f),
+                            (range.end / durationSec).toFloat().coerceIn(0f, 1f),
+                            markerBandColor(kind).copy(alpha = bandAlpha),
+                        )
+                    }
                 }
             } else {
                 emptyList()
@@ -444,6 +449,49 @@ fun TvPlayerScrubber(
             // show where the preview is, so the full [TvHoldSeekIndicator]
             // overlay stays reserved for the hidden-controls session where
             // nothing else is on screen.
+            // The server's preview of the target in a card with its time,
+            // above the puck (and the auto-seek chip), after tvOS
+            // `TVScrubPreviewLayer`. It overlays the overlay's text rather
+            // than taking layout space, so it comes and goes without moving it.
+            if (isScrubbing && previewThumbnail != null) {
+                var cardSize by remember { mutableStateOf(IntSize.Zero) }
+                val liftPx = with(density) { (if (autoSeekRate != 0) 52.dp else 22.dp).toPx() }
+                val cardShape = RoundedCornerShape(10.dp)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .wrapContentSize(unbounded = true)
+                        .onSizeChanged { cardSize = it }
+                        .offset {
+                            val maxX = (barWidthPx - cardSize.width).roundToInt().coerceAtLeast(0)
+                            val x = (barWidthPx * totalProgress - cardSize.width / 2f).roundToInt().coerceIn(0, maxX)
+                            // Centred on the bar before the offset: lift the
+                            // bottom edge [liftPx] above the bar's middle.
+                            IntOffset(x, -(liftPx + cardSize.height / 2f).roundToInt())
+                        }
+                        .shadow(9.dp, cardShape, clip = false)
+                        .clip(cardShape)
+                        .background(TvPlayerChrome.Smoke)
+                        .border(1.dp, TvPlayerChrome.PanelStroke, cardShape)
+                        .padding(5.dp),
+                ) {
+                    Image(
+                        bitmap = previewThumbnail,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(160.dp, 90.dp)
+                            .clip(RoundedCornerShape(7.dp)),
+                    )
+                    Text(
+                        text = formatScrubberTime(scrubPreviewSec),
+                        style = TvPlayerType.Time,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+
             if (autoSeekRate != 0) {
                 var chipWidthPx by remember { mutableStateOf(0) }
                 val chipLiftPx = with(density) { 40.dp.roundToPx() }
@@ -476,16 +524,28 @@ fun TvPlayerScrubber(
                 modifier = Modifier.weight(1f),
             )
             val remainingSec = (durationSec - labelPositionSec).coerceAtLeast(0.0)
-            val wallClockRemainingSec = if (playbackSpeed > 0.0) remainingSec / playbackSpeed else remainingSec
+            val endTimeLabel = rememberPlayerEndTimeLabel(remainingSec, playbackSpeed)
+            // In an Arabic sentence the "−" would move to the far end of the
+            // time, so right-to-left text keeps the time in its own run.
+            val remaining = formatRemainingTime(remainingSec)
+                .let { if (isRightToLeftText()) "\u2066$it\u2069" else it } // i18n-ignore: isolate marks
             Text(
                 text = listOfNotNull(
-                    formatRemainingTime(remainingSec),
-                    finishTimeLabel(timeFormat, wallClockRemainingSec)?.let { "Ends $it" },
+                    remaining,
+                    endTimeLabel,
                 ).joinToString(" · "),
                 style = TvPlayerType.Time.copy(color = TvPlayerChrome.Graphite),
             )
         }
     }
+}
+
+/** TheIntroDB's segment palette (Tailwind v4 400 shades), shared by every Silo client. */
+private fun markerBandColor(kind: MarkerKind): Color = when (kind) {
+    MarkerKind.Intro -> Color(0xFF51A2FF)
+    MarkerKind.Recap -> Color(0xFFFF8904)
+    MarkerKind.Credits -> Color(0xFFC27AFF)
+    MarkerKind.Preview -> Color(0xFF00D3F2)
 }
 
 /**
@@ -522,16 +582,9 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTvSegmentedTrac
         }
         drawRoundRect(color = trackColor, topLeft = topLeft, size = segmentSize, cornerRadius = radius)
         fill(bufferedColor, bufferedFraction * width)
-        bands.forEach { (from, to, color) -> fill(color, untilX = to * width, fromX = maxOf(start, from * width)) }
         fill(playedColor, playedFraction * width)
+        bands.forEach { (from, to, color) -> fill(color, untilX = to * width, fromX = maxOf(start, from * width)) }
     }
-}
-
-/** "11:42 PM" in the device's 12/24-hour [timeFormat], [remainingSec] of wall-clock time from now. */
-private fun finishTimeLabel(timeFormat: java.text.DateFormat, remainingSec: Double): String? {
-    if (remainingSec <= 0.0 || !remainingSec.isFinite()) return null
-    val finish = java.util.Date(System.currentTimeMillis() + (remainingSec * 1000).toLong())
-    return timeFormat.format(finish)
 }
 
 @Composable
@@ -552,7 +605,7 @@ private fun TvScrubberAutoSeekChip(rate: Int, modifier: Modifier = Modifier) {
             modifier = Modifier.size(12.dp),
         )
         Text(
-            text = "${abs(rate)}x",
+            text = "${abs(rate)}x", // i18n-ignore
             color = Color.Black,
             maxLines = 1,
             softWrap = false,
@@ -567,10 +620,10 @@ private fun formatRemainingTime(secondsRemaining: Double): String =
     "−${formatTimelineClock(secondsRemaining.coerceAtLeast(0.0))}"
 
 private fun formatTimelineClock(seconds: Double): String {
-    if (seconds <= 0 || seconds.isNaN()) return "0:00"
+    if (seconds <= 0 || seconds.isNaN()) return LocaleFormat.clock(0, 0, 0)
     val total = seconds.toInt()
     val h = total / 3600
     val m = (total % 3600) / 60
     val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return LocaleFormat.clock(h, m, s)
 }

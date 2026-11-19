@@ -45,6 +45,15 @@ sealed interface SubtitleIdentity {
     data class LocalMedia3(val media: SubtitleMediaIdentity) : SubtitleIdentity
 }
 
+/**
+ * A pick of a track the server places in the media (a native track or a
+ * rendition) other than [committed]. Only the server can move its session
+ * there, so such a pick never commits locally without a replan, even when it
+ * switches on the playing stream.
+ */
+fun SubtitleIdentity.isServerPick(committed: SubtitleIdentity): Boolean =
+    this is SubtitleIdentity.Embedded && isServerSelected && this != committed
+
 data class SubtitleMediaIdentity(
     val trackId: String? = null,
     val label: String? = null,

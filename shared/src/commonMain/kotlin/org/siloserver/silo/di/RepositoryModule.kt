@@ -16,6 +16,7 @@ import org.siloserver.silo.repository.LibraryPlaybackPrefsRepository
 import org.siloserver.silo.repository.NotificationsRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.PlaybackRepository
+import org.siloserver.silo.repository.AccountProfilesRefresher
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.PushRegistrationRepository
 import org.siloserver.silo.repository.RecommendationRepository
@@ -92,6 +93,7 @@ val repositoryModule = module {
     }
     single { org.siloserver.silo.repository.HiddenLibrariesStore(get(), get()) }
     single { ProfileRepository(get(), get(), getOrNull(), get(), get(), get()) }
+    single { AccountProfilesRefresher(get(), get(), get()) }
     // Resolved by each Application right after startKoin (guarded there, like
     // the other starters) so a stale-profile refusal from background work
     // (downloads, outbox replay) is handled before any screen exists. Clears
@@ -105,7 +107,7 @@ val repositoryModule = module {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         )
     }
-    single { org.siloserver.silo.repository.ForegroundAccessCheck(get(), get()) }
+    single { org.siloserver.silo.repository.ForegroundAccessCheck(get(), get(), get(), get()) }
     single { CollectionRepository(get()) }
     single {
         SectionRepository(
@@ -126,10 +128,17 @@ val repositoryModule = module {
             ),
         )
     }
-    single { RequestsFeatureStore(get()) }
+    single {
+        RequestsFeatureStore(
+            repository = get(),
+            // Main, like the repository it listens to and the shells that probe it.
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+        )
+    }
     single { ActiveProfileStore(get()) }
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }
     single { org.siloserver.silo.model.feature.MetadataAiFeatureStore(get()) }
+    single { org.siloserver.silo.model.feature.RatingSourcesStore(get()) }
     single { org.siloserver.silo.model.feature.ShuffleFeatureStore(get()) }
     single { org.siloserver.silo.repository.HomeRealtimeCoordinator(get(), get(), getOrNull()) }
     single { SettingsRepository(get()) }
@@ -144,7 +153,8 @@ val repositoryModule = module {
         )
     }
     single { LibraryPlaybackPrefsRepository(get()) }
-    single { DownloadsRepository(get(), getOrNull<org.siloserver.silo.repository.port.DownloadDeletionPort>() ?: org.siloserver.silo.repository.port.NoOpDownloadDeletionPort, get(), get(), get()) }
+    single { DownloadsRepository(get(), getOrNull<org.siloserver.silo.repository.port.DownloadDeletionPort>() ?: org.siloserver.silo.repository.port.NoOpDownloadDeletionPort, get(), get(), get(),
+        getOrNull<org.siloserver.silo.repository.port.RevokedDownloadCleanupPort>() ?: org.siloserver.silo.repository.port.NoLocalDownloadCopies) }
     single { EbookReaderRepository(get(), get()) }
     single { SubtitlesRepository(get(), get(), get()) }
     single { PushRegistrationRepository(get()) }

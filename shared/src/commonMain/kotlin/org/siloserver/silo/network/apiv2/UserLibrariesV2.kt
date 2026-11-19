@@ -10,7 +10,7 @@ internal data class UserLibrariesV2(val items: List<UserLibraryV2>, val page: Pa
     fun project(): List<UserLibrary> {
         require(page?.hasMore != true && page?.nextCursor.isNullOrBlank())
         require(items.map { it.id }.distinct().size == items.size)
-        return items.map { row -> UserLibrary(checkedPositiveId(row.id), row.name, row.type, row.sortOrder, row.posterUrl) }
+        return items.map { row -> UserLibrary(checkedPositiveId(row.id), row.name, row.type, row.sortOrder, row.posterUrl, row.boxSetsEnabled) }
     }
 }
 
@@ -21,4 +21,5 @@ internal data class UserLibraryV2(
     val type: String,
     @SerialName("sort_order") val sortOrder: Int,
     @SerialName("poster_url") val posterUrl: String? = null,
+    @SerialName("box_sets_enabled") val boxSetsEnabled: Boolean = false,
 )

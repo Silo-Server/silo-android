@@ -1,5 +1,8 @@
 package org.siloserver.silo.android.ui.screens.people
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
+import androidx.annotation.StringRes
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -19,21 +22,22 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.R as CommonR
 
 private const val PersonWorksPageSize = 60
 
 enum class PersonMediaFilter(
     val key: String,
-    val title: String,
+    @StringRes val title: Int,
     val mediaType: String?,
     val clientPredicate: (BrowseItem) -> Boolean = { true },
 ) {
-    All("all", "All", null),
-    Movies("movie", "Movies", "movie"),
-    Series("series", "TV", "series"),
-    Audiobooks("audiobook", "Audiobooks", "audiobook"),
-    Music("music", "Music", "music"),
-    Reading("reading", "Reading", null, { isReadingMediaType(it.type) });
+    All("all", CommonR.string.person_filter_all, null),
+    Movies("movie", CommonR.string.person_filter_movies, "movie"),
+    Series("series", CommonR.string.person_filter_tv, "series"),
+    Audiobooks("audiobook", CommonR.string.person_filter_audiobooks, "audiobook"),
+    Music("music", CommonR.string.person_filter_music, "music"),
+    Reading("reading", CommonR.string.person_filter_reading, null, { isReadingMediaType(it.type) });
 
     companion object {
         fun fromKey(key: String): PersonMediaFilter? =
@@ -53,8 +57,8 @@ data class PersonDetailUiState(
     val availableFilters: List<PersonMediaFilter> = MobilePersonMediaFilters,
     val totalItems: Int = 0,
     val hasMore: Boolean = false,
-    val pagingError: String? = null,
-    val error: String? = null,
+    val pagingError: UiText? = null,
+    val error: UiText? = null,
     /** True while the server-side metadata refresh poll is running (iOS
      *  isRefreshingMetadata — drives the "Loading metadata" pill). */
     val isRefreshingMetadata: Boolean = false,
@@ -122,7 +126,7 @@ class PersonDetailViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = result.message.ifBlank { "Failed to load person" },
+                            error = result.errorText(CommonR.string.person_error_loadFailed),
                         )
                     }
                 }
@@ -130,7 +134,7 @@ class PersonDetailViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "Network error. Check your connection.",
+                            error = UiText.Res(CommonR.string.catalog_error_network),
                         )
                     }
                 }
@@ -199,7 +203,7 @@ class PersonDetailViewModel(
                     _uiState.update {
                         it.copy(
                             isLoadingItems = false,
-                            pagingError = result.message.ifBlank { "Failed to load works" },
+                            pagingError = result.errorText(CommonR.string.person_error_worksFailed),
                         )
                     }
                 }
@@ -207,7 +211,7 @@ class PersonDetailViewModel(
                     _uiState.update {
                         it.copy(
                             isLoadingItems = false,
-                            pagingError = "Network error. Check your connection.",
+                            pagingError = UiText.Res(CommonR.string.catalog_error_network),
                         )
                     }
                 }

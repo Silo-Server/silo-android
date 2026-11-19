@@ -28,7 +28,18 @@ internal data class PushInstallation(
      * registration supersedes it instead.
      */
     val ownerLeaving: Boolean = false,
+    /**
+     * The removal intent at this record's generation still has to reach the
+     * server as a retirement, which needs only [key]: it is sent again after
+     * the login that registered is gone, until the server answers for good.
+     * Any newer generation supersedes it.
+     */
+    val retirement: PushRetirement? = null,
 ) { override fun toString() = "PushInstallation(<redacted>)" }
+
+/** A queued retirement of [generation], first queued at [queuedAtMs] (epoch milliseconds). */
+@Serializable
+internal data class PushRetirement(val generation: Long, val queuedAtMs: Long)
 
 @Serializable
 internal data class PushInstallationIntent(
@@ -38,6 +49,11 @@ internal data class PushInstallationIntent(
     val profileToken: String?,
     /** null is the ordered removal verb. */
     val registration: PushDeviceRegisterRequest?,
+    /**
+     * The saved account on [serverId] that holds this installation; null on
+     * records written before accounts, which the next registration replaces.
+     */
+    val accountId: String? = null,
 ) { override fun toString() = "PushInstallationIntent(<redacted>)" }
 
 internal interface PushInstallationStore {

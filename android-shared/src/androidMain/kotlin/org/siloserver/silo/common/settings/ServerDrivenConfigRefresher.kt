@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.settings
 
 import android.os.SystemClock
+import org.siloserver.silo.common.i18n.AppLanguageStore
 import org.siloserver.silo.repository.HiddenLibrariesStore
 
 /**
@@ -21,6 +22,7 @@ class ServerDrivenConfigRefresher(
     private val episodeSpoilerStore: EpisodeSpoilerStore? = null,
     private val titleArtStore: TitleArtStore? = null,
     private val hiddenLibrariesStore: HiddenLibrariesStore? = null,
+    private val appLanguageStore: AppLanguageStore? = null,
     private val nowMs: () -> Long = { SystemClock.elapsedRealtime() },
 ) {
     @Volatile
@@ -47,6 +49,7 @@ class ServerDrivenConfigRefresher(
         episodeSpoilerStore?.refresh()
         titleArtStore?.refresh()
         hiddenLibrariesStore?.refresh()
+        appLanguageStore?.refresh()
         lastRefreshAtMs = now
         return true
     }

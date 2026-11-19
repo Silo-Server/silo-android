@@ -4,12 +4,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -28,6 +31,9 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlin.math.abs
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 private val SPEED_PRESETS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f)
 private const val SPEED_STEP = 0.05f
@@ -50,32 +56,36 @@ fun TvAudiobookSpeedPanel(
     val focusRequester = remember { FocusRequester() }
 
     TvAudiobookOverlayScaffold(
-        title = "Speed",
+        title = stringResource(CommonR.string.player_settings_speed),
         initialFocus = focusRequester,
         modifier = modifier,
         onAcquisitionFailed = onFocusAcquisitionFailed,
     ) {
-        // Fine adjust grabs initial focus so ◀/▶ work immediately.
-        SpeedFineAdjustRow(
-            speed = currentSpeed,
-            onNudge = { delta ->
-                onSelectSpeed((currentSpeed + delta).coerceIn(MIN_SPEED, MAX_SPEED))
-            },
-            focusRequester = focusRequester,
-        )
-        TvAudiobookOverlayRow(
-            label = "Set ${formatSpeedLabel(currentSpeed)} as default",
-            isCurrent = false,
-            onSelect = { onSetDefault(currentSpeed) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        SPEED_PRESETS.forEach { speed ->
+        // Eleven rows are taller than a 1080p TV panel; scroll so the focused
+        // row (down to 3×) is always brought into view.
+        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            // Fine adjust grabs initial focus so ◀/▶ work immediately.
+            SpeedFineAdjustRow(
+                speed = currentSpeed,
+                onNudge = { delta ->
+                    onSelectSpeed((currentSpeed + delta).coerceIn(MIN_SPEED, MAX_SPEED))
+                },
+                focusRequester = focusRequester,
+            )
             TvAudiobookOverlayRow(
-                label = formatSpeedLabel(speed),
-                isCurrent = abs(speed - currentSpeed) < 0.001f,
-                onSelect = { onSelectSpeed(speed) },
+                label = stringResource(CommonR.string.audiobook_speed_setDefault, formatSpeedLabel(currentSpeed)),
+                isCurrent = false,
+                onSelect = { onSetDefault(currentSpeed) },
                 modifier = Modifier.fillMaxWidth(),
             )
+            SPEED_PRESETS.forEach { speed ->
+                TvAudiobookOverlayRow(
+                    label = formatSpeedLabel(speed),
+                    isCurrent = abs(speed - currentSpeed) < 0.001f,
+                    onSelect = { onSelectSpeed(speed) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }
@@ -111,7 +121,7 @@ private fun SpeedFineAdjustRow(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("Fine adjust", style = MaterialTheme.typography.bodyLarge, color = fg, modifier = Modifier.weight(1f))
+        Text(stringResource(CommonR.string.audiobook_speed_fineAdjust), style = MaterialTheme.typography.bodyLarge, color = fg, modifier = Modifier.weight(1f))
         Text("◀", style = MaterialTheme.typography.bodyLarge, color = fg.copy(alpha = 0.7f))
         Spacer(Modifier.width(16.dp))
         Text(formatSpeedLabel(speed), style = MaterialTheme.typography.bodyLarge, color = fg)
@@ -121,10 +131,6 @@ private fun SpeedFineAdjustRow(
 }
 
 private fun formatSpeedLabel(speed: Float): String {
-    val s = if (speed % 1f == 0f) {
-        speed.toInt().toString()
-    } else {
-        "%.2f".format(speed).trimEnd('0').trimEnd('.')
-    }
+    val s = LocaleFormat.decimal(speed.toDouble(), maxFractionDigits = 2)
     return "${s}×"
 }

@@ -37,11 +37,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.model.subtitles.SubtitleResult
 
@@ -99,7 +103,7 @@ fun SubtitleSearchSheet(
 
     PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
             PlayerSheetHeader(
-                title = "Find subtitles",
+                title = stringResource(CommonR.string.subtitleSearch_find),
                 onBack = back,
                 onDismiss = { controller.dismiss() },
             )
@@ -127,7 +131,7 @@ fun SubtitleSearchSheet(
                         )
                         Icon(
                             imageVector = Icons.Filled.ArrowDropDown,
-                            contentDescription = "Choose language",
+                            contentDescription = stringResource(CommonR.string.subtitleSearch_chooseLanguage),
                             tint = Color.White.copy(alpha = 0.7f),
                         )
                     }
@@ -162,14 +166,14 @@ fun SubtitleSearchSheet(
                             color = PlayerChrome.Ink,
                         )
                     } else {
-                        Text("Search")
+                        Text(stringResource(CommonR.string.subtitleSearch_search))
                     }
                 }
             }
 
             tools.searchError?.let { error ->
                 Text(
-                    text = error,
+                    text = error.text(),
                     color = ScoreRed,
                     fontSize = 13.sp,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
@@ -187,7 +191,7 @@ fun SubtitleSearchSheet(
                 tools.searchError == null && tools.searchResults.isEmpty()
             ) {
                 Text(
-                    text = "No subtitles found.",
+                    text = stringResource(CommonR.string.subtitleSearch_noneFound),
                     color = Color.White.copy(alpha = 0.6f),
                     fontSize = 14.sp,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
@@ -264,10 +268,10 @@ private fun SubtitleResultRow(
                     fontSize = 12.sp,
                 )
                 if (result.hearingImpaired) {
-                    SubtitleBadgeText(text = "HI", color = Color.White.copy(alpha = 0.7f))
+                    SubtitleBadgeText(text = stringResource(CommonR.string.subtitleSearch_hearingImpaired), color = Color.White.copy(alpha = 0.7f))
                 }
                 Text(
-                    text = "${result.downloads} downloads",
+                    text = pluralStringResource(CommonR.plurals.subtitleSearch_downloadCount, result.downloads, result.downloads, LocaleFormat.integer(result.downloads)),
                     color = Color.White.copy(alpha = 0.45f),
                     fontSize = 12.sp,
                 )

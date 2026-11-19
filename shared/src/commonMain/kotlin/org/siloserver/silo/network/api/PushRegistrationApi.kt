@@ -12,6 +12,13 @@ interface PushRegistrationApi {
     suspend fun available(owner: AuthScopeSnapshot): ApiResult<Boolean>
     suspend fun register(request: PushDeviceRegisterRequest, key: String, generation: Long, owner: AuthScopeSnapshot): ApiResult<PushDeviceRegisterResponse>
     suspend fun delete(deviceId: String, key: String, generation: Long, owner: AuthScopeSnapshot): ApiResult<Unit>
+    /**
+     * `retirePushDevice`: tells [serverUrl] to drop this device's registration
+     * at or below [generation], proven by the installation [key] alone. No
+     * session, so it still works once the server's login is gone. Success is
+     * 200 naming [generation], whether or not the server held a registration.
+     */
+    suspend fun retire(serverUrl: String, deviceId: String, key: String, generation: Long): ApiResult<Unit>
 }
 
 class DefaultPushRegistrationApi(
@@ -67,5 +74,17 @@ class DefaultPushRegistrationApi(
             }
         }) { }
     }
+    override suspend fun retire(serverUrl: String, deviceId: String, key: String, generation: Long): ApiResult<Unit> =
+        ownedV2Call<JsonObject, Unit>(ApiV2Gate.Unrestricted, null, null, OwnerPolicy.FULL, HttpStatusCode.OK, {
+            client.post("${serverUrl.trimEnd('/')}$DEVICES_PATH/${deviceId.encodeURLPathPart()}/retire") {
+                // The key proves the device; no credentials of any login go with it.
+                skipSiloAuth(); singleAttempt()
+                header("X-Push-Installation-Key", key); header("X-Push-Generation", generation.toString())
+            }
+        }) { body ->
+            require(body["generation"] == JsonPrimitive(generation.toString()) && body["removed"] == JsonPrimitive(true)) {
+                "Push retirement acknowledgment is invalid."
+            }
+        }
     companion object { const val DEVICES_PATH = "/api/v2/notifications/push/devices" }
 }

@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.player.video
 
+import androidx.annotation.StringRes
+import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.playback.PlayMethod
@@ -25,6 +27,11 @@ sealed interface VideoPlayerUiState {
         val diagnosticsCode: PlaybackDiagnosticsCode? = null,
         /** The server's terminal refusal reason, when there was one. */
         val terminalReason: String? = null,
+        /**
+         * When set, show this catalog string instead of [message], which keeps
+         * the English (or server) text for logs and diagnostics.
+         */
+        @StringRes val messageRes: Int? = null,
     ) : VideoPlayerUiState {
         override val hasPlayableMedia: Boolean = false
     }
@@ -73,11 +80,15 @@ sealed interface VideoPlayerUiState {
         val preferredAudioLanguage: String? = null,
         val preferredTextLanguage: String? = null,
         val preferredSubtitleMode: String? = null,
+        /** The series' remembered subtitle track (WatchDetail `effective_subtitle_track_signature`). */
+        val preferredSubtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
         val showForcedSubtitles: Boolean = true,
         val intro: TimeRange? = null,
         val credits: TimeRange? = null,
         val recap: TimeRange? = null,
         val preview: TimeRange? = null,
+        /** Every marker occurrence; null from servers that send only the singular fields. */
+        val markerSegments: List<MarkerSegment>? = null,
         val chapters: List<VersionChapter> = emptyList(),
         // Episode context for next-episode auto-advance (null for movies).
         val seriesId: String? = null,

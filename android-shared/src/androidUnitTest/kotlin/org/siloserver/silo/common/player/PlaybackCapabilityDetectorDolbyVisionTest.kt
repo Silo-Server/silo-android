@@ -68,6 +68,39 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
     }
 
     @Test
+    fun phoneAndTvDrawMatroskaBitmapSubtitlesFromTheOriginalStream() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val detector = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+
+        listOf("mobile", "tv").forEach { formFactor ->
+            val playbackContext = detector.detectPlaybackContext(
+                formFactor = formFactor,
+                appVersion = "test",
+                capabilities = ClientCodecCapabilities(),
+            )
+            val native = playbackContext.deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP)
+                .subtitles.nativeEmbedded.associateBy { it.container }
+
+            assertEquals(
+                listOf("subrip", "ass", "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"),
+                native.getValue("mkv").codecs,
+                formFactor,
+            )
+            assertEquals(listOf("mov_text"), native.getValue("mp4").codecs, formFactor)
+            assertTrue(native.values.all { it.trackIdentity == "container_track_id" }, formFactor)
+            assertTrue(
+                playbackContext.deliveries.getValue(DELIVERY_CLASS_HLS).subtitles.nativeEmbedded.isEmpty(),
+                "$formFactor draws embedded tracks only from the original file",
+            )
+        }
+    }
+
+    @Test
     fun phoneAndTvScopeSourceAudioSelectionClaimToOriginalHttp() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val detector = PlaybackCapabilityDetector(

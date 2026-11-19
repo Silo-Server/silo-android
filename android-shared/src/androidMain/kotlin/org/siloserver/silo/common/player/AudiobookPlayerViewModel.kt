@@ -1,15 +1,23 @@
 package org.siloserver.silo.common.player
 
+import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.audiobook.AudiobookDetailFormatting
 import org.siloserver.silo.audiobook.AudioPlaybackTrack
 import org.siloserver.silo.audiobook.AudiobookChapter
 import org.siloserver.silo.audiobook.AudiobookChapters
 import org.siloserver.silo.audiobook.AudiobookTimeline
 import org.siloserver.silo.audiobook.buildAudiobookTimeline
+import org.siloserver.silo.audiobook.isWholeBookFile
+import org.siloserver.silo.common.R
 import org.siloserver.silo.common.audiobook.AudiobookBookmarksStore
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
+import org.siloserver.silo.common.downloads.OfflineMedia
 import org.siloserver.silo.common.downloads.OfflineMediaResolver
 import org.siloserver.silo.common.settings.SeekIntervalStore
 import org.siloserver.silo.domain.settings.SeekIntervalController
@@ -18,6 +26,7 @@ import org.siloserver.silo.model.settings.SeekIntervalPair
 import org.siloserver.silo.model.settings.SeekIntervals
 import org.siloserver.silo.model.settings.SeekMedia
 import org.siloserver.silo.model.audiobook.AudiobookBookmark
+import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.playback.QUALITY_ORIGINAL_V3
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
@@ -33,6 +42,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.ProfileRepository
+import org.siloserver.silo.repository.port.PlaybackWriteScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -50,6 +60,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.random.Random
+import org.siloserver.silo.common.i18n.UiText
 
 /**
  * UI state for the audiobook player.
@@ -85,13 +96,92 @@ data class AudiobookPlayerUiState(
     /** False while server support is still unknown: nothing may be edited yet. */
     val skipIntervalsEditable: Boolean = false,
     /** Why the last skip-interval change was not saved; cleared by the next attempt. */
-    val skipIntervalError: String? = null,
+    val skipIntervalFailure: AudiobookSkipIntervalFailure? = null,
     val sleepTimerMinutesLeft: Int? = null,
     val streamUrl: String? = null,
     val sessionId: String? = null,
     val selectedFileId: Int? = null,
     val error: String? = null,
-)
+    /** The server ended the session (an administrator stopped it), so the
+     *  player must not start a fresh one on its own. */
+    val sessionEndedByServer: Boolean = false,
+) {
+    /** Playback stopped on an error with no stream left: Play starts it again. */
+    val canRetryPlayback: Boolean
+        get() = error != null &&
+            !sessionEndedByServer &&
+            streamUrl == null &&
+            sessionId == null &&
+            !isLoading
+
+    /**
+     * The catalog string for [error] when this view model wrote it itself;
+     * null for server or exception text, which is shown as is. Show the
+     * error through [errorText].
+     */
+    @get:StringRes
+    val errorRes: Int?
+        get() = error?.let(AudiobookPlayerErrors::res)
+}
+
+/** Why a skip-interval change was not saved. */
+sealed interface AudiobookSkipIntervalFailure {
+    /** The server refused [seconds] as an interval. */
+    data class Unsupported(val seconds: Int) : AudiobookSkipIntervalFailure
+
+    /** The save failed; [message] is the server's or the exception's text, when there is one. */
+    data class SaveFailed(val message: String?) : AudiobookSkipIntervalFailure
+}
+
+/**
+ * English of the errors [AudiobookPlayerViewModel] writes itself. The state
+ * keeps the English (logs, retry checks); [AudiobookPlayerUiState.errorRes]
+ * maps it back to the catalog string for display.
+ */
+internal object AudiobookPlayerErrors {
+    const val PLAYBACK_FAILED = "Audiobook playback failed"
+    const val NETWORK = "Network error"
+    const val FILE_UNAVAILABLE = "Selected audiobook file is unavailable."
+    const val NO_PLAYABLE_FILE = "No playable audiobook file is available."
+    const val NO_ACTIVE_PROFILE = "No active profile"
+    const val SERVER_UPGRADE_REQUIRED = "This server does not support the playback protocol this app speaks."
+    const val SEEK_FAILED = "Seek failed"
+
+    @StringRes
+    fun res(english: String): Int? = when (english) {
+        PLAYBACK_FAILED -> R.string.audiobook_error_playbackFailed
+        NETWORK -> R.string.audiobook_error_network
+        FILE_UNAVAILABLE -> R.string.audiobook_error_fileUnavailable
+        NO_PLAYABLE_FILE -> R.string.audiobook_error_noPlayableFile
+        NO_ACTIVE_PROFILE -> R.string.audiobook_error_noActiveProfile
+        SERVER_UPGRADE_REQUIRED -> R.string.audiobook_error_serverUpgradeRequired
+        SEEK_FAILED -> R.string.audiobook_error_seekFailed
+        else -> null
+    }
+}
+
+/** The error to show, in the interface language when the view model wrote it. */
+@Composable
+fun AudiobookPlayerUiState.errorText(): String? {
+    val error = error ?: return null
+    return errorRes?.let { stringResource(it) } ?: error
+}
+
+/** The skip-interval save message to show, or null. */
+@Composable
+fun AudiobookPlayerUiState.skipIntervalErrorText(): String? = when (val failure = skipIntervalFailure) {
+    null -> null
+    is AudiobookSkipIntervalFailure.Unsupported ->
+        pluralStringResource(R.plurals.audiobook_skipInterval_unsupported, failure.seconds, failure.seconds)
+    is AudiobookSkipIntervalFailure.SaveFailed -> {
+        val message = failure.message?.takeIf { it.isNotBlank() }
+        if (message == null) {
+            stringResource(R.string.audiobook_skipInterval_saveFailed)
+        } else {
+            stringResource(R.string.audiobook_skipInterval_saveFailedDetail, message)
+        }
+    }
+}
 
 /**
  * Drives the [AudiobookPlayerScreen]. Wraps Media3 for actual decoding
@@ -108,6 +198,7 @@ class AudiobookPlayerViewModel(
     // + AudiobookProgressSyncer — same furthest-wins syncProgress semantics).
     private val userItemStatePort: org.siloserver.silo.repository.port.UserItemStatePort,
     private val outboxSyncScheduler: org.siloserver.silo.common.data.sync.OutboxSyncScheduler,
+    private val finalPlaybackPositionWriter: FinalPlaybackPositionWriter,
     private val serverRegistry: ServerRegistry,
     private val profileRepository: ProfileRepository,
     private val offlineMediaResolver: OfflineMediaResolver,
@@ -152,10 +243,10 @@ class AudiobookPlayerViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
 
-    /** "Chapter N of M" label, or empty when the book has 0/1 chapters. */
-    val chapterCountLabel: StateFlow<String> = uiState
-        .map { AudiobookChapters.countLabel(it.chapters.toAudiobookChapters(), it.positionSeconds).orEmpty() }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    /** "Chapter N of M" label, or null when the book has 0/1 chapters. */
+    val chapterCountLabel: StateFlow<UiText?> = uiState
+        .map { AudiobookChapters.countLabel(it.chapters.toAudiobookChapters(), it.positionSeconds) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _bookmarks = MutableStateFlow<List<AudiobookBookmark>>(emptyList())
     val bookmarks: StateFlow<List<AudiobookBookmark>> = _bookmarks.asStateFlow()
@@ -238,6 +329,14 @@ class AudiobookPlayerViewModel(
      *  Continue Listening everywhere. */
     private var suppressWholeBookPersistence = false
 
+    /** The download playback run of a book whose downloaded file is the whole
+     *  book. Its positions are queued for the server with the time each was
+     *  sampled, since local-file playback has no session to report them. */
+    private data class DownloadRun(val scope: PlaybackWriteScope, val fileId: Int, val startedAtMs: Long)
+    private var downloadRun: DownloadRun? = null
+    /** The last position queued from the periodic save, for its throttle. */
+    private var lastQueuedPositionSeconds: Double? = null
+
     init {
         audiobookSeekRouter.register(sessionSeekHandler)
         observeAudiobookSettings()
@@ -261,67 +360,93 @@ class AudiobookPlayerViewModel(
                 ) {
                     return@collect
                 }
-                val profileId = profileRepository.getActiveProfileId() ?: return@collect
-                val generation = ++loadGeneration
-                val trackIndex = activeTrackIndex
-                when (
-                    val playback = startPartSession(
-                        fileId = renewal.startParams.fileId,
-                        profileId = profileId,
-                        startPosition = renewal.positionSeconds,
-                        capabilities = renewal.startParams.capabilities,
-                        clientPlaybackContext = renewal.startParams.clientPlaybackContext,
-                    )
-                ) {
-                    is ApiResult.Success -> {
-                        val start = playback.data
-                        if (generation != loadGeneration || isClosing) {
-                            if (start is VideoSessionStartV3.Ready) {
-                                runCatching {
-                                    playbackSessionManager.stopSession(start.session.sessionId)
-                                }
-                            }
-                        } else if (start is VideoSessionStartV3.Ready) {
-                            applyStartedSession(
-                                ready = start,
-                                localSeek = renewal.positionSeconds,
-                                globalPosition = state.positionSeconds,
-                                trackIndex = trackIndex,
-                                fileId = renewal.startParams.fileId,
-                                isCurrent = {
-                                    generation == loadGeneration &&
-                                        !isClosing &&
-                                        _uiState.value.sessionId == renewal.staleSessionId
-                                },
-                            )
-                        } else {
-                            applyFailedSessionStart(
-                                start.failureMessage(),
-                                expectedSessionId = renewal.staleSessionId,
-                            )
+                renewExpiredSession(
+                    staleSessionId = renewal.staleSessionId,
+                    fileId = renewal.startParams.fileId,
+                    localPosition = renewal.positionSeconds,
+                    globalPosition = state.positionSeconds,
+                    capabilities = renewal.startParams.capabilities,
+                    clientPlaybackContext = renewal.startParams.clientPlaybackContext,
+                )
+            }
+        }
+    }
+
+    /**
+     * Replace [staleSessionId], which the server no longer knows, with a fresh
+     * session for [fileId] at the file-local [localPosition]. The stale session
+     * stays published until the new one is adopted, so a close or a newer seek
+     * in the meantime wins and the late session is released.
+     */
+    private suspend fun renewExpiredSession(
+        staleSessionId: String,
+        fileId: Int,
+        localPosition: Double,
+        globalPosition: Double,
+        capabilities: ClientCodecCapabilities? = null,
+        clientPlaybackContext: ClientPlaybackContext? = null,
+    ) {
+        // A seek, track load or close can land while the profile lookup
+        // suspends. Claiming the generation after it would make this renewal
+        // current again and replace that newer request with the old position.
+        val observedGeneration = loadGeneration
+        val profileId = profileRepository.getActiveProfileId() ?: return
+        if (
+            observedGeneration != loadGeneration ||
+            isClosing ||
+            _uiState.value.sessionId != staleSessionId
+        ) {
+            return
+        }
+        val generation = ++loadGeneration
+        val trackIndex = activeTrackIndex
+        fun isCurrent() = generation == loadGeneration &&
+            !isClosing &&
+            _uiState.value.sessionId == staleSessionId
+        when (
+            val playback = startPartSession(
+                fileId = fileId,
+                profileId = profileId,
+                startPosition = localPosition,
+                capabilities = capabilities,
+                clientPlaybackContext = clientPlaybackContext,
+            )
+        ) {
+            is ApiResult.Success -> {
+                val start = playback.data
+                if (generation != loadGeneration || isClosing) {
+                    if (start is VideoSessionStartV3.Ready) {
+                        runCatching {
+                            playbackSessionManager.stopSession(start.session.sessionId)
                         }
                     }
-                    is ApiResult.Error -> if (
-                        generation == loadGeneration &&
-                        !isClosing &&
-                        _uiState.value.sessionId == renewal.staleSessionId
-                    ) {
-                        applyFailedSessionStart(
-                            playback.message,
-                            expectedSessionId = renewal.staleSessionId,
-                        )
-                    }
-                    is ApiResult.NetworkError -> if (
-                        generation == loadGeneration &&
-                        !isClosing &&
-                        _uiState.value.sessionId == renewal.staleSessionId
-                    ) {
-                        applyFailedSessionStart(
-                            playback.exception.message ?: "Network error",
-                            expectedSessionId = renewal.staleSessionId,
-                        )
-                    }
+                } else if (start is VideoSessionStartV3.Ready) {
+                    applyStartedSession(
+                        ready = start,
+                        localSeek = localPosition,
+                        globalPosition = globalPosition,
+                        trackIndex = trackIndex,
+                        fileId = fileId,
+                        isCurrent = ::isCurrent,
+                    )
+                } else {
+                    applyFailedSessionStart(
+                        start.failureMessage(),
+                        expectedSessionId = staleSessionId,
+                    )
                 }
+            }
+            is ApiResult.Error -> if (isCurrent()) {
+                applyFailedSessionStart(
+                    playback.message.ifBlank { AudiobookPlayerErrors.PLAYBACK_FAILED },
+                    expectedSessionId = staleSessionId,
+                )
+            }
+            is ApiResult.NetworkError -> if (isCurrent()) {
+                applyFailedSessionStart(
+                    playback.exception.message ?: AudiobookPlayerErrors.NETWORK,
+                    expectedSessionId = staleSessionId,
+                )
             }
         }
     }
@@ -378,7 +503,12 @@ class AudiobookPlayerViewModel(
         // older load can't overwrite the context of a newer one (Apple parity).
         val generation = ++startGeneration
         viewModelScope.launch {
-            when (val r = catalogRepository.getItemDetail(contentId, libraryId)) {
+            // Read before the detail: if the server takes it meanwhile, the detail
+            // can predate it.
+            val unsentBefore = userItemStatePort.localPlaybackProgress(contentId)?.positionSeconds
+            // Live only: a cached detail isn't a server answer, so offline takes
+            // the offline path, which resumes from this device's positions.
+            when (val r = catalogRepository.getItemDetail(contentId, libraryId, fresh = true)) {
                 is ApiResult.Success -> {
                     if (generation != startGeneration) return@launch
                     val d = r.data
@@ -386,7 +516,7 @@ class AudiobookPlayerViewModel(
                         _uiState.update {
                             it.copy(
                                 isLoading = false,
-                                error = "Selected audiobook file is unavailable.",
+                                error = AudiobookPlayerErrors.FILE_UNAVAILABLE,
                             )
                         }
                         return@launch
@@ -400,9 +530,9 @@ class AudiobookPlayerViewModel(
 
                     if (selectedVersion == null) {
                         val message = if (hasRequestedFileId) {
-                            "Selected audiobook file is unavailable."
+                            AudiobookPlayerErrors.FILE_UNAVAILABLE
                         } else {
-                            "No playable audiobook file is available."
+                            AudiobookPlayerErrors.NO_PLAYABLE_FILE
                         }
                         _uiState.update {
                             it.copy(
@@ -422,15 +552,26 @@ class AudiobookPlayerViewModel(
                         _resumePosition.value = explicitStartOverride.takeIf { it > 0.0 }
                         null
                     } else {
-                        loadResumePositionSnapshot(d.userData?.positionSeconds)
+                        loadResumePositionSnapshot(
+                            d.userData?.positionSeconds,
+                            offline = false,
+                            unsentBefore = unsentBefore,
+                            // A re-read of the detail can outlast a newer load.
+                            isCurrent = { generation == startGeneration },
+                        ).also { if (generation != startGeneration) return@launch }
                     }
                     val requestStartPosition = resolvePlaybackStartRequestPosition(
                         overridePosition = explicitStartOverride,
                         detailPosition = resumePosition,
                     )
-                    val (downloadServerId, downloadProfileId) = resolveScope()
+                    // Captured before the download lookup suspends, so a profile
+                    // switch meanwhile can't move this book's progress to it.
+                    val writeScope = finalPlaybackPositionWriter.captureScope()
+                    sessionWriteScope = writeScope
+                    val (downloadServerId, downloadAccountId, downloadProfileId) = resolveScope()
                     val offlineMedia = offlineMediaResolver.findLocalMedia(
                         serverId = downloadServerId,
+                        accountId = downloadAccountId.orEmpty(),
                         profileId = downloadProfileId,
                         contentId = d.contentId,
                         requestedFileId = selectedVersion.fileId,
@@ -472,10 +613,13 @@ class AudiobookPlayerViewModel(
                             builtTimeline.toWholeBookChapters()
                         else -> selectedVersion.chapters.orEmpty()
                     }
+                    downloadRun = offlineMedia?.let { downloadRunFor(writeScope, it, d) }
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            title = d.title,
+                            // Without the series name and volume the server baked
+                            // in, as Apple's player shows it.
+                            title = AudiobookDetailFormatting.cleanTitle(d.title, d.audiobook?.series?.name),
                             author = d.audiobook?.authorNames,
                             narrator = d.audiobook?.narratorNames,
                             overview = d.overview,
@@ -514,7 +658,7 @@ class AudiobookPlayerViewModel(
 
                     val profileId = profileRepository.getActiveProfileId()
                     if (profileId == null) {
-                        _uiState.update { it.copy(error = "No active profile") }
+                        _uiState.update { it.copy(error = AudiobookPlayerErrors.NO_ACTIVE_PROFILE) }
                         return@launch
                     }
 
@@ -610,7 +754,7 @@ class AudiobookPlayerViewModel(
         viewModelScope.launch {
             val profileId = profileRepository.getActiveProfileId()
             if (profileId == null) {
-                _uiState.update { it.copy(error = "No active profile") }
+                _uiState.update { it.copy(error = AudiobookPlayerErrors.NO_ACTIVE_PROFILE) }
                 return@launch
             }
             retireActiveSession(
@@ -649,11 +793,11 @@ class AudiobookPlayerViewModel(
                 }
                 is ApiResult.Error -> {
                     if (generation != loadGeneration) return@launch
-                    applyFailedSessionStart(playback.message.ifBlank { "Audiobook playback failed" })
+                    applyFailedSessionStart(playback.message.ifBlank { AudiobookPlayerErrors.PLAYBACK_FAILED })
                 }
                 is ApiResult.NetworkError -> {
                     if (generation != loadGeneration) return@launch
-                    applyFailedSessionStart(playback.exception.message ?: "Network error")
+                    applyFailedSessionStart(playback.exception.message ?: AudiobookPlayerErrors.NETWORK)
                 }
             }
         }
@@ -670,6 +814,9 @@ class AudiobookPlayerViewModel(
         startGlobal: Double,
         generation: Int,
     ) {
+        // Publish the start position now, as [loadTrack] does, so a failed
+        // start leaves Retry resuming here rather than at 0:00.
+        _uiState.update { it.copy(positionSeconds = startGlobal) }
         when (val playback = startPartSession(fileId, profileId, startGlobal)) {
             is ApiResult.Success -> {
                 val start = playback.data
@@ -693,10 +840,10 @@ class AudiobookPlayerViewModel(
                 }
             }
             is ApiResult.Error -> if (generation == startGeneration && !isClosing) {
-                applyFailedSessionStart(playback.message.ifBlank { "Audiobook playback failed" })
+                applyFailedSessionStart(playback.message.ifBlank { AudiobookPlayerErrors.PLAYBACK_FAILED })
             }
             is ApiResult.NetworkError -> if (generation == startGeneration && !isClosing) {
-                applyFailedSessionStart(playback.exception.message ?: "Network error")
+                applyFailedSessionStart(playback.exception.message ?: AudiobookPlayerErrors.NETWORK)
             }
         }
     }
@@ -859,6 +1006,7 @@ class AudiobookPlayerViewModel(
                     selectedFileId = fileId,
                     positionSeconds = globalPosition,
                     error = null,
+                    sessionEndedByServer = false,
                 )
             }
             published = true
@@ -897,6 +1045,7 @@ class AudiobookPlayerViewModel(
     private fun applyFailedSessionStart(
         failureMessage: String,
         expectedSessionId: String? = _uiState.value.sessionId,
+        sessionEndedByServer: Boolean = false,
     ) {
         val state = _uiState.value
         if (expectedSessionId != null && state.sessionId != expectedSessionId) return
@@ -921,6 +1070,7 @@ class AudiobookPlayerViewModel(
                 isPlaying = false,
                 isPaused = true,
                 error = failureMessage,
+                sessionEndedByServer = sessionEndedByServer,
             )
         }
     }
@@ -928,9 +1078,9 @@ class AudiobookPlayerViewModel(
     private fun VideoSessionStartV3.failureMessage(): String = when (this) {
         is VideoSessionStartV3.Ready -> ""
         is VideoSessionStartV3.Terminal ->
-            message.ifBlank { "Audiobook playback failed" }
+            message.ifBlank { AudiobookPlayerErrors.PLAYBACK_FAILED }
         VideoSessionStartV3.ServerUpgradeRequired ->
-            "This server does not support the playback protocol this app speaks."
+            AudiobookPlayerErrors.SERVER_UPGRADE_REQUIRED
     }
 
     /**
@@ -954,9 +1104,12 @@ class AudiobookPlayerViewModel(
     }
 
     private suspend fun loadOfflineOnly(error: String?) {
-        val (serverId, profileId) = resolveScope()
+        val writeScope = finalPlaybackPositionWriter.captureScope()
+        sessionWriteScope = writeScope
+        val (serverId, accountId, profileId) = resolveScope()
         val media = offlineMediaResolver.findLocalMedia(
             serverId = serverId,
+            accountId = accountId.orEmpty(),
             profileId = profileId,
             contentId = contentId,
             requestedFileId = requestedFileId,
@@ -971,7 +1124,8 @@ class AudiobookPlayerViewModel(
         // file. The item detail may still be cached from an earlier online visit
         // — when it shows the book is multi-part, run in part-local space and map
         // the resume through the timeline instead of seeding a global position.
-        val cachedTimeline = catalogRepository.getCachedItemDetail(contentId)?.let { cached ->
+        val cachedDetail = catalogRepository.getCachedItemDetail(contentId)
+        val cachedTimeline = cachedDetail?.let { cached ->
             buildAudiobookTimeline(
                 versions = cached.versions,
                 serverTotalSeconds = cached.audiobook?.totalDurationSeconds?.toDouble(),
@@ -979,9 +1133,15 @@ class AudiobookPlayerViewModel(
             )
         }?.takeIf { !it.isSingle }
         val offlinePart = cachedTimeline?.tracks?.firstOrNull { it.fileId == media.fileId }
-        // No server detail when offline — resume from the local snapshot alone
-        // (unless the user explicitly chose to play from the beginning).
-        val resume = if (!startFromBeginning) loadResumePositionSnapshot() else null
+        // No server detail when offline: start where the user asked (a chapter,
+        // a bookmark, or the beginning), else resume from the local snapshot or
+        // the server's position this device last saw.
+        val explicitStart = requestedStartPosition ?: if (startFromBeginning) 0.0 else null
+        val resume = if (explicitStart != null) {
+            explicitStart.takeIf { it > 0.0 }.also { _resumePosition.value = it }
+        } else {
+            loadResumePositionSnapshot(cachedDetail?.userData?.positionSeconds, offline = true)
+        }
         if (cachedTimeline != null && offlinePart != null) {
             suppressWholeBookPersistence = true
             val globalResume = resume ?: 0.0
@@ -1002,6 +1162,11 @@ class AudiobookPlayerViewModel(
                 _resumePosition.value = null
             }
         }
+        // Without a cached detail nothing shows this file is the whole book,
+        // so its time stays on this device.
+        downloadRun = cachedDetail
+            ?.takeIf { !suppressWholeBookPersistence }
+            ?.let { downloadRunFor(writeScope, media, it) }
         _uiState.update {
             it.copy(
                 isLoading = false,
@@ -1035,6 +1200,10 @@ class AudiobookPlayerViewModel(
      * whole-book and this is the pre-timeline behaviour.
      */
     fun onPositionChanged(seconds: Double, streamUri: String?) {
+        // No stream published (before the first start, or after a failure
+        // cleared it): the engine is empty or still holds the outgoing item, so
+        // its time would overwrite the position Retry resumes from.
+        if (_uiState.value.streamUrl == null) return
         val tl = timeline
         val active = activeTrackIndex?.let { idx -> tl?.tracks?.firstOrNull { it.index == idx } }
 
@@ -1166,10 +1335,20 @@ class AudiobookPlayerViewModel(
                     !isClosing &&
                     _uiState.value.sessionId == sessionId
                 ) {
-                    applyFailedSessionStart(
-                        result.message.ifBlank { "Audiobook playback failed" },
-                        expectedSessionId = sessionId,
-                    )
+                    when (val recovery = audiobookReplanRecovery(result)) {
+                        AudiobookReplanRecovery.StartFreshSession -> renewExpiredSession(
+                            staleSessionId = sessionId,
+                            fileId = fileId,
+                            localPosition = sourcePosition,
+                            globalPosition = globalPosition,
+                        )
+                        AudiobookReplanRecovery.Ended,
+                        AudiobookReplanRecovery.Fail -> applyFailedSessionStart(
+                            result.message.ifBlank { AudiobookPlayerErrors.PLAYBACK_FAILED },
+                            expectedSessionId = sessionId,
+                            sessionEndedByServer = recovery == AudiobookReplanRecovery.Ended,
+                        )
+                    }
                 }
                 is ApiResult.NetworkError -> if (
                     generation == loadGeneration &&
@@ -1177,7 +1356,7 @@ class AudiobookPlayerViewModel(
                     _uiState.value.sessionId == sessionId
                 ) {
                     applyFailedSessionStart(
-                        result.exception.message ?: "Network error",
+                        result.exception.message ?: AudiobookPlayerErrors.NETWORK,
                         expectedSessionId = sessionId,
                     )
                 }
@@ -1186,7 +1365,47 @@ class AudiobookPlayerViewModel(
     }
 
     fun togglePlay() {
+        if (_uiState.value.canRetryPlayback) {
+            retryPlayback()
+            return
+        }
         _uiState.update { it.copy(isPaused = !it.isPaused) }
+    }
+
+    /**
+     * Start playback again after it stopped on an error, at the position the
+     * player last held. Used once the server is reachable again after an
+     * outage that outlived the session, or after any other failed start.
+     */
+    fun retryPlayback() {
+        val state = _uiState.value
+        if (isClosing || !state.canRetryPlayback || contentId.isBlank()) return
+        val fileId = state.selectedFileId
+        if (fileId == null) {
+            // The item never loaded: load it from the start.
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            loadDetail()
+            return
+        }
+        _uiState.update { it.copy(error = null, isPaused = false) }
+        if (timeline != null) {
+            loadTrack(atGlobalTime = state.positionSeconds, autoplay = true)
+            return
+        }
+        val generation = ++startGeneration
+        viewModelScope.launch {
+            val profileId = profileRepository.getActiveProfileId()
+            if (profileId == null) {
+                _uiState.update { it.copy(error = AudiobookPlayerErrors.NO_ACTIVE_PROFILE) }
+                return@launch
+            }
+            startSingleFileSession(
+                fileId = fileId,
+                profileId = profileId,
+                startGlobal = state.positionSeconds,
+                generation = generation,
+            )
+        }
     }
 
     /** Audiobook-style ±30s seek. The Compose layer reads the requested
@@ -1220,6 +1439,9 @@ class AudiobookPlayerViewModel(
                     fileId = _uiState.value.selectedFileId ?: return,
                 )
             } else {
+                // Polls are ignored while no stream is published, so record a
+                // seek made in the error state here for Retry to resume from.
+                _uiState.update { it.copy(positionSeconds = target) }
                 _pendingSeek.value = target
             }
             return
@@ -1302,14 +1524,24 @@ class AudiobookPlayerViewModel(
                             !isClosing &&
                             _uiState.value.sessionId == sessionId
                         ) {
-                            _uiState.update { it.copy(error = result.message.ifBlank { "Seek failed" }) }
+                            when (audiobookReplanRecovery(result)) {
+                                AudiobookReplanRecovery.StartFreshSession -> renewExpiredSession(
+                                    staleSessionId = sessionId,
+                                    fileId = fileId,
+                                    localPosition = decision.targetSourcePositionSeconds,
+                                    globalPosition = globalSeconds,
+                                )
+                                AudiobookReplanRecovery.Ended,
+                                AudiobookReplanRecovery.Fail ->
+                                    _uiState.update { it.copy(error = result.message.ifBlank { AudiobookPlayerErrors.SEEK_FAILED }) }
+                            }
                         }
                         is ApiResult.NetworkError -> if (
                             generation == loadGeneration &&
                             !isClosing &&
                             _uiState.value.sessionId == sessionId
                         ) {
-                            _uiState.update { it.copy(error = result.exception.message ?: "Seek failed") }
+                            _uiState.update { it.copy(error = result.exception.message ?: AudiobookPlayerErrors.SEEK_FAILED) }
                         }
                     }
                 }
@@ -1379,20 +1611,19 @@ class AudiobookPlayerViewModel(
     private fun setSkipSeconds(direction: SeekDirection, seconds: Int) {
         val seek = seekIntervalStore.state.value
         val attempt = ++skipSaveAttempt
-        _uiState.update { it.copy(skipIntervalError = null) }
+        _uiState.update { it.copy(skipIntervalFailure = null) }
         viewModelScope.launch {
             when {
                 seek.isSupported -> {
                     val error = when (val result = seekIntervalStore.save(SeekMedia.Audiobook, direction, seconds)) {
                         is SeekIntervalController.SaveResult.Saved -> null
                         is SeekIntervalController.SaveResult.Invalid ->
-                            "${result.seconds} seconds is not a supported interval."
+                            AudiobookSkipIntervalFailure.Unsupported(result.seconds)
                         is SeekIntervalController.SaveResult.Failed ->
-                            "Couldn't save the skip interval" +
-                                (result.message?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ".")
+                            AudiobookSkipIntervalFailure.SaveFailed(result.message)
                     }
                     // A newer pick owns the message; the store already reverted this one.
-                    if (attempt == skipSaveAttempt) _uiState.update { it.copy(skipIntervalError = error) }
+                    if (attempt == skipSaveAttempt) _uiState.update { it.copy(skipIntervalFailure = error) }
                 }
                 seek.allowsLegacyAudiobookEditing -> when (direction) {
                     SeekDirection.Back -> audiobookSettings.setSkipBackSeconds(seconds)
@@ -1405,7 +1636,7 @@ class AudiobookPlayerViewModel(
 
     /** Drops the skip-interval save message (the picker closed). */
     fun clearSkipIntervalError() {
-        _uiState.update { it.copy(skipIntervalError = null) }
+        _uiState.update { it.copy(skipIntervalFailure = null) }
     }
 
     private var skipSaveAttempt = 0
@@ -1479,19 +1710,29 @@ class AudiobookPlayerViewModel(
 
     // ── Bookmarks ────────────────────────────────────────────────────────
 
-    private suspend fun resolveScope(): Pair<String, String> {
+    /** One identity for local data: the account is read with the server, before the profile read suspends. */
+    private data class LocalScope(val serverId: String, val accountId: String?, val profileId: String)
+
+    private suspend fun resolveScope(): LocalScope {
         val serverId = serverRegistry.activeServerId.value ?: DownloadEnqueuer.DEFAULT_SERVER_ID
+        val accountId = serverRegistry.activeAccountId.value
         val profileId = profileRepository.getActiveProfileId() ?: DownloadEnqueuer.DEFAULT_PROFILE_ID
-        return serverId to profileId
+        return LocalScope(serverId, accountId, profileId)
     }
+
+    /** False once the user switched server or account since [resolveScope]; that result is dropped. */
+    private fun LocalScope.isCurrent(): Boolean =
+        (serverRegistry.activeServerId.value ?: DownloadEnqueuer.DEFAULT_SERVER_ID) == serverId &&
+            serverRegistry.activeAccountId.value == accountId
 
     private fun loadBookmarks() {
         viewModelScope.launch {
-            val (serverId, profileId) = resolveScope()
+            val scope = resolveScope()
+            if (!scope.isCurrent()) return@launch
             val loaded = withContext(Dispatchers.IO) {
-                bookmarksStore.list(serverId, profileId, contentId)
+                bookmarksStore.list(scope.serverId, scope.accountId, scope.profileId, contentId)
             }
-            _bookmarks.value = loaded
+            if (scope.isCurrent()) _bookmarks.value = loaded
         }
     }
 
@@ -1514,21 +1755,23 @@ class AudiobookPlayerViewModel(
             createdAtMs = System.currentTimeMillis(),
         )
         viewModelScope.launch {
-            val (serverId, profileId) = resolveScope()
+            val scope = resolveScope()
+            if (!scope.isCurrent()) return@launch
             val updated = withContext(Dispatchers.IO) {
-                bookmarksStore.add(serverId, profileId, contentId, bookmark)
+                bookmarksStore.add(scope.serverId, scope.accountId, scope.profileId, contentId, bookmark)
             }
-            _bookmarks.value = updated
+            if (scope.isCurrent()) _bookmarks.value = updated
         }
     }
 
     fun removeBookmark(id: String) {
         viewModelScope.launch {
-            val (serverId, profileId) = resolveScope()
+            val scope = resolveScope()
+            if (!scope.isCurrent()) return@launch
             val updated = withContext(Dispatchers.IO) {
-                bookmarksStore.remove(serverId, profileId, contentId, id)
+                bookmarksStore.remove(scope.serverId, scope.accountId, scope.profileId, contentId, id)
             }
-            _bookmarks.value = updated
+            if (scope.isCurrent()) _bookmarks.value = updated
         }
     }
 
@@ -1546,19 +1789,53 @@ class AudiobookPlayerViewModel(
     private var positionSaveJob: Job? = null
     private var stoppingSessionId: String? = null
 
+    /** The signed-in identity this book started under. A minimized book can
+     *  outlive its account or profile (the phone's mini player), and the
+     *  on-device position writes resolve the identity active when they run,
+     *  so they are skipped once another identity is active rather than
+     *  landing in its resume state. */
+    private var sessionWriteScope: PlaybackWriteScope? = null
+
+    private suspend fun isSessionIdentityActive(): Boolean {
+        val started = sessionWriteScope ?: return true
+        return finalPlaybackPositionWriter.captureScope() == started
+    }
+
     /** Snapshot the current position (and any future server progress
      *  report). Called from periodic timer + pause + seek + close. */
-    private fun savePosition() {
+    private fun savePosition(periodic: Boolean = false) {
         val state = _uiState.value
         if (state.durationSeconds <= 0) return  // metadata not loaded yet
+        val run = downloadRun
+        if (run != null) {
+            val position = state.positionSeconds
+            val last = lastQueuedPositionSeconds
+            // While playing, queue about every 10 s of listening, as video does;
+            // pause, seek and close always queue the exact spot.
+            if (position <= 0 || periodic && last != null && abs(position - last) < QUEUED_POSITION_INTERVAL_SECONDS) return
+            lastQueuedPositionSeconds = position
+            // Submitted here, not in a coroutine, so the write a closing player
+            // asks for can't be cancelled with the screen. The app-owned writer
+            // queues it for the server with this sample time.
+            finalPlaybackPositionWriter.submit(
+                FinalPlaybackPosition(
+                    scope = run.scope,
+                    contentId = contentId,
+                    fileId = run.fileId,
+                    positionSeconds = position,
+                    durationSeconds = state.durationSeconds,
+                    runStartedAtMs = run.startedAtMs,
+                ),
+            )
+            return
+        }
         viewModelScope.launch {
-            if (state.positionSeconds > 0 && !suppressWholeBookPersistence) {
+            if (state.positionSeconds > 0 && !suppressWholeBookPersistence && isSessionIdentityActive()) {
                 // SINK 2 — whole-book durable resume. Records the WHOLE-BOOK
-                // (global) position against the WHOLE-BOOK total via a durable
-                // local projection + a content-level outbox op drained through
-                // syncProgress (furthest-position-wins). This is what powers
-                // resume + Continue Listening, and is what the multi-part fix
-                // protects: positionSeconds is now global, so a part-local
+                // (global) position against the WHOLE-BOOK total as a local
+                // snapshot only; a stream's session reports progress to the
+                // server. This is what powers on-device resume, and is what the
+                // multi-part fix protects: positionSeconds is now global, so a part-local
                 // position is never persisted here as the book's position
                 // (offline single-part playback runs part-local and skips this
                 // sink entirely via suppressWholeBookPersistence).
@@ -1573,26 +1850,66 @@ class AudiobookPlayerViewModel(
         }
     }
 
-    /** Resume-on-open. Returns the furthest of the on-device local snapshot
-     *  and the server's recorded position ([serverPositionSeconds], from the
-     *  item's `user_data`) so we never resume behind progress made on another
-     *  device — and so a device that has never played this book locally still
-     *  resumes from the server's Continue-Listening position instead of 0:00.
+    /** Resume-on-open. Listening from a download that hasn't reached the
+     *  server yet is newer than the server's position, so it wins. Otherwise
+     *  returns the furthest of the on-device local snapshot and the server's
+     *  recorded position ([serverPositionSeconds], from the item's `user_data`)
+     *  so we never resume behind progress made on another device — and so a
+     *  device that has never played this book locally still resumes from the
+     *  server's Continue-Listening position instead of 0:00.
+     *  Online, positions the server already has (or may have) don't count:
+     *  its answer stands. [offline] (no live answer, [serverPositionSeconds]
+     *  is the cached one) counts every on-device position.
      *  Exposed via [resumePositionSeconds] for the Compose host to seek to once
      *  the controller + metadata are ready. */
-    private suspend fun loadResumePositionSnapshot(serverPositionSeconds: Double? = null): Double? {
+    private suspend fun loadResumePositionSnapshot(
+        serverPositionSeconds: Double?,
+        offline: Boolean,
+        unsentBefore: Double? = null,
+        isCurrent: () -> Boolean = { true },
+    ): Double? {
         // Content-level local read: the playing fileId isn't known yet at resume,
-        // and audiobook resume is per-book — take the furthest on-device position
+        // and audiobook resume is per-book — take the newest on-device position
         // across the item's files, maxed with the server's recorded position so we
         // never resume behind progress made on another device.
-        val local = userItemStatePort.localPositionForContent(contentId)?.takeIf { it > 0 }
-        val server = serverPositionSeconds?.takeIf { it > 0 }
-        val position = listOfNotNull(local, server).maxOrNull()
-        _resumePosition.value = position
+        suspend fun unsent() = userItemStatePort.localPlaybackProgress(contentId, includeSent = offline)
+            ?.positionSeconds?.takeIf { it > 0 }
+        suspend fun local() = userItemStatePort.localPositionForContent(contentId, includeSent = offline)?.takeIf { it > 0 }
+        var unsent = unsent()
+        var local = local()
+        var server = serverPositionSeconds?.takeIf { it > 0 }
+        if (!offline && unsent == null && unsentBefore != null) {
+            // The server took this device's queued listening ([unsentBefore])
+            // while the detail was loading, so that answer can predate it: read
+            // it again (Apple `onlineContext`). Without an answer, the listening
+            // it took stands.
+            server = when (val again = catalogRepository.getItemDetail(contentId, libraryId, fresh = true)) {
+                is ApiResult.Success -> again.data.userData?.positionSeconds?.takeIf { it > 0 }
+                else -> unsentBefore
+            }
+            // A position queued while that read ran is newer than its answer.
+            unsent = unsent()
+            local = local()
+        }
+        // Offline, this device's own newest position is newer than the cached
+        // server answer, a rewind included.
+        val position = unsent ?: if (offline) local ?: server else listOfNotNull(local, server).maxOrNull()
+        if (isCurrent()) _resumePosition.value = position
         return position
     }
 
     fun consumeResumePosition() { _resumePosition.value = null }
+
+    /** A download run for [media], or null unless [detail] shows the file is
+     *  the whole book and [scope] (captured before the download lookup) is the
+     *  identity the download belongs to. */
+    private fun downloadRunFor(scope: PlaybackWriteScope?, media: OfflineMedia, detail: ItemDetail): DownloadRun? {
+        val total = detail.audiobook?.totalDurationSeconds?.toDouble()
+        if (!isWholeBookFile(detail.versions, media.fileId, total)) return null
+        return scope
+            ?.takeIf { it.serverId == media.serverId && it.profileId == media.profileId }
+            ?.let { DownloadRun(it, media.fileId, System.currentTimeMillis()) }
+    }
 
     /** Persist position every 5s while playing so a crash loses at
      *  most a few seconds. Also fires on pause/seek/close via direct
@@ -1602,7 +1919,7 @@ class AudiobookPlayerViewModel(
         positionSaveJob = viewModelScope.launch {
             while (true) {
                 delay(5000)
-                if (_uiState.value.isPlaying) savePosition()
+                if (_uiState.value.isPlaying) savePosition(periodic = true)
             }
         }
     }
@@ -1646,7 +1963,7 @@ class AudiobookPlayerViewModel(
         viewModelScope.launch {
             try {
                 withContext(NonCancellable + Dispatchers.IO) {
-                    if (state.positionSeconds > 0 && !suppressWholeBookPersistence) {
+                    if (state.positionSeconds > 0 && !suppressWholeBookPersistence && isSessionIdentityActive()) {
                         // SINK 2: whole-book global position + whole-book total.
                         // Skipped on offline part-local playback, where
                         // positionSeconds is a PART position that must never be
@@ -1730,6 +2047,10 @@ class AudiobookPlayerViewModel(
          *  mapping resumes. Wide enough to absorb the ~250ms poll cadence and a
          *  fresh prepare's initial seek. */
         private const val TRACK_LOAD_SETTLE_TOLERANCE = 3.0
+
+        /** Listening (seconds) between positions the periodic save queues for
+         *  the server during download playback. */
+        private const val QUEUED_POSITION_INTERVAL_SECONDS = 10.0
     }
 }
 
@@ -1777,3 +2098,20 @@ private fun androidx.media3.common.PlaybackException.audiobookFailureClassificat
         androidx.media3.common.PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "source_unavailable"
         else -> "player_error"
     }
+
+/** What the audiobook player does after a replan or reanchor request failed. */
+internal enum class AudiobookReplanRecovery { StartFreshSession, Ended, Fail }
+
+/**
+ * A replan or reanchor names the session it replaces. Once the server has
+ * expired that session (the player was cut off past the server's grace), it
+ * answers 404 "Playback session not found" and no replan can succeed; the
+ * only way back is a fresh session at the same position. A session an
+ * administrator ended answers 410 `playback_session_ended` instead, and the
+ * player must not start a fresh one, not even from Retry.
+ */
+internal fun audiobookReplanRecovery(result: ApiResult<*>): AudiobookReplanRecovery = when {
+    result.isPlaybackSessionMissingError() -> AudiobookReplanRecovery.StartFreshSession
+    result.isPlaybackSessionEnded() -> AudiobookReplanRecovery.Ended
+    else -> AudiobookReplanRecovery.Fail
+}

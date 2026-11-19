@@ -34,8 +34,7 @@ data class Collection(
     @SerialName("updated_at") val updatedAt: String? = null,
     @SerialName("item_count_status") val itemCountStatus: String? = null,
 ) {
-    val availableItemCount: Int? get() = availableCollectionItemCount(itemCount, itemCountStatus)
-    val itemCountLabel: String get() = collectionItemCountLabel(itemCount, itemCountStatus)
+    val countState: CollectionCountState get() = collectionCountState(itemCountStatus)
 }
 
 @Serializable
@@ -109,7 +108,9 @@ data class UserLibrary(
     val name: String,
     val type: String,
     @SerialName("sort_order") val sortOrder: Int = 0,
-    @SerialName("poster_url") val posterUrl: String? = null
+    @SerialName("poster_url") val posterUrl: String? = null,
+    /** Box sets exist for this library (search, box set pages, movie rows); false on servers without box sets. */
+    @SerialName("box_sets_enabled") val boxSetsEnabled: Boolean = false,
 )
 
 @Serializable

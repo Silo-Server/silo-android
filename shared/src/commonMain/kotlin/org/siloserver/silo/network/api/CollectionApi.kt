@@ -42,7 +42,6 @@ data class CollectionCapabilities(
     val imports: Boolean,
     val artwork: Boolean,
     @SerialName("item_reorder") val itemReorder: Boolean,
-    @SerialName("count_availability") val countAvailability: Boolean = false,
 )
 
 @Serializable

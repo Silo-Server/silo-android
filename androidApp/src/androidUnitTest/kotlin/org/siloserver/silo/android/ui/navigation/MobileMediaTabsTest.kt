@@ -1,12 +1,21 @@
 package org.siloserver.silo.android.ui.navigation
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import org.siloserver.silo.model.navigation.MediaMode
 import org.siloserver.silo.model.navigation.MediaModeCapabilities
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 class MobileMediaTabsTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+    private val Tab.label: String get() = resources.getString(labelRes)
 
     // Apple-aligned shell stays structurally fixed while capabilities and
     // download records hydrate, so the selected pill never shifts underneath

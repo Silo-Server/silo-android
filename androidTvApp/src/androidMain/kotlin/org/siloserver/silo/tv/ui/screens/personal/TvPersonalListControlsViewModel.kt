@@ -12,7 +12,6 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.tv.ui.screens.library.TvCatalogFacetSelection
 import org.siloserver.silo.tv.ui.screens.library.TvLibrarySortOption
-import org.siloserver.silo.tv.ui.screens.library.defaultOrder
 import org.siloserver.silo.viewmodel.PersonalListQuery
 
 /**
@@ -41,8 +40,7 @@ class TvPersonalListControlsViewModel(
         val facetOptions: CatalogFiltersResponse? = null,
     ) {
         val sortOption: TvLibrarySortOption
-            get() = TvLibrarySortOption.entries.firstOrNull { it.wireValue == sort }
-                ?: TvLibrarySortOption.ListOrder
+            get() = TvLibrarySortOption.fromWire(sort, fallback = TvLibrarySortOption.ListOrder)
 
         /** What the shared list ViewModel should fetch under. */
         val query: PersonalListQuery

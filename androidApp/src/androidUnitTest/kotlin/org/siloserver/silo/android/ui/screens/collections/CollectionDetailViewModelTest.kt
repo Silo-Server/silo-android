@@ -184,7 +184,7 @@ class CollectionDetailViewModelTest {
                 awaitState(viewModel) { !it.isLoading }
                 val state = viewModel.uiState.value
                 assertEquals(null, state.error)
-                assertEquals("Count unavailable", state.collection?.itemCountLabel)
+                assertEquals(org.siloserver.silo.model.personal.CollectionCountState.Unavailable, state.collection?.countState)
                 assertEquals(listOf("film"), state.items.map { it.contentId })
                 assertEquals(1, state.total)
                 assertTrue(state.canManage)

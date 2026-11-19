@@ -31,6 +31,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import org.koin.compose.koinInject
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Orchestrates a reflowable-reader session: resolves the source file, builds a
@@ -97,7 +99,7 @@ fun ReflowableReader(
                 .toggleChromeOnTap(onToggleChrome),
             contentAlignment = Alignment.Center,
         ) {
-            Text(throwable.message ?: "Could not open this book.", modifier = Modifier.padding(32.dp))
+            Text(throwable.message ?: stringResource(CommonR.string.reader_error_openFailed), modifier = Modifier.padding(32.dp))
         }
         return
     }
@@ -144,9 +146,10 @@ fun ReflowableReader(
     var webViewResetKey by remember(source) { mutableStateOf(0) }
 
     val scope = rememberCoroutineScope()
+    val sectionLoadFailed = stringResource(CommonR.string.reader_reflow_sectionLoadFailed)
     val loadSection: () -> Unit = {
         scope.launch {
-            val html = source.html(sectionIndex) ?: "<p>This section could not be loaded.</p>"
+            val html = source.html(sectionIndex) ?: "<p>${htmlEscape(sectionLoadFailed)}</p>"
             controller?.load(html, source.baseUrl(sectionIndex))
             controller?.applyStyle(settings.toReflowStyle(systemDark).toCss())
         }

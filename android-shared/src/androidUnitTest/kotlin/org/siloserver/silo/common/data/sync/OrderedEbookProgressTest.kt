@@ -61,7 +61,7 @@ class OrderedEbookProgressTest {
         val c = HttpClient(MockEngine { sends++; respond("{}") })
         try {
             recorder().recordEbookProgress(requireNotNull(tokens.snapshotDurableLoginAuthority()), "book", 7, "page", 0.2, 1000)
-            val id = db.dirtyOperationDao().dueBatch("server", "profile", 2000, 10).single().id
+            val id = db.dirtyOperationDao().dueBatch("server", "", "profile", 2000, 10).single().id
             val engine = SyncEngine(db, PersonalDataApi(c), EbookReaderApi(EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted)), { scope }, now = { 2000 }, ebookAuthorities = tokens)
             temporary = true
             engine.drainOnce()
@@ -81,7 +81,7 @@ class OrderedEbookProgressTest {
         recorder.recordEbookProgress(authority, "book", 8, "old-version", 0.9, 1500)
         assertNull(recorder.localEbookProgress("book", 8))
         assertEquals("new", recorder.localEbookProgress("book", 7)?.location)
-        val entry = db.dirtyOperationDao().dueBatch("server", "profile", 3000, 10).single()
+        val entry = db.dirtyOperationDao().dueBatch("server", "", "profile", 3000, 10).single()
         assertEquals("new", OutboxOperation.decodeEbookProgressPayload(entry.payloadJson).location)
     }
     @Test fun missingSuccessReceiptRetainsOriginalOutboxEvent() = runTest {
@@ -90,7 +90,7 @@ class OrderedEbookProgressTest {
         }
         try {
             recorder().recordEbookProgress(requireNotNull(tokens.snapshotDurableLoginAuthority()), "book", 7, "page", 0.2, 1000)
-            val before = db.dirtyOperationDao().dueBatch("server", "profile", 2000, 10).single()
+            val before = db.dirtyOperationDao().dueBatch("server", "", "profile", 2000, 10).single()
             val engine = SyncEngine(db, PersonalDataApi(c), EbookReaderApi(EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted)), { scope },
                 now = { 2000 }, ebookAuthorities = tokens)
             assertEquals(1, engine.drainOnce().retriable)

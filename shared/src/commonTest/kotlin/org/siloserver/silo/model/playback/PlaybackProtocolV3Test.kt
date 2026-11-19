@@ -103,6 +103,40 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
+    fun activeQualityIsReportedOnlyWhenTheDecisionAdvertisesIt() {
+        fun decision(features: String) = SiloJson.decodeFromString<PlaybackDecisionResponseV3>(
+            """
+            {
+              "protocol_version": 3,
+              "server_features": [$features],
+              "outcome": "playable",
+              "session_id": "session-1",
+              "playback_plan": {
+                "plan_id": "plan-1",
+                "plan_attempt_key": "v3:0000000000000001",
+                "delivery": "server_transcode_hls",
+                "stream": {"url": "/stream/session-1/master.m3u8", "protocol": "hls"},
+                "available_qualities": [{"label": "1080p-low", "height": 1080, "bitrate_kbps": 3000}],
+                "active_quality": "1080p-low",
+                "decision_reason": "bandwidth_cap"
+              }
+            }
+            """.trimIndent(),
+        )
+        val neutral = neutralServerFeatures.joinToString { "\"$it\"" }
+
+        val reported = assertIs<PlaybackV3Validation.Playable>(
+            decision("$neutral, \"$PLAN_ACTIVE_QUALITY_V1_FEATURE\"").validateForMedia3(),
+        ).plan
+        assertEquals("1080p-low", reported.activeQuality)
+        assertEquals(ReportedPlaybackQuality("1080p-low"), reported.reportedQuality)
+
+        // An older server's plan says nothing about the active entry.
+        val unreported = assertIs<PlaybackV3Validation.Playable>(decision(neutral).validateForMedia3()).plan
+        assertEquals(null, unreported.reportedQuality)
+    }
+
+    @Test
     fun playablePlanValidatesOnDeliveryAlone() {
         // The neutral contract names a delivery class, not a client engine, so
         // there is nothing left for the client to disagree with the server

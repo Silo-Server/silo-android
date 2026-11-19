@@ -1,9 +1,5 @@
-@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-
 package org.siloserver.silo.android.ui.screens.audiobook
 
-import android.content.ComponentName
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,18 +9,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,215 +29,74 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
-import androidx.media3.common.PlaybackParameters
-import androidx.media3.common.Player
-import androidx.media3.session.MediaController
-import androidx.media3.session.SessionToken
-import org.siloserver.silo.android.ui.util.rememberDominantColor
+import org.siloserver.silo.common.audiobook.AudioPlayerBackground
+import org.siloserver.silo.common.audiobook.rememberAudioCoverPalette
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.player.AudiobookPlayerViewModel
-import org.siloserver.silo.common.player.SiloPlaybackService
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.android.ui.theme.SiloBackground
-import com.google.common.util.concurrent.MoreExecutors
-import kotlinx.coroutines.delay
-import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.player.errorText
+import org.siloserver.silo.common.player.skipIntervalErrorText
 
 /**
  * Dedicated audiobook player UI. Big square cover up top, then title /
  * author / narrator, then the position slider, then transport row
  * (±30s, big play/pause), then speed + sleep timer chips.
  *
- * Media3 wiring happens here (not in the ViewModel) so the controller
- * lifecycle is tied to the Compose tree — same pattern as the video
- * PlayerScreen. The controller binds to the shared playback service and
- * plays either an offline original file URI or a server playback stream.
+ * The screen only shows [viewModel]'s session. Playback runs in the app-wide
+ * [AudiobookPlaybackBridge], so [onMinimize] (the chevron, or Back) leaves the
+ * book playing under the mini player; [onStop] ends the session.
  */
 @Composable
 fun AudiobookPlayerScreen(
-    onBackClick: () -> Unit,
-    viewModel: AudiobookPlayerViewModel = koinViewModel(),
+    viewModel: AudiobookPlayerViewModel,
+    onMinimize: () -> Unit,
+    onStop: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsState()
     val currentChapterIndex by viewModel.currentChapterIndex.collectAsState()
-    val chapterCountLabel by viewModel.chapterCountLabel.collectAsState()
-    val context = LocalContext.current
-    var exitRequested by remember { mutableStateOf(false) }
 
-    // MediaController binds asynchronously to the shared playback service;
-    // the same one the video player uses, so a single MediaSession owns
-    // foreground audio at any time (system controls / notifications stay
-    // consistent).
-    var controller by remember { mutableStateOf<MediaController?>(null) }
-    DisposableEffect(context) {
-        val token = SessionToken(context, ComponentName(context, SiloPlaybackService::class.java))
-        val future = MediaController.Builder(context, token).buildAsync()
-        future.addListener(
-            {
-                if (future.isDone && !future.isCancelled) {
-                    controller = runCatching { future.get() }.getOrNull()
-                }
-            },
-            MoreExecutors.directExecutor(),
+    // Apple's AudioCoverPalette: the cover's quadrant colors tint the
+    // backdrop and its most vivid one becomes the controls' accent.
+    val palette = rememberAudioCoverPalette(state.coverUrl, fallbackAccent = MaterialTheme.colorScheme.primary)
+    val accent = palette.accent
+    val isPlaying = !state.isPaused && state.streamUrl != null
+    val chapterTitle = state.chapters.getOrNull(currentChapterIndex)
+        ?.let { currentChapterIndex to it }
+        ?.let { (index, chapter) ->
+            chapter.title.takeIf { it.isNotBlank() }
+                ?: stringResource(CommonR.string.detail_audiobook_chapter, LocaleFormat.integer(index + 1))
+        }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        // The player stays on black like the video player; the cover mesh
+        // drifts over it while the book plays.
+        AudioPlayerBackground(
+            palette = palette,
+            isPlaying = isPlaying,
+            baseColor = SiloBackground,
+            modifier = Modifier.fillMaxSize(),
         )
-        onDispose {
-            controller?.let { c ->
-                runCatching { c.pause(); c.stop(); c.clearMediaItems() }
-                c.release()
-            }
-            controller = null
-            if (!future.isDone) future.cancel(true)
-        }
-    }
-
-    // Wire the stream URL into Media3 once both the controller and the
-    // metadata have resolved. We deliberately rebuild the MediaItem when
-    // streamUrl changes so a navigation from one audiobook to another
-    // doesn't leave the previous bytes playing. Resume-on-open is
-    // applied here too: if the VM resolved a saved position, seek to
-    // it before play.
-    var preparedUrl by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(controller, state.streamUrl) {
-        if (exitRequested) return@LaunchedEffect
-        val c = controller ?: return@LaunchedEffect
-        val url = state.streamUrl ?: return@LaunchedEffect
-        // Prepare each distinct stream exactly once. The effect can re-run with
-        // the same url (e.g. the controller rebinding); without this guard the
-        // second pass — after the resume position was already consumed — would
-        // setMediaItem with startMs=0 and reset the book back to 0:00.
-        if (url == preparedUrl) return@LaunchedEffect
-        val mediaItem = MediaItem.Builder()
-            .setUri(url)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    // Tags the item so session seeks (headset, lock screen)
-                    // use the audiobook intervals rather than the video ones.
-                    .setMediaType(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK)
-                    .setTitle(state.title)
-                    .setArtist(state.author ?: state.narrator)
-                    .also { mb ->
-                        state.coverUrl?.takeIf { it.isNotBlank() }
-                            ?.let { mb.setArtworkUri(android.net.Uri.parse(it)) }
-                    }
-                    .build(),
-            )
-            .build()
-        // Apply the resume position as the media item's start position rather
-        // than a post-prepare seekTo: a seek issued before the timeline window
-        // is known gets dropped, leaving the book at 0:00. setMediaItem with a
-        // start position is honored once the source prepares.
-        val resume = viewModel.resumePositionSeconds.value
-        val startMs = ((resume ?: 0.0).coerceAtLeast(0.0) * 1000).toLong()
-        c.setMediaItem(mediaItem, startMs)
-        c.prepare()
-        if (resume != null && resume > 0) viewModel.consumeResumePosition()
-        c.playWhenReady = true
-        preparedUrl = url
-    }
-
-    // Flush position on every meaningful transition so a process kill
-    // loses at most a couple of seconds. Periodic save inside the VM
-    // covers the in-flight case.
-    LaunchedEffect(controller, state.isPaused) {
-        if (state.isPaused) viewModel.flushPosition()
-    }
-    DisposableEffect(Unit) {
-        onDispose {
-            viewModel.flushPosition()
-            viewModel.stopPlaybackSession()
-        }
-    }
-
-    // Listener bridge — Player state changes go back into the VM so the UI
-    // is always a function of Media3's truth.
-    DisposableEffect(controller) {
-        val c = controller
-        if (c == null) {
-            onDispose { }
-        } else {
-            val listener = object : Player.Listener {
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    viewModel.onPlayingChanged(isPlaying)
-                }
-
-                // Pause intent — distinct from transient buffering. Without
-                // this a seek's rebuffer would latch the book paused.
-                override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                    viewModel.onPauseStateChanged(!playWhenReady)
-                }
-
-                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    viewModel.onPlayerError(error)
-                }
-            }
-            c.addListener(listener)
-            onDispose { runCatching { c.removeListener(listener) } }
-        }
-    }
-
-    // Position poller — MediaController doesn't push position updates;
-    // sample at 4Hz which is smooth enough for an audiobook slider. The
-    // current stream URI rides along so the VM can tie cross-part settle
-    // to stream identity, not just engine time.
-    LaunchedEffect(controller) {
-        while (true) {
-            controller?.let { c ->
-                viewModel.onPositionChanged(
-                    c.currentPosition / 1000.0,
-                    c.currentMediaItem?.localConfiguration?.uri?.toString(),
-                )
-            }
-            delay(250)
-        }
-    }
-
-    // Mirror play/pause toggle into the controller.
-    LaunchedEffect(controller, state.isPaused) {
-        controller?.playWhenReady = !state.isPaused
-    }
-
-    // Apply speed when the user cycles.
-    LaunchedEffect(controller, state.playbackSpeed) {
-        controller?.playbackParameters = PlaybackParameters(state.playbackSpeed)
-    }
-
-    // Apply seeks requested by the VM (chapter jumps, ±30s).
-    val pendingSeek by viewModel.pendingSeekToSeconds.collectAsState()
-    LaunchedEffect(controller, pendingSeek) {
-        val seconds = pendingSeek ?: return@LaunchedEffect
-        controller?.seekTo((seconds * 1000).toLong())
-        viewModel.consumePendingSeek()
-    }
-
-    val playerTint by rememberDominantColor(state.coverUrl, fallback = MaterialTheme.colorScheme.primary)
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                audiobookPlayerBackgroundBrush(
-                    tint = playerTint,
-                    // The player stays on black like the video player and the
-                    // iOS AudioPlayerBackground; only page canvases moved to
-                    // the charcoal Material background.
-                    background = SiloBackground,
-                ),
-            ),
-    ) {
+        // Apple caps the player column at 560pt, centered, so a tablet or an
+        // open foldable keeps the phone's proportions instead of stretching.
         Column(
             modifier = Modifier
+                .align(Alignment.TopCenter)
+                .widthIn(max = 560.dp)
                 .fillMaxSize()
+                // The background runs under the system bars; the controls
+                // stay clear of them so the minimize and stop buttons take taps.
+                .systemBarsPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp),
         ) {
             // Top bar mirrors iOS: chevron-down to minimize (left), 48dp hit
-            // targets (Android minimum), secondary tint, and the bookmark action
-            // on the trailing side.
+            // targets (Android minimum), secondary tint, and the bookmark and
+            // stop actions on the trailing side.
             var showBookmarksSheet by remember { mutableStateOf(false) }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -248,17 +104,12 @@ fun AudiobookPlayerScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(
-                    onClick = {
-                        exitRequested = true
-                        viewModel.flushPosition()
-                        viewModel.stopPlaybackSession()
-                        onBackClick()
-                    },
+                    onClick = onMinimize,
                     modifier = Modifier.size(48.dp),
                 ) {
                     Icon(
                         Icons.Filled.KeyboardArrowDown,
-                        contentDescription = "Minimize Player",
+                        contentDescription = stringResource(CommonR.string.audiobook_player_minimize),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -269,7 +120,18 @@ fun AudiobookPlayerScreen(
                 ) {
                     Icon(
                         Icons.Filled.Bookmark,
-                        contentDescription = "Bookmarks",
+                        contentDescription = stringResource(CommonR.string.audiobook_bookmarks_open),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                // Ends the session; the chevron only minimizes (iOS xmark).
+                IconButton(
+                    onClick = onStop,
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = stringResource(CommonR.string.audiobook_player_stop),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -290,18 +152,22 @@ fun AudiobookPlayerScreen(
             AudiobookCoverHeader(
                 title = state.title,
                 author = state.author,
-                narrator = state.narrator,
+                chapterTitle = chapterTitle,
                 coverUrl = state.coverUrl,
                 coverThumbhash = state.coverThumbhash,
+                isPlaying = isPlaying,
+                accent = accent,
             )
 
             Spacer(modifier = Modifier.height(24.dp))
 
             ChapterProgressBar(
                 chapters = state.chapters,
-                chapterCountLabel = chapterCountLabel,
                 positionSeconds = state.positionSeconds,
                 durationSeconds = state.durationSeconds,
+                accent = accent,
+                skipBackSeconds = state.skipBackSeconds,
+                skipForwardSeconds = state.skipForwardSeconds,
                 onSeek = { viewModel.seekTo(it) },
                 modifier = Modifier.padding(horizontal = 8.dp),
             )
@@ -312,7 +178,8 @@ fun AudiobookPlayerScreen(
                 // Drive the icon from pause intent so it stays "pause" through the
                 // transient rebuffer a seek causes (isPlaying briefly flips false).
                 isPlaying = !state.isPaused,
-                enabled = state.streamUrl != null,
+                // After a failure Play stays live: it starts playback again.
+                enabled = state.streamUrl != null || state.canRetryPlayback,
                 hasChapters = state.chapters.isNotEmpty(),
                 skipBackSeconds = state.skipBackSeconds,
                 skipForwardSeconds = state.skipForwardSeconds,
@@ -321,6 +188,7 @@ fun AudiobookPlayerScreen(
                 onTogglePlay = { viewModel.togglePlay() },
                 onSkipForward = { viewModel.skipForward() },
                 onNextChapter = { viewModel.skipToNextChapter() },
+                accent = accent,
             )
 
             Spacer(modifier = Modifier.height(26.dp))
@@ -331,14 +199,19 @@ fun AudiobookPlayerScreen(
             var showSkipSheet by remember { mutableStateOf(false) }
             var showChaptersSheet by remember { mutableStateOf(false) }
             AudiobookSecondaryBar(
-                speedLabel = "${formatSpeed(state.playbackSpeed)}x",
-                sleepLabel = state.sleepTimerMinutesLeft?.let { "$it min" } ?: "Sleep",
-                skipLabel = "${state.skipBackSeconds}s",
+                speedLabel = stringResource(CommonR.string.audiobook_speed_value, formatSpeed(state.playbackSpeed)),
+                sleepLabel = state.sleepTimerMinutesLeft
+                    ?.let { pluralStringResource(CommonR.plurals.audiobook_sleepTimer_minutesShort, it, it) }
+                    ?: stringResource(CommonR.string.audiobook_sleepTimer_button),
+                skipLabel = stringResource(CommonR.string.audiobook_skip_secondsShort, state.skipBackSeconds),
                 onSpeedClick = { showSpeedSheet = true },
                 onSleepClick = { showSleepSheet = true },
                 onSkipClick = { showSkipSheet = true },
                 onChaptersClick = { showChaptersSheet = true },
                 showChapters = state.chapters.isNotEmpty(),
+                speedActive = state.playbackSpeed != 1.0f,
+                sleepActive = state.sleepTimerMinutesLeft != null,
+                accent = accent,
             )
 
             if (showSpeedSheet) {
@@ -362,7 +235,7 @@ fun AudiobookPlayerScreen(
                     choices = state.skipIntervalChoices,
                     profileWide = state.skipIntervalsProfileWide,
                     editable = state.skipIntervalsEditable,
-                    errorMessage = state.skipIntervalError,
+                    errorMessage = state.skipIntervalErrorText(),
                 )
             }
             if (showSleepSheet) {
@@ -381,6 +254,7 @@ fun AudiobookPlayerScreen(
                     currentChapterIndex = currentChapterIndex,
                     onJumpTo = { viewModel.jumpToChapter(it) },
                     onDismiss = { showChaptersSheet = false },
+                    accent = accent,
                 )
             }
 
@@ -389,7 +263,7 @@ fun AudiobookPlayerScreen(
             state.overview?.takeIf { it.isNotBlank() }?.let { overview ->
                 Spacer(modifier = Modifier.height(28.dp))
                 Text(
-                    text = "About",
+                    text = stringResource(CommonR.string.audiobook_about_title),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -405,20 +279,13 @@ fun AudiobookPlayerScreen(
             // Loading / error states.
             if (state.isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Loading audiobook…")
+                    Text(stringResource(CommonR.string.audiobook_player_loading))
                 }
             }
-            state.error?.let { err ->
+            state.errorText()?.let { err ->
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(text = err, color = MaterialTheme.colorScheme.error)
             }
         }
     }
 }
-
-private fun audiobookPlayerBackgroundBrush(tint: Color, background: Color): Brush =
-    Brush.verticalGradient(
-        0.00f to tint.copy(alpha = 0.28f),
-        0.34f to background.copy(alpha = 0.96f),
-        1.00f to background,
-    )

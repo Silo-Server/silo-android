@@ -41,7 +41,7 @@ class ReaderEngineHostSourceTest {
 
         assertTrue(source.contains("DownloadOpenTarget.from("))
         assertTrue(source.contains("openDownloadTargetInExternalApp("))
-        assertTrue(source.contains("Open with another reader"))
+        assertTrue(source.contains("CommonR.string.reader_external_open"))
     }
 
     @Test
@@ -82,7 +82,7 @@ class ReaderEngineHostSourceTest {
 
         assertTrue(source.contains("onToggleChrome: () -> Unit"))
         assertTrue(source.contains("ExternalReadingPanel(state = state, onToggleChrome = onToggleChrome)"))
-        assertTrue(source.contains("CenteredReaderMessage(\"Loading book...\", onToggleChrome = onToggleChrome)"))
+        assertTrue(source.contains("CenteredReaderMessage(stringResource(CommonR.string.reader_loading), onToggleChrome = onToggleChrome)"))
         assertTrue(source.contains("onToggleChrome = onToggleChrome"))
     }
 

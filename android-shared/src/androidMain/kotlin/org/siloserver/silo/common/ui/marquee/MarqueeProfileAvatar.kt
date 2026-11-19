@@ -19,12 +19,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.drawBehind
+import org.siloserver.silo.common.R
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.common.ui.components.isEmojiAvatar
@@ -146,7 +148,7 @@ fun MarqueeProfileAvatar(
                 contentAlignment = Alignment.Center,
             ) {
                 BasicText(
-                    "KIDS",
+                    stringResource(R.string.profiles_kids),
                     style = TextStyle(color = Color.Black, fontSize = font.sp, fontWeight = FontWeight.Black, letterSpacing = 0.4.sp),
                 )
             }

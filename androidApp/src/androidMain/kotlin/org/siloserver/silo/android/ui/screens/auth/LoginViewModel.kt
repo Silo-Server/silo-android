@@ -8,6 +8,10 @@ import org.siloserver.silo.android.auth.NativeSignInProtocol
 import org.siloserver.silo.android.auth.NativeSignInPurpose
 import org.siloserver.silo.android.auth.NativeSignInResult
 import org.siloserver.silo.android.auth.NativeSignInStart
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.downloads.DownloadSummary
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.uiText
 import org.siloserver.silo.model.auth.NetworkSignInFailure
 import org.siloserver.silo.model.auth.PasswordLoginFailure
 import org.siloserver.silo.model.auth.SignInOptions
@@ -19,19 +23,21 @@ import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ExternalSignInRepository
 import org.siloserver.silo.repository.ServerIdentityRepository
 import java.net.URI
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.errorText
 
 data class LoginUiState(
     val username: String = "",
     val password: String = "",
     val serverHostLabel: String? = null,
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val signupEnabled: Boolean = false,
     val loginSuccess: Boolean = false,
     /** Null while the server's sign-in options load. */
@@ -53,6 +59,11 @@ data class LoginUiState(
     val browserLaunch: String? = null,
     /** "Use a different account" with several providers: which one to sign in with. */
     val choosingAccountProvider: Boolean = false,
+    /**
+     * Signed in as a different account from the expired one this sign-in was
+     * for: ask before replacing it (spec §4.4).
+     */
+    val replacePrompt: ReplaceExpiredPrompt? = null,
 ) {
     val showPasswordForm: Boolean get() = options?.showPasswordForm == true
     val providers: List<SignInProvider> get() = options?.oauthProviders.orEmpty()
@@ -67,6 +78,21 @@ data class LoginUiState(
     val signInBusy: Boolean get() = isLoading || providerBusy != null || networkSignInBusy
 }
 
+/**
+ * The person signed in as [newUsername] from [expiredUsername]'s Sign in
+ * again: replacing signs out of the expired account, which deletes
+ * [downloads] (spec §4.4); keeping leaves both saved.
+ */
+data class ReplaceExpiredPrompt(
+    /** Null when the expired account has no username; the screen says "your account". */
+    val expiredUsername: String?,
+    /** Null when the new account's username isn't known; the screen says "another account". */
+    val newUsername: String?,
+    val downloads: DownloadSummary?,
+    /** "Replace" didn't sign out of the expired account; it is still saved. */
+    val replaceFailed: Boolean = false,
+)
+
 class LoginViewModel(
     private val authRepository: AuthRepository,
     private val externalSignIn: ExternalSignInRepository,
@@ -74,6 +100,9 @@ class LoginViewModel(
     private val serverIdentities: ServerIdentityRepository,
     private val nativeSignIn: NativeSignInCoordinator,
     private val tokenManager: TokenManager,
+    /** Signs out of the expired account when the person replaces it. */
+    private val signOutAccount: suspend (serverId: String, accountId: String) -> Boolean = { _, _ -> false },
+    private val downloadSummary: suspend (serverId: String, accountId: String) -> DownloadSummary? = { _, _ -> null },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LoginUiState())
@@ -83,12 +112,24 @@ class LoginViewModel(
     private val screenServerId: String? = serverRegistry.activeServerId.value
 
     /**
+     * The saved account this sign-in is for when its credentials expired (its
+     * Sign in again on Change Account or Settings › Accounts, or the session
+     * ending while in use): its username
+     * is filled in, and signing in as someone else asks before replacing it.
+     */
+    private val expiredAccount = serverRegistry.activeAccount.value
+        ?.takeIf { it.needsSignIn && it.serverId == screenServerId }
+
+    /**
      * This screen took the auto-start "Not you? Switch account" asked for and
      * the browser hasn't opened yet; handed back if the screen goes away first.
      */
     private var autoStartInFlight = false
 
     init {
+        expiredAccount?.username?.takeIf { it.isNotBlank() }?.let { name ->
+            _uiState.update { it.copy(username = name) }
+        }
         loadOptions()
         viewModelScope.launch {
             nativeSignIn.result.filterNotNull().collect { onNativeResult(it) }
@@ -141,11 +182,11 @@ class LoginViewModel(
         if (_uiState.value.signInBusy) return
         val current = _uiState.value
         if (current.username.isBlank()) {
-            _uiState.update { it.copy(error = "Username is required") }
+            _uiState.update { it.copy(error = uiText(CommonR.string.tvSignIn_error_usernameRequired)) }
             return
         }
         if (current.password.isBlank()) {
-            _uiState.update { it.copy(error = "Password is required") }
+            _uiState.update { it.copy(error = uiText(CommonR.string.tvSignIn_error_passwordRequired)) }
             return
         }
 
@@ -155,7 +196,7 @@ class LoginViewModel(
             when (val result = authRepository.login(current.username, current.password)) {
                 is ApiResult.Success -> {
                     onSignedIn()
-                    _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
+                    finishSignIn { it.copy(isLoading = false) }
                 }
 
                 is ApiResult.Error -> {
@@ -172,7 +213,7 @@ class LoginViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "Network error. Please check your connection.",
+                            error = uiText(CommonR.string.signIn_error_networkConnection),
                         )
                     }
                 }
@@ -204,13 +245,13 @@ class LoginViewModel(
             when (result) {
                 is ApiResult.Success -> {
                     onSignedIn()
-                    _uiState.update { it.copy(networkSignInBusy = false, loginSuccess = true) }
+                    finishSignIn { it.copy(networkSignInBusy = false) }
                 }
                 is ApiResult.Error -> _uiState.update {
                     it.copy(networkSignInBusy = false, error = networkSignInMessage(result, provider.displayName))
                 }
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(networkSignInBusy = false, error = "Network error. Please check your connection.")
+                    it.copy(networkSignInBusy = false, error = uiText(CommonR.string.signIn_error_networkConnection))
                 }
             }
         }
@@ -236,7 +277,7 @@ class LoginViewModel(
                 _uiState.update {
                     it.copy(
                         providerBusy = null,
-                        error = "Couldn't confirm this server's identity. Check your connection and try again.",
+                        error = uiText(CommonR.string.signIn_error_identityUnconfirmed),
                     )
                 }
                 return@launch
@@ -257,7 +298,7 @@ class LoginViewModel(
                 is NativeSignInStart.Open -> _uiState.update { it.copy(browserLaunch = start.url) }
                 is NativeSignInStart.Refused -> {
                     autoStartInFlight = false
-                    _uiState.update { it.copy(providerBusy = null, error = start.message) }
+                    _uiState.update { it.copy(providerBusy = null, error = NativeSignInMessages.text(start.reason, start.providerName)) }
                 }
             }
         }
@@ -292,7 +333,7 @@ class LoginViewModel(
             state.copy(
                 browserLaunch = null,
                 providerBusy = null,
-                error = if (opened) state.error else NativeSignInMessages.forReason(NativeSignInMessages.NO_BROWSER, providerName),
+                error = if (opened) state.error else NativeSignInMessages.text(NativeSignInMessages.NO_BROWSER, providerName),
             )
         }
     }
@@ -310,14 +351,77 @@ class LoginViewModel(
                 // must not route anywhere.
                 val signedIn = tokenManager.getAccessToken()?.isNotBlank() == true &&
                     (screenServerId == null || serverRegistry.activeServerId.value == screenServerId)
-                _uiState.update { it.copy(isLoading = false, loginSuccess = signedIn) }
+                if (signedIn) {
+                    finishSignIn { it.copy(isLoading = false) }
+                } else {
+                    _uiState.update { it.copy(isLoading = false, loginSuccess = false) }
+                }
             }
             is NativeSignInResult.Failed -> {
                 nativeSignIn.consume(result)
-                _uiState.update { it.copy(isLoading = false, error = result.message) }
+                _uiState.update { it.copy(isLoading = false, error = NativeSignInMessages.text(result.reason, result.providerName)) }
             }
             is NativeSignInResult.Linked -> Unit
         }
+    }
+
+    /**
+     * A sign-in saved its session. When it was meant to sign an expired
+     * account in again but landed on a different account (the core files a
+     * different server user, or any sign-in into an expired account whose
+     * server user was never known, as a new account), the expired one is still saved
+     * with its downloads: ask whether to replace it before going on.
+     */
+    private suspend fun finishSignIn(settle: (LoginUiState) -> LoginUiState) {
+        val expired = expiredAccount
+        val serverId = screenServerId
+        val stillSaved = expired != null && serverRegistry.accounts.value.any { it.localAccountId == expired.localAccountId }
+        if (expired == null || serverId == null || !stillSaved ||
+            serverRegistry.activeAccountId.value == expired.localAccountId
+        ) {
+            _uiState.update { settle(it).copy(loginSuccess = true) }
+            return
+        }
+        val downloads = runCatching { downloadSummary(serverId, expired.localAccountId) }.getOrNull()
+        _uiState.update {
+            settle(it).copy(
+                replacePrompt = ReplaceExpiredPrompt(
+                    expiredUsername = expired.username?.takeIf(String::isNotBlank),
+                    newUsername = serverRegistry.activeAccount.value?.username?.takeIf(String::isNotBlank)
+                        ?: it.username.takeIf(String::isNotBlank),
+                    downloads = downloads,
+                ),
+            )
+        }
+    }
+
+    /** "Replace": sign out of the expired account (deleting its downloads), then go on. */
+    fun onReplaceExpired() {
+        val expired = expiredAccount ?: return
+        val serverId = screenServerId ?: return
+        if (_uiState.value.replacePrompt == null) return
+        _uiState.update { it.copy(isLoading = true) }
+        viewModelScope.launch {
+            val signedOut = try {
+                signOutAccount(serverId, expired.localAccountId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                false
+            }
+            if (signedOut) {
+                _uiState.update { it.copy(isLoading = false, replacePrompt = null, loginSuccess = true) }
+            } else {
+                // Still saved: keep asking, so "Keep both" stays the honest way on.
+                _uiState.update { it.copy(isLoading = false, replacePrompt = it.replacePrompt?.copy(replaceFailed = true)) }
+            }
+        }
+    }
+
+    /** "Keep both": the expired account stays saved, waiting to sign in again. */
+    fun onKeepExpired() {
+        if (_uiState.value.replacePrompt == null) return
+        _uiState.update { it.copy(replacePrompt = null, loginSuccess = true) }
     }
 
     /** Resets the success flag after the UI has consumed it. */
@@ -340,23 +444,23 @@ internal fun passwordLoginMessage(
     error: ApiResult.Error,
     providerName: String? = null,
     directoryName: String? = null,
-): String =
+): UiText =
     when (PasswordLoginFailure.of(error.code, error.error)) {
-        PasswordLoginFailure.InvalidCredentials -> "Invalid username or password"
+        PasswordLoginFailure.InvalidCredentials -> uiText(CommonR.string.signIn_error_invalidCredentials)
         PasswordLoginFailure.LocalLoginDisabled -> if (providerName != null) {
-            "Password sign-in is turned off on this server. Sign in with $providerName instead."
+            uiText(CommonR.string.signIn_error_passwordOffUseProvider, providerName)
         } else {
-            "Password sign-in is turned off on this server."
+            uiText(CommonR.string.signIn_error_passwordOff)
         }
-        PasswordLoginFailure.NotPermitted -> "Your account isn't allowed to use this server."
-        PasswordLoginFailure.PasswordExpired -> "Your password has expired. Change it with your directory, then sign in again."
-        PasswordLoginFailure.AccountDisabled -> "Account is disabled"
-        PasswordLoginFailure.ProviderUnavailable -> "The sign-in service can't be reached right now. Try again later."
-        PasswordLoginFailure.EmailInUse -> NativeSignInMessages.forReason("email_in_use", directoryName)
-        PasswordLoginFailure.IdentityLinkedElsewhere -> NativeSignInMessages.forReason("identity_linked_elsewhere", directoryName)
-        PasswordLoginFailure.RateLimited -> NativeSignInMessages.forReason(NativeSignInMessages.RATE_LIMITED)
-        PasswordLoginFailure.AccountRequired -> NativeSignInMessages.forReason(NativeSignInMessages.ACCOUNT_REQUIRED)
-        PasswordLoginFailure.Other -> error.message.ifBlank { "Login failed" }
+        PasswordLoginFailure.NotPermitted -> uiText(CommonR.string.tvSignIn_error_notPermitted)
+        PasswordLoginFailure.PasswordExpired -> uiText(CommonR.string.signIn_error_passwordExpiredDirectory)
+        PasswordLoginFailure.AccountDisabled -> uiText(CommonR.string.tvSignIn_error_accountDisabled)
+        PasswordLoginFailure.ProviderUnavailable -> uiText(CommonR.string.tvSignIn_error_providerUnavailable)
+        PasswordLoginFailure.EmailInUse -> NativeSignInMessages.text("email_in_use", directoryName)
+        PasswordLoginFailure.IdentityLinkedElsewhere -> NativeSignInMessages.text("identity_linked_elsewhere", directoryName)
+        PasswordLoginFailure.RateLimited -> NativeSignInMessages.text(NativeSignInMessages.RATE_LIMITED)
+        PasswordLoginFailure.AccountRequired -> NativeSignInMessages.text(NativeSignInMessages.ACCOUNT_REQUIRED)
+        PasswordLoginFailure.Other -> error.errorText(CommonR.string.tvSignIn_error_loginFailed)
     }
 
 /**
@@ -364,30 +468,30 @@ internal fun passwordLoginMessage(
  * [providerName], such as Tailscale. Refusals other operations share read as
  * they do there.
  */
-internal fun networkSignInMessage(error: ApiResult.Error, providerName: String): String =
+internal fun networkSignInMessage(error: ApiResult.Error, providerName: String): UiText =
     when (NetworkSignInFailure.of(error.code, error.error)) {
-        NetworkSignInFailure.NetworkIdentityRequired -> ProviderRefusalText.addressRequired(providerName, "sign in this way")
-        NetworkSignInFailure.NotPermitted -> ProviderRefusalText.notPermitted(providerName)
-        NetworkSignInFailure.EmailInUse ->
-            "An account with your email already exists. Sign in with your password, then connect $providerName in Settings → Sign-in."
-        NetworkSignInFailure.AccountRequired -> NativeSignInMessages.forReason(NativeSignInMessages.ACCOUNT_REQUIRED)
-        NetworkSignInFailure.AccountDisabled -> NativeSignInMessages.forReason("account_disabled")
-        NetworkSignInFailure.IdentityLinkedElsewhere -> NativeSignInMessages.forReason("identity_linked_elsewhere", providerName)
-        NetworkSignInFailure.NotFound -> ProviderRefusalText.providerGone(providerName)
-        NetworkSignInFailure.ProviderUnavailable -> NativeSignInMessages.forReason("provider_unavailable", providerName)
-        NetworkSignInFailure.RateLimited -> NativeSignInMessages.forReason(NativeSignInMessages.RATE_LIMITED)
+        NetworkSignInFailure.NetworkIdentityRequired -> uiText(CommonR.string.tvSignIn_error_networkIdentityRequired, providerName)
+        NetworkSignInFailure.NotPermitted -> uiText(CommonR.string.signIn_error_networkNotPermitted, providerName)
+        NetworkSignInFailure.EmailInUse -> uiText(CommonR.string.signIn_error_networkEmailInUse, providerName)
+        NetworkSignInFailure.AccountRequired -> NativeSignInMessages.text(NativeSignInMessages.ACCOUNT_REQUIRED)
+        NetworkSignInFailure.AccountDisabled -> NativeSignInMessages.text("account_disabled")
+        NetworkSignInFailure.IdentityLinkedElsewhere -> NativeSignInMessages.text("identity_linked_elsewhere", providerName)
+        NetworkSignInFailure.NotFound -> uiText(CommonR.string.tvSignIn_error_networkProviderGone, providerName)
+        NetworkSignInFailure.ProviderUnavailable -> NativeSignInMessages.text("provider_unavailable", providerName)
+        NetworkSignInFailure.RateLimited -> NativeSignInMessages.text(NativeSignInMessages.RATE_LIMITED)
         NetworkSignInFailure.Other -> when {
             // AuthRepository's code for a sign-in whose account or server changed underneath it.
-            error.error == "identity_changed" -> NativeSignInMessages.forReason(NativeSignInMessages.ACCOUNT_CHANGED)
+            error.error == "identity_changed" -> NativeSignInMessages.text(NativeSignInMessages.ACCOUNT_CHANGED)
             error.code == 0 && error.error == NativeSignInMessages.UPDATE_REQUIRED ->
-                NativeSignInMessages.forReason(NativeSignInMessages.UPDATE_REQUIRED)
-            else -> NativeSignInMessages.forReason("login_failed", providerName)
+                NativeSignInMessages.text(NativeSignInMessages.UPDATE_REQUIRED)
+            else -> NativeSignInMessages.text("login_failed", providerName)
         }
     }
 
 /**
- * The phone's copy for provider refusals that sign-in ("Continue as …") and
- * "Connect <provider>" in Settings share.
+ * The English copy for provider refusals that "Connect <provider>" in
+ * Settings shows. Sign-in ("Continue as …") shows the same words from the
+ * catalog ([networkSignInMessage]); this stays until Settings converts.
  */
 internal object ProviderRefusalText {
     /** `network_identity_required`: the app reached the server some other way; [toDo] is what needs that address. */

@@ -31,6 +31,8 @@ fun TvPoster(
     defaultArtwork: DefaultArtworkKind = DefaultArtworkKind.Video,
     /** Spoiler protection hides this artwork: an unwatched episode's still. */
     hidden: Boolean = false,
+    /** See [org.siloserver.silo.common.ui.components.ThumbhashImage]. */
+    holdPreviousImage: Boolean = false,
 ) {
     Box(
         modifier = modifier
@@ -45,6 +47,7 @@ fun TvPoster(
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
             defaultArtwork = defaultArtwork,
+            holdPreviousImage = holdPreviousImage,
         )
     }
 }

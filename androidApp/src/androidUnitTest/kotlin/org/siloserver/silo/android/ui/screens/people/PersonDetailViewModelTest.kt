@@ -23,13 +23,23 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = android.app.Application::class)
 class PersonDetailViewModelTest {
+    // Filter titles are catalog strings; read their English through a Robolectric context.
+    private val context: Context = ApplicationProvider.getApplicationContext()
+
     @Test
     fun loadMoreAppendsSecondPageUsingSnapshot() = runPersonTest {
         val queries = mutableListOf<Map<String, String?>>()
@@ -109,7 +119,7 @@ class PersonDetailViewModelTest {
 
         assertEquals(
             listOf("All", "Movies", "TV", "Audiobooks", "Music", "Reading"),
-            viewModel.uiState.value.availableFilters.map { it.title },
+            viewModel.uiState.value.availableFilters.map { context.getString(it.title) },
         )
     }
 

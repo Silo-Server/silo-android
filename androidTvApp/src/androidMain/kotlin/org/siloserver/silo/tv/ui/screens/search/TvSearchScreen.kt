@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.search
 
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
@@ -24,6 +27,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -84,9 +89,11 @@ import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
+import org.siloserver.silo.model.request.withoutLibraryTitles
 import org.siloserver.silo.tv.ui.components.TvHideStockImeOnDispose
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
 import org.siloserver.silo.tv.ui.components.TvFilterChip
+import org.siloserver.silo.tv.ui.components.TvHeroToggleIconButton
 import org.siloserver.silo.tv.ui.components.TvSectionHeader
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestCard
@@ -100,6 +107,11 @@ import org.koin.compose.koinInject
 import org.siloserver.silo.common.ui.OnViewerAccessChanged
 import org.siloserver.silo.network.AccessChangeSignals
 import org.koin.compose.viewmodel.koinViewModel
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
+import org.siloserver.silo.common.R as CommonR
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 
 internal fun shouldFocusSearchField(
     hasEnteredSearch: Boolean,
@@ -232,16 +244,19 @@ fun TvSearchScreen(
         }
     }
     val requestMediaType = state.mediaType.toRequestMediaType()
-    val visibleRequestResults = requestState.results
+    val matchingRequestResults = requestState.results
         .filterTvRequestResults()
         .filter { state.mediaType.allowsRequestResult(it) }
         .filter { state.showAudiobooks || it.mediaType != RequestMediaType.Audiobook }
+    val visibleRequestResults = matchingRequestResults.withoutLibraryTitles()
+    // Every match is already in the library results, so there is nothing to say here.
+    val onlyLibraryRequestMatches = matchingRequestResults.isNotEmpty() && visibleRequestResults.isEmpty()
     val canSearchRequests = requestsEnabled && state.query.trim().length >= 2
     val shouldShowRequestSection = canSearchRequests &&
         (visibleRequestResults.isNotEmpty() ||
             requestState.isLoading ||
             requestState.error != null ||
-            requestState.hasSubmittedQuery)
+            (requestState.hasSubmittedQuery && !onlyLibraryRequestMatches))
     val requestSearchSettled = !canSearchRequests || !requestState.isLoading
     // Same precedence as the post-search handoff below: people (the row
     // nearest the chips), results, then the error's "Try again", then the
@@ -258,6 +273,37 @@ fun TvSearchScreen(
         visibleRequestResults.isNotEmpty() ||
         state.error != null
 
+    // Submitting hands focus to the results and searches requests alongside
+    // the library. Typed and spoken queries both come through here.
+    val submitQuery: (String) -> Unit = { rawQuery ->
+        pendingSearchFocus = true
+        val query = rawQuery.trim()
+        if (requestsEnabled && query.length >= 2) {
+            requestSearchViewModel.onMediaTypeChanged(requestMediaType)
+            requestSearchViewModel.onQueryChanged(query)
+            requestSearchViewModel.search()
+        }
+        viewModel.submitSearch()
+    }
+
+    // A spoken query is a submitted query, including the focus handoff:
+    // nobody dictates a title in order to be left sitting on the search field.
+    var voiceUnavailable by remember { mutableStateOf(false) }
+    val voiceSearch = rememberTvVoiceSearch(
+        prompt = stringResource(CommonR.string.search_voicePromptTv),
+        onResult = { spoken ->
+            // The same cap typing obeys; recognised text never went through
+            // the field's own limit.
+            val query = spoken.take(TV_SEARCH_QUERY_MAX_LENGTH)
+            voiceUnavailable = false
+            viewModel.onQueryChanged(query)
+            submitQuery(query)
+        },
+        onUnavailable = {
+            voiceUnavailable = true
+        },
+    )
+
     LaunchedEffect(requestsEnabled, state.query, requestMediaType) {
         val query = state.query.trim()
         if (!requestsEnabled || query.length < 2) {
@@ -273,9 +319,13 @@ fun TvSearchScreen(
         // the ordinary path, which blanks the row before refetching: a viewer
         // would watch it empty and refill, and a return restoration would lose
         // the card it was aiming at partway through.
+        //
+        // A search still loading for this exact query counts as answered too.
+        // A spoken query is set and submitted in the same moment, so this
+        // effect starts while that search is in flight; searching again here
+        // would cancel it and start over.
         val alreadyAnswered = requestState.submittedQuery == query &&
             requestState.mediaType == requestMediaType &&
-            !requestState.isLoading &&
             requestState.error == null
         // Nothing to do: the answer on screen is for this exact query. Staleness
         // after a return is handled by the restoration effect, which is the only
@@ -352,10 +402,18 @@ fun TvSearchScreen(
             // the request row and carries on immediately.
             if (returnTarget?.sectionId == TvSearchRequestSectionId) return@LaunchedEffect
         }
+        // The same holds on the relaunch the refresh itself triggers: until the
+        // response lands, the preserved row can still hold a card it drops (a
+        // title that reached the library leaves this row). Leaving the row out
+        // makes the target absent while incomplete, so it waits as Pending
+        // under the usual bounds instead of matching Exact.
+        val awaitingRequestRefresh = returnRefreshed &&
+            requestState.isLoading &&
+            returnTarget?.sectionId == TvSearchRequestSectionId
 
         val sections = tvSearchReturnSections(
             catalogItems = state.items,
-            requestResults = visibleRequestResults,
+            requestResults = if (awaitingRequestRefresh) emptyList() else visibleRequestResults,
             // More pages can still arrive, so a target beyond the loaded
             // results is not yet absent.
             catalogComplete = !state.hasMore,
@@ -486,8 +544,16 @@ fun TvSearchScreen(
     LaunchedEffect(scrollHeaderIntoView) {
         if (scrollHeaderIntoView > 0) searchGridState.animateScrollToItem(0)
     }
+    // The shell's counter stays raised after it is handled, and this effect
+    // relaunches whenever the screen re-enters composition — a Back out of a
+    // result included. Remember which request was handled so a return does not
+    // replay it, scroll to the top and pull focus off the card being restored.
+    var handledBackToSearchFieldRequest by rememberSaveable {
+        mutableIntStateOf(backToSearchFieldRequest)
+    }
     LaunchedEffect(backToSearchFieldRequest) {
-        if (backToSearchFieldRequest <= 0) return@LaunchedEffect
+        if (backToSearchFieldRequest == handledBackToSearchFieldRequest) return@LaunchedEffect
+        handledBackToSearchFieldRequest = backToSearchFieldRequest
         searchGridState.animateScrollToItem(0)
         requestFocusUntilObserved(
             maxAttempts = TvFrameRelocationMaxAttempts,
@@ -654,17 +720,29 @@ fun TvSearchScreen(
                         setFocusedRegion(TvSearchFocusRegion.Chips, focused)
                     },
                     onQueryChanged = viewModel::onQueryChanged,
-                    onSearch = {
-                        pendingSearchFocus = true
-                        val query = state.query.trim()
-                        if (requestsEnabled && query.length >= 2) {
-                            requestSearchViewModel.onMediaTypeChanged(requestMediaType)
-                            requestSearchViewModel.onQueryChanged(query)
-                            requestSearchViewModel.search()
-                        }
-                        viewModel.submitSearch()
+                    onClearQuery = {
+                        // Clearing is the start of a new query, so hand the
+                        // field back with the keyboard up: the mic key is one
+                        // press away instead of Select first.
+                        // Focus moves first: clearing removes the focused
+                        // button, and focus must not fall to the shell.
+                        pendingSearchFocus = false
+                        activeSearchFieldFocusRequester.claimFocusOrReport(
+                            target = "search_field",
+                            action = "query_cleared",
+                        )
+                        setKeyboardOpen(true)
+                        viewModel.onQueryChanged("")
+                        keyboardController?.show()
                     },
+                    onSearch = { submitQuery(state.query) },
                     onMediaTypeChanged = viewModel::onMediaTypeChanged,
+                    voiceSearch = voiceSearch,
+                    voiceUnavailableMessage = if (voiceUnavailable) {
+                        stringResource(CommonR.string.search_voiceUnavailableTv)
+                    } else {
+                        null
+                    },
                     isKeyboardOpen = isKeyboardOpen,
                     onKeyboardOpenChanged = setKeyboardOpen,
                     peopleRow = {
@@ -720,7 +798,7 @@ fun TvSearchScreen(
                     query = state.query,
                     requestsEnabled = requestsEnabled,
                     isLoading = requestState.isLoading,
-                    error = requestState.error,
+                    error = requestState.error?.text(),
                     hasSubmittedQuery = requestState.hasSubmittedQuery,
                     results = visibleRequestResults,
                     shouldShow = shouldShowRequestSection,
@@ -750,16 +828,18 @@ fun TvSearchScreen(
                             index,
                         )
                     },
-                    // Same precedence as the handoff: UP from the request row
-                    // goes to the results, else the error's "Try again", else
-                    // the chips. Spatial search alone skipped the button and
-                    // landed on the chips or the field.
+                    // With results above, spatial search takes UP to the card
+                    // just above. Pinning it to the first result failed once
+                    // the grid scrolled that card out of composition, and the
+                    // shell parked focus on the top bar. Otherwise the same
+                    // precedence as the handoff: spatial search alone skipped
+                    // "Try again" and landed on the chips or the field.
                     cardModifier = Modifier.focusProperties {
-                        up = when {
-                            state.items.isNotEmpty() -> firstResultFocusRequester
-                            state.error != null -> feedbackActionFocusRequester
-                            state.people.isNotEmpty() -> firstPersonFocusRequester
-                            else -> firstFilterChipFocusRequester
+                        when {
+                            state.items.isNotEmpty() -> Unit
+                            state.error != null -> up = feedbackActionFocusRequester
+                            state.people.isNotEmpty() -> up = firstPersonFocusRequester
+                            else -> up = firstFilterChipFocusRequester
                         }
                     },
                     onOpenRequestDetail = onOpenRequestDetail,
@@ -769,14 +849,14 @@ fun TvSearchScreen(
             emptyState = {
                 when {
                     state.query.isBlank() -> SearchFeedbackMessage(
-                        title = "Search your library",
-                        body = availableMediaDescription(state.availableMediaTypes),
+                        title = stringResource(CommonR.string.search_library),
+                        body = stringResource(availableMediaDescription(state.availableMediaTypes)),
                     )
                     state.isLoading -> Box(modifier = Modifier.height(64.dp))
                     state.error != null -> SearchFeedbackMessage(
-                        title = "Search is unavailable",
-                        body = state.error!!,
-                        actionLabel = "Try again",
+                        title = stringResource(CommonR.string.search_error),
+                        body = state.error?.text().orEmpty(),
+                        actionLabel = stringResource(CommonR.string.common_tryAgain),
                         actionFocusRequester = feedbackActionFocusRequester,
                         actionUpFocusRequester = if (state.people.isNotEmpty()) {
                             firstPersonFocusRequester
@@ -797,8 +877,8 @@ fun TvSearchScreen(
                     // already says no titles matched.
                     state.people.isNotEmpty() -> Unit
                     else -> SearchFeedbackMessage(
-                        title = "No matches for “${state.query}”",
-                        body = "Try a shorter title or a different filter.",
+                        title = stringResourceWithNames(CommonR.string.search_noMatches, state.query),
+                        body = stringResource(CommonR.string.search_noMatchesBody),
                     )
                 }
             },
@@ -838,7 +918,7 @@ private fun TvRequestSearchSection(
             .padding(top = Spacing.md, bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        TvSectionHeader(title = "Available to request")
+        TvSectionHeader(title = stringResource(CommonR.string.search_requests_title))
         when {
             results.isNotEmpty() -> {
                 LazyRow(
@@ -886,9 +966,9 @@ private fun TvRequestSearchSection(
                     }
                 }
             }
-            isLoading -> RequestSearchFeedbackRow("Checking requestable titles...", showProgress = true)
+            isLoading -> RequestSearchFeedbackRow(stringResource(CommonR.string.search_requests_checking), showProgress = true)
             error != null -> RequestSearchFeedbackRow(error)
-            hasSubmittedQuery -> RequestSearchFeedbackRow("No requestable matches found.")
+            hasSubmittedQuery -> RequestSearchFeedbackRow(stringResource(CommonR.string.search_requests_empty))
         }
     }
 }
@@ -956,8 +1036,11 @@ private fun SearchStage(
     onSearchFieldFocusChanged: (Boolean) -> Unit,
     onChipsFocusChanged: (Boolean) -> Unit,
     onQueryChanged: (String) -> Unit,
+    onClearQuery: () -> Unit,
     onSearch: () -> Unit,
     onMediaTypeChanged: (TvSearchMediaType) -> Unit,
+    voiceSearch: TvVoiceSearchController,
+    voiceUnavailableMessage: String?,
     isKeyboardOpen: Boolean,
     onKeyboardOpenChanged: (Boolean) -> Unit,
     peopleRow: @Composable () -> Unit = {},
@@ -965,6 +1048,16 @@ private fun SearchStage(
     val keyboardController = LocalSoftwareKeyboardController.current
     val mediaTypes = availableMediaTypes
     val fieldShape = RoundedCornerShape(14.dp)
+    val clearButtonFocusRequester = remember { FocusRequester() }
+    val voiceButtonFocusRequester = remember { FocusRequester() }
+    val canClear = query.isNotEmpty()
+    val showVoice = voiceSearch.isAvailable
+    // RIGHT from the field reaches the first button beside it.
+    val fieldRightFocusRequester = when {
+        showVoice -> voiceButtonFocusRequester
+        canClear -> clearButtonFocusRequester
+        else -> null
+    }
 
     // Rendered as the grid's header item, so the grid's contentPadding already
     // provides the horizontal gutters. Insetting again here put the field and
@@ -978,113 +1071,173 @@ private fun SearchStage(
             ),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
-        // Voice is the system keyboard's job: Gboard on Android TV puts a mic
-        // key on the keyboard itself, which listens through the remote. A
-        // separate on-screen mic only added a second route to the same thing
-        // and a sentence of copy to explain it.
-        OutlinedTextField(
-            value = query,
-            onValueChange = { onQueryChanged(it.take(TV_SEARCH_QUERY_MAX_LENGTH)) },
-            // Read-only until Select. This is what actually keeps the keyboard
-            // down — not withholding a show() call, which was the earlier
-            // mistake: Compose raises the IME itself whenever an editable field
-            // takes focus, so the only way to hold a focused field without a
-            // keyboard is for it not to be editable yet.
-            //
-            // Focus can then rest here harmlessly, the D-pad still belongs to
-            // the screen, and everything beside the field stays reachable.
-            readOnly = !isKeyboardOpen,
-            singleLine = true,
-            placeholder = {
-                Text(
-                    text = searchFieldPrompt(mediaTypes),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.56f),
-                )
-            },
-            leadingIcon = {
-                M3Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.72f),
-                    modifier = Modifier.size(20.dp),
-                )
-            },
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Text,
-                imeAction = ImeAction.Search,
-            ),
-            keyboardActions = KeyboardActions(
-                onSearch = {
-                    // Submitting is the end of typing. Put the IME away here,
-                    // explicitly: focus later moving to a result does not
-                    // reliably dismiss it on TV, and a keyboard left standing
-                    // over the grid was the most-reported oddity of this
-                    // screen. Flip the open flag too so the field is read-only
-                    // again and Back/D-pad go to the screen, not the IME.
-                    onKeyboardOpenChanged(false)
-                    keyboardController?.hide()
-                    onSearch()
-                },
-            ),
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
-            shape = fieldShape,
-            modifier = Modifier
-                .width(520.dp)
-                .height(52.dp)
-                // Pin DOWN to the chip rail so the user can always step from
-                // the search field onto the All/Movies/Series filters,
-                // regardless of whether result cards are also rendered below.
-                .focusRequester(searchFieldFocusRequester)
-                .onFocusChanged { state ->
-                    onSearchFieldFocusChanged(state.isFocused)
-                    // Leaving the field puts it back to read-only, so returning
-                    // to it later does not silently raise the keyboard again.
-                    if (!state.isFocused && isKeyboardOpen) onKeyboardOpenChanged(false)
-                }
-                // Select opens the keyboard; focus alone does not.
+        // The mic sits right of the field, not left, so the field keeps its
+        // place on the page gutter in line with the chips and cards. It is
+        // needed because not every TV keyboard has a mic key, and the remote's
+        // own mic button goes to the system assistant before any app sees it.
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { onQueryChanged(it.take(TV_SEARCH_QUERY_MAX_LENGTH)) },
+                // Read-only until Select. This is what actually keeps the keyboard
+                // down — not withholding a show() call, which was the earlier
+                // mistake: Compose raises the IME itself whenever an editable field
+                // takes focus, so the only way to hold a focused field without a
+                // keyboard is for it not to be editable yet.
                 //
-                // Raising it on focus is what made everything beside this field
-                // unreachable: the IME is a separate window that owns the
-                // D-pad, so with it up no key ever reaches this app. With the
-                // keyboard closed the D-pad belongs to the screen again. Typing
-                // costs one Select first, which is the trade, and it is the one
-                // the Wholphin client makes.
-                .onPreviewKeyEvent { event ->
-                    val opensKeyboard = event.key == Key.DirectionCenter || event.key == Key.Enter
-                    when {
-                        event.type == KeyEventType.KeyUp && opensKeyboard && !isKeyboardOpen -> {
-                            onKeyboardOpenChanged(true)
-                            keyboardController?.show()
-                            true
-                        }
-                        // DOWN has to be taken from the field. With the
-                        // keyboard closed and a query in the field, the
-                        // read-only text field still swallows Down
-                        // (caret-to-end), so `focusProperties { down = … }`
-                        // never gets a chance and the user is stuck on the
-                        // field after a search — nothing below is reachable.
-                        // Taking it in the preview phase fixes that; UP already
-                        // belongs to the shell.
-                        event.type == KeyEventType.KeyDown &&
-                            event.key == Key.DirectionDown &&
-                            !isKeyboardOpen -> {
-                            firstFilterChipFocusRequester.claimFocusOrReport(
-                                target = "search_first_filter_chip",
-                                action = "field_down",
-                            )
-                        }
-                        else -> false
+                // Focus can then rest here harmlessly, the D-pad still belongs to
+                // the screen, and everything beside the field stays reachable.
+                readOnly = !isKeyboardOpen,
+                singleLine = true,
+                placeholder = {
+                    Text(
+                        text = stringResource(searchFieldPrompt(mediaTypes)),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.56f),
+                    )
+                },
+                leadingIcon = {
+                    M3Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.72f),
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    imeAction = ImeAction.Search,
+                ),
+                keyboardActions = KeyboardActions(
+                    onSearch = {
+                        // Submitting is the end of typing. Put the IME away here,
+                        // explicitly: focus later moving to a result does not
+                        // reliably dismiss it on TV, and a keyboard left standing
+                        // over the grid was the most-reported oddity of this
+                        // screen. Flip the open flag too so the field is read-only
+                        // again and Back/D-pad go to the screen, not the IME.
+                        onKeyboardOpenChanged(false)
+                        keyboardController?.hide()
+                        onSearch()
+                    },
+                ),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                shape = fieldShape,
+                modifier = Modifier
+                    .width(520.dp)
+                    .height(52.dp)
+                    // Pin DOWN to the chip rail so the user can always step from
+                    // the search field onto the All/Movies/Series filters,
+                    // regardless of whether result cards are also rendered below.
+                    .focusRequester(searchFieldFocusRequester)
+                    .onFocusChanged { state ->
+                        onSearchFieldFocusChanged(state.isFocused)
+                        // Leaving the field puts it back to read-only, so returning
+                        // to it later does not silently raise the keyboard again.
+                        if (!state.isFocused && isKeyboardOpen) onKeyboardOpenChanged(false)
                     }
-                }
-                .focusProperties { down = firstFilterChipFocusRequester },
-            colors = tvOutlinedTextFieldColors(
-                focusedContainerColor = ElevatedSurface,
-                unfocusedContainerColor = Color.White.copy(alpha = 0.055f),
-                focusedBorderColor = Color.White.copy(alpha = 0.94f),
-                unfocusedBorderColor = Color.White.copy(alpha = 0.12f),
-            ),
-        )
+                    // Select opens the keyboard; focus alone does not.
+                    //
+                    // Raising it on focus is what made everything beside this field
+                    // unreachable: the IME is a separate window that owns the
+                    // D-pad, so with it up no key ever reaches this app. With the
+                    // keyboard closed the D-pad belongs to the screen again. Typing
+                    // costs one Select first, which is the trade, and it is the one
+                    // the Wholphin client makes.
+                    .onPreviewKeyEvent { event ->
+                        val opensKeyboard = event.key == Key.DirectionCenter || event.key == Key.Enter
+                        when {
+                            event.type == KeyEventType.KeyUp && opensKeyboard && !isKeyboardOpen -> {
+                                onKeyboardOpenChanged(true)
+                                keyboardController?.show()
+                                true
+                            }
+                            // RIGHT to the mic or clear button, taken here for
+                            // the same reason as DOWN: the read-only field would
+                            // spend it moving the caret through the query.
+                            event.type == KeyEventType.KeyDown &&
+                                event.key == Key.DirectionRight &&
+                                !isKeyboardOpen &&
+                                fieldRightFocusRequester != null -> {
+                                fieldRightFocusRequester.claimFocusOrReport(
+                                    target = if (showVoice) "search_voice_button" else "search_clear_button",
+                                    action = "field_right",
+                                )
+                            }
+                            // DOWN has to be taken from the field. With the
+                            // keyboard closed and a query in the field, the
+                            // read-only text field still swallows Down
+                            // (caret-to-end), so `focusProperties { down = … }`
+                            // never gets a chance and the user is stuck on the
+                            // field after a search — nothing below is reachable.
+                            // Taking it in the preview phase fixes that; UP already
+                            // belongs to the shell.
+                            event.type == KeyEventType.KeyDown &&
+                                event.key == Key.DirectionDown &&
+                                !isKeyboardOpen -> {
+                                firstFilterChipFocusRequester.claimFocusOrReport(
+                                    target = "search_first_filter_chip",
+                                    action = "field_down",
+                                )
+                            }
+                            else -> false
+                        }
+                    }
+                    .focusProperties { down = firstFilterChipFocusRequester },
+                colors = tvOutlinedTextFieldColors(
+                    focusedContainerColor = ElevatedSurface,
+                    unfocusedContainerColor = Color.White.copy(alpha = 0.055f),
+                    focusedBorderColor = Color.White.copy(alpha = 0.94f),
+                    unfocusedBorderColor = Color.White.copy(alpha = 0.12f),
+                ),
+            )
+            // Hidden outright when nothing can service it: a mic that does
+            // nothing when pressed is worse than no mic.
+            if (showVoice) {
+                TvHeroToggleIconButton(
+                    selected = false,
+                    selectedContainerColor = Color.Transparent,
+                    selectedContentColor = Color.White,
+                    icon = Icons.Filled.Mic,
+                    contentDescription = stringResource(CommonR.string.search_voice),
+                    onClick = voiceSearch::start,
+                    modifier = Modifier
+                        .focusRequester(voiceButtonFocusRequester)
+                        .focusProperties {
+                            left = searchFieldFocusRequester
+                            if (canClear) right = clearButtonFocusRequester
+                        },
+                    downFocusRequester = firstFilterChipFocusRequester,
+                )
+            }
+            if (canClear) {
+                TvHeroToggleIconButton(
+                    selected = false,
+                    selectedContainerColor = Color.Transparent,
+                    selectedContentColor = Color.White,
+                    icon = Icons.Filled.Close,
+                    contentDescription = stringResource(CommonR.string.search_clear),
+                    onClick = onClearQuery,
+                    modifier = Modifier
+                        .focusRequester(clearButtonFocusRequester)
+                        .focusProperties {
+                            left = if (showVoice) voiceButtonFocusRequester else searchFieldFocusRequester
+                        },
+                    downFocusRequester = firstFilterChipFocusRequester,
+                )
+            }
+        }
+
+        voiceUnavailableMessage?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.72f),
+            )
+        }
 
         LazyRow(
             modifier = Modifier
@@ -1123,7 +1276,7 @@ private fun SearchStage(
                         },
                     )
                 TvFilterChip(
-                    text = type.label,
+                    text = stringResource(type.label),
                     selected = mediaType == type,
                     onClick = { onMediaTypeChanged(type) },
                     modifier = chipModifier,
@@ -1217,43 +1370,58 @@ private fun SearchFeedbackMessage(
     }
 }
 
-private fun searchFieldPrompt(mediaTypes: List<TvSearchMediaType>): String =
-    "Search ${availableMediaNames(mediaTypes)}"
+/** The media types the search covers, as one whole message per combination the chips allow. */
+private enum class TvSearchScope { Library, Video, Audiobooks, VideoAndAudiobooks }
 
-private fun availableMediaDescription(mediaTypes: List<TvSearchMediaType>): String =
-    "Find ${availableMediaNames(mediaTypes)} in one place."
-
-private fun availableMediaNames(mediaTypes: List<TvSearchMediaType>): String {
-    val names = mediaTypes
-        .filterNot { it == TvSearchMediaType.All }
-        .map { it.label.lowercase() }
-
-    return when (names.size) {
-        0 -> "your library"
-        1 -> names.single()
-        2 -> names.joinToString(" and ")
-        else -> names.dropLast(1).joinToString(", ") + ", and ${names.last()}"
+/**
+ * Video search always offers Movies and Series together (both need a video
+ * library), so the scope is decided by video and audiobooks alone.
+ */
+private fun searchScope(mediaTypes: List<TvSearchMediaType>): TvSearchScope {
+    val video = TvSearchMediaType.Movies in mediaTypes || TvSearchMediaType.Series in mediaTypes
+    val audiobooks = TvSearchMediaType.Audiobooks in mediaTypes
+    return when {
+        video && audiobooks -> TvSearchScope.VideoAndAudiobooks
+        video -> TvSearchScope.Video
+        audiobooks -> TvSearchScope.Audiobooks
+        else -> TvSearchScope.Library
     }
 }
 
+@StringRes
+private fun searchFieldPrompt(mediaTypes: List<TvSearchMediaType>): Int = when (searchScope(mediaTypes)) {
+    TvSearchScope.Library -> CommonR.string.search_library
+    TvSearchScope.Video -> CommonR.string.search_prompt_video
+    TvSearchScope.Audiobooks -> CommonR.string.search_prompt_audiobooks
+    TvSearchScope.VideoAndAudiobooks -> CommonR.string.search_prompt_videoAndAudiobooks
+}
+
+@StringRes
+private fun availableMediaDescription(mediaTypes: List<TvSearchMediaType>): Int = when (searchScope(mediaTypes)) {
+    TvSearchScope.Library -> CommonR.string.search_scope_library
+    TvSearchScope.Video -> CommonR.string.search_scope_video
+    TvSearchScope.Audiobooks -> CommonR.string.search_scope_audiobooks
+    TvSearchScope.VideoAndAudiobooks -> CommonR.string.search_scope_videoAndAudiobooks
+}
+
+@Composable
 private fun searchStatusText(
     query: String,
     total: Int,
     isSearching: Boolean,
-    error: String?,
+    error: UiText?,
     isPartialCount: Boolean,
     isEstimatedCount: Boolean = false,
     hasPeople: Boolean = false,
 ): String? = when {
     query.isBlank() -> null
-    isSearching -> "Searching…"
-    error != null -> "Couldn't update results"
-    total == 0 && hasPeople -> "No matching titles"
-    total == 0 -> "No results"
-    isEstimatedCount && !isPartialCount -> "About $total results"
-    total == 1 -> "1 result"
-    isPartialCount -> "$total+ results"
-    else -> "$total results"
+    isSearching -> stringResource(CommonR.string.search_searching)
+    error != null -> stringResource(CommonR.string.search_updateFailed)
+    total == 0 && hasPeople -> stringResource(CommonR.string.search_noMatchingTitles)
+    total == 0 -> stringResource(CommonR.string.search_empty)
+    isEstimatedCount && !isPartialCount -> pluralStringResource(CommonR.plurals.search_resultAbout, total, total, LocaleFormat.integer(total))
+    isPartialCount && total != 1 -> pluralStringResource(CommonR.plurals.search_resultPartial, total, total, LocaleFormat.integer(total))
+    else -> pluralStringResource(CommonR.plurals.search_result, total, total)
 }
 
 /*

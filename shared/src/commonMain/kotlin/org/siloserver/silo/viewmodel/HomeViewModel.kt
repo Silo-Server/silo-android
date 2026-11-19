@@ -8,6 +8,7 @@ import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.section.showsWholeList
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
@@ -28,7 +29,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.TimeSource
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 
 data class HomeUiState(
     val membershipReadWitnesses: Set<org.siloserver.silo.repository.MembershipActions.Intent> = emptySet(),
@@ -47,7 +53,7 @@ data class HomeUiState(
      * finished list; only a partial publish sets it false.
      */
     val sectionsFullyResolved: Boolean = true,
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 /**
@@ -338,7 +344,7 @@ class HomeViewModel(
         if (generation != fetchGeneration || !currentCoroutineContext().isActive) return generation
         if (owner == null) {
             displayedOwner = null
-            _uiState.update { it.copy(sections = emptyList(), membershipReadWitnesses = emptySet(), isLoading = false, isRefreshing = false, error = "Sign in to load Home.") }
+            _uiState.update { it.copy(sections = emptyList(), membershipReadWitnesses = emptySet(), isLoading = false, isRefreshing = false, error = UiText.Key(SharedString.HomeSignedOut)) }
             return generation
         }
         if (!mayPublish(owner, generation)) return generation
@@ -460,7 +466,7 @@ class HomeViewModel(
                         isLoading = false,
                         // Keep cached/prior sections on a failed refresh; only block
                         // with an error when there's nothing to show.
-                        error = if (hadSections) null else result.message.ifBlank { "Failed to load home sections" },
+                        error = if (hadSections) null else result.errorText(SharedString.HomeLoadFailed),
                     )
                 }
                 report(HomeLoadOutcome.API_ERROR)
@@ -473,7 +479,7 @@ class HomeViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = if (hadSections) null else "Network error. Check your connection.",
+                        error = if (hadSections) null else UiText.Key(SharedString.NetworkError),
                     )
                 }
                 report(HomeLoadOutcome.NETWORK_ERROR)
@@ -518,6 +524,18 @@ class HomeViewModel(
 
     private val pendingDismissals = mutableSetOf<String>()
 
+    /** Serializes the cached-Home rewrites, so one dismissal cannot write back a card another removed. */
+    private val dismissalCacheWrites = Mutex()
+
+    /** A dismissal succeeded and Home has not re-read since. */
+    private var reloadAfterDismissals = false
+
+    /** Removes a Continue Watching or Next Up card on the list [HomeDismissal] picks for it. */
+    fun dismissFromHome(item: SectionItem) {
+        val dismissal = HomeDismissal.of(item) ?: return
+        dismissHomeProgressItem(dismissal.surface, item.contentId, dismissal.anchor)
+    }
+
     fun dismissContinueWatching(itemId: String, progressUpdatedAt: String) =
         dismissHomeProgressItem("continue_watching", itemId, progressUpdatedAt)
 
@@ -530,30 +548,73 @@ class HomeViewModel(
         val observed = _uiState.value.sections
         fun SectionItem.matches() = contentId == itemId &&
             (if (surface == "continue_watching") progressUpdatedAt == anchor else seriesId == anchor)
-        fun ResolvedSection.progressRow() = sectionType in setOf("continue_watching", "in_progress", "next_up", "up_next")
-        fun List<ResolvedSection>.targetRows() = filter { it.progressRow() }.flatMap { section ->
+        fun List<ResolvedSection>.targetRows() = filter { it.isProgressRow() }.flatMap { section ->
             section.items.filter { it.contentId == itemId }.map { section.id to it }
         }
         val targets = observed.targetRows()
-        if (anchor.isBlank() || targets.none { it.second.matches() }) return
+        val dismissed = targets.firstOrNull { it.second.matches() }?.second
+        if (anchor.isBlank() || dismissed == null) return
         if (!pendingDismissals.add(itemId)) return
+        // On /api/v2, dismissing an episode or a series drops the whole show,
+        // so every card of that series leaves the progress rows with it.
+        val droppedSeries = dismissed.droppedSeriesId()
+        fun SectionItem.removed() = matches() ||
+            (droppedSeries != null && (contentId == droppedSeries || seriesId == droppedSeries))
         fun observationCurrent() = generation == fetchGeneration && displayedOwner == owner &&
             _uiState.value.sections.targetRows() == targets
         viewModelScope.launch {
             try {
                 if (!mayPublish(owner, generation) || !observationCurrent()) return@launch
                 val result = sectionRepository.dismissHomeItem(surface, itemId, anchor, owner)
+                // The server dropped the show even if this screen moved on while
+                // the request ran, so re-read either way, for the same profile.
+                if (result is ApiResult.Success && displayedOwner == owner && sectionRepository.isHomeAuthorityCurrent(owner)) {
+                    reloadAfterDismissals = true
+                }
                 if (!mayPublish(owner, generation) || !observationCurrent()) return@launch
                 if (result is ApiResult.Success) {
-                    _uiState.update { state -> state.copy(sections = state.sections.map { section ->
-                        if (section.progressRow()) section.copy(items = section.items.filterNot { it.matches() }) else section
-                    }.filter { it.items.isNotEmpty() }) }
+                    _uiState.update { state -> state.copy(sections = state.sections.removingFromProgressRows { it.removed() }) }
+                    // The next cold start shows the cached Home before it re-reads;
+                    // without this the dismissed cards come back until then.
+                    dismissalCacheWrites.withLock {
+                        val artworkFingerprint = homeCache.artworkFingerprint()
+                        val cached = homeCache.getCachedHomeV2(owner) ?: return@withLock
+                        homeCache.cacheHomeV2(cached.sections.removingFromProgressRows { it.removed() }, owner, artworkFingerprint) {
+                            generation == fetchGeneration && displayedOwner == owner
+                        }
+                    }
                 }
-            } finally { pendingDismissals.remove(itemId) }
+            } finally {
+                pendingDismissals.remove(itemId)
+                // Then re-read Home from the server, as Mark as Watched does; a
+                // failed read keeps the local removal. It waits for the last
+                // dismissal in flight, because a read that starts sooner would
+                // make that one's observation stale and skip its removal.
+                if (pendingDismissals.isEmpty() && reloadAfterDismissals) {
+                    reloadAfterDismissals = false
+                    if (shown) refresh() else realtimeRefreshPending = true
+                }
+            }
         }
     }
 
 }
+
+/** Rows built from playback state. Next Up appears as its own row and merged into Continue Watching. */
+private fun ResolvedSection.isProgressRow() = sectionType in setOf("continue_watching", "in_progress", "next_up", "up_next")
+
+/**
+ * Drops [isRemoved] cards from the progress rows; a row left empty goes too.
+ * A row that held its whole list still does, so its count follows its cards
+ * and it gains no "Explore all" card. A row cut at its limit keeps its count:
+ * one card fewer does not make it whole.
+ */
+internal fun List<ResolvedSection>.removingFromProgressRows(isRemoved: (SectionItem) -> Boolean): List<ResolvedSection> =
+    map { section ->
+        if (!section.isProgressRow()) return@map section
+        val kept = section.items.filterNot(isRemoved)
+        section.copy(items = kept, totalCount = if (section.showsWholeList) kept.size else section.totalCount)
+    }.filter { it.hasCards }
 
 private fun List<ResolvedSection>.duplicateSectionKeyCount(): Int =
     size - distinctBy(ResolvedSection::id).size
@@ -571,7 +632,7 @@ private fun List<ResolvedSection>.mapItem(
 
 /** Watched and unwatched both reset resume progress, as the server does. */
 private fun SectionItem.withPlayed(played: Boolean): SectionItem =
-    copy(userState = (userState ?: MediaItemUserState()).copy(played = played), positionSeconds = 0.0)
+    copy(userState = (userState ?: MediaItemUserState()).withPlayed(played), positionSeconds = 0.0)
 
 private fun SectionItem.withFavorite(favorite: Boolean): SectionItem =
     copy(userState = (userState ?: MediaItemUserState()).copy(isFavorite = favorite))

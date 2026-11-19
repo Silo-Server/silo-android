@@ -1,5 +1,16 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.displayUppercase
+import org.siloserver.silo.common.i18n.localizedResources
+import android.content.res.Resources
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import org.siloserver.silo.android.ui.components.SiloDialogActionStyle
@@ -37,10 +48,12 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.OndemandVideo
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.SettingsRemote
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -49,12 +62,23 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import org.koin.compose.koinInject
+import org.siloserver.silo.android.cast.SiloCastController
+import org.siloserver.silo.android.cast.engagedStatus
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
@@ -68,6 +92,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -100,6 +125,15 @@ import org.siloserver.silo.model.catalog.titleRatings
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 import org.siloserver.silo.model.settings.EpisodeSpoilers
+import java.util.Locale
+import kotlinx.coroutines.flow.first
+import android.os.Build
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 
 // ── Tokens ────────────────────────────────────────────────────
 
@@ -156,6 +190,18 @@ fun AdaptiveDetailHero(
     /** Expanded-window replacement for [belowOverview]. Compact phones always
      *  keep [belowOverview], so tablet/fold sections can be reordered safely. */
     expandedBelowOverview: (@Composable () -> Unit)? = belowOverview,
+    /** Shows [eyebrow] on the compact hero too; only the expanded hero draws it otherwise. */
+    compactEyebrow: Boolean = false,
+    /** Scales the compact hero's artwork height; see [DetailHeroArtwork]. */
+    compactArtworkHeightFactor: Float = 1f,
+    /** The title to draw; an audiobook passes its title without the series locator. */
+    displayTitle: String = detail.title,
+    /**
+     * Width ÷ height of a cover to draw whole over a wash of itself (Apple's
+     * `.cover` artwork style, for a book with no backdrop); null keeps the
+     * cropped backdrop and 2:3 poster.
+     */
+    coverAspectRatio: Float? = null,
     actions: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -181,6 +227,8 @@ fun AdaptiveDetailHero(
                 reserveOverviewSpace = reserveOverviewSpace,
                 translation = translation,
                 belowOverview = expandedBelowOverview,
+                displayTitle = displayTitle,
+                coverAspectRatio = coverAspectRatio,
                 actions = actions,
             )
         } else {
@@ -197,6 +245,10 @@ fun AdaptiveDetailHero(
                 reserveOverviewSpace = reserveOverviewSpace,
                 translation = translation,
                 belowOverview = belowOverview,
+                showEyebrow = compactEyebrow,
+                artworkHeightFactor = compactArtworkHeightFactor,
+                displayTitle = displayTitle,
+                coverAspectRatio = coverAspectRatio,
                 actions = actions,
             )
         }
@@ -279,10 +331,13 @@ private fun ExpandedDetailHero(
     reserveOverviewSpace: Boolean,
     translation: (@Composable () -> Unit)?,
     belowOverview: (@Composable () -> Unit)?,
+    displayTitle: String,
+    coverAspectRatio: Float?,
     actions: @Composable () -> Unit,
 ) {
     val hasPortrait = portraitArtwork.reserveSpace || !portraitArtwork.url.isNullOrBlank()
-    val posterHeight = posterWidth * 1.5f
+    val portraitAspect = coverAspectRatio ?: (2f / 3f)
+    val posterHeight = posterWidth / portraitAspect
     val pageSurface = lerp(Color.Black, dominantColor, 0.42f)
 
     Column(
@@ -292,10 +347,18 @@ private fun ExpandedDetailHero(
     ) {
         // This cinematic box is measured by the row. Its last opaque gradient
         // stop therefore lands exactly at the bottom of the poster/buttons.
+        val seriesBackdrop = detail.seriesHeroBackdrop()
+        // A cover-led page with no backdrop washes the hero with its cover.
+        val coverWash = coverAspectRatio != null && detail.backdropUrl.isNullOrBlank()
         ExpandedDetailHeroBackdrop(
-            artworkUrl = detail.backdropUrl,
-            artworkThumbhash = detail.backdropThumbhash,
-            hidden = detail.hidesEpisodeArtwork(detail.backdropIsEpisodeStill),
+            artworkUrl = seriesBackdrop?.url ?: if (coverWash) detail.posterUrl else detail.backdropUrl,
+            artworkThumbhash = when {
+                seriesBackdrop != null -> seriesBackdrop.thumbhash
+                coverWash -> detail.posterThumbhash
+                else -> detail.backdropThumbhash
+            },
+            blurred = coverWash,
+            hidden = seriesBackdrop == null && detail.hidesEpisodeArtwork(detail.backdropIsEpisodeStill),
             pageSurface = pageSurface,
         ) {
             Row(
@@ -310,7 +373,7 @@ private fun ExpandedDetailHero(
                     Box(
                         modifier = Modifier
                             .width(posterWidth)
-                            .aspectRatio(2f / 3f)
+                            .aspectRatio(portraitAspect)
                             .clip(RoundedCornerShape(12.dp))
                             .background(Color.White.copy(alpha = 0.06f))
                             .border(
@@ -329,6 +392,7 @@ private fun ExpandedDetailHero(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
                                 defaultArtwork = DefaultArtworkKind.forItemType(detail.type),
+                                holdPreviousImage = true,
                             )
                         }
                     }
@@ -353,7 +417,7 @@ private fun ExpandedDetailHero(
                             modifier = if (hasPortrait) Modifier.weight(1f, fill = false).clipToBounds() else Modifier,
                             contentAlignment = Alignment.Center,
                         ) {
-                            ExpandedHeroTitle(detail = detail)
+                            ExpandedHeroTitle(detail = detail, displayTitle = displayTitle)
                         }
                         val metadataTokens = (factsLine + sourceTokens).distinct()
                         if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
@@ -431,6 +495,8 @@ internal fun ExpandedDetailHeroBackdrop(
     artworkThumbhash: String?,
     pageSurface: Color,
     hidden: Boolean = false,
+    /** Softens a cover standing in for a backdrop, which reads as noise when enlarged sharp. */
+    blurred: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
@@ -441,7 +507,10 @@ internal fun ExpandedDetailHeroBackdrop(
             contentDescription = null,
             contentScale = ContentScale.Crop,
             crossfadeMillis = DetailArtworkCrossfadeMs,
-            modifier = Modifier.matchParentSize(),
+            modifier = Modifier
+                .matchParentSize()
+                .then(if (blurred) Modifier.blur(44.dp, BlurredEdgeTreatment.Rectangle) else Modifier),
+            holdPreviousImage = true,
         )
         Box(
             modifier = Modifier
@@ -471,7 +540,7 @@ internal fun ExpandedDetailHeroBackdrop(
 }
 
 @Composable
-private fun ExpandedHeroTitle(detail: ItemDetail) {
+private fun ExpandedHeroTitle(detail: ItemDetail, displayTitle: String) {
     val isEpisode = detail.type == "episode"
     val seriesTitle = detail.seriesTitle?.takeIf { it.isNotBlank() }
     if (isEpisode && seriesTitle != null) {
@@ -529,6 +598,7 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
             contentDescription = detail.title,
             contentScale = ContentScale.Fit,
             transparent = true,
+            holdPreviousImage = true,
             modifier = Modifier
                 .fillMaxWidth(0.72f)
                 .height(112.dp),
@@ -536,7 +606,7 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
         return
     }
 
-    val (primary, subtitle) = splitHeroTitle(detail.title)
+    val (primary, subtitle) = splitHeroTitle(displayTitle)
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -596,18 +666,38 @@ fun DetailHero(
     // directly under the overview (Apple parity: DescriptionTranslationView).
     translation: (@Composable () -> Unit)? = null,
     belowOverview: (@Composable () -> Unit)? = null,
+    /** Draws [eyebrow] above the metadata; off by default, as on episode pages. */
+    showEyebrow: Boolean = false,
+    /** Scales the artwork's height; see [DetailHeroArtwork]. */
+    artworkHeightFactor: Float = 1f,
+    /** The title to draw in place of the item's own. */
+    displayTitle: String = detail.title,
+    /** Draws the poster whole over a wash of itself; see [AdaptiveDetailHero]. */
+    coverAspectRatio: Float? = null,
     actions: @Composable () -> Unit,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
+        // An episode's series backdrop is never a still, so protection keeps it.
+        val seriesBackdrop = detail.seriesHeroBackdrop()
         DetailHeroArtwork(
-            artworkUrl = detail.backdropUrl ?: detail.posterUrl,
-            artworkThumbhash = detail.backdropThumbhash ?: detail.posterThumbhash,
-            hidden = detail.hidesEpisodeArtwork(
+            heightFactor = artworkHeightFactor,
+            artworkUrl = when {
+                seriesBackdrop != null -> seriesBackdrop.url
+                coverAspectRatio != null -> detail.posterUrl
+                else -> detail.backdropUrl ?: detail.posterUrl
+            },
+            artworkThumbhash = when {
+                seriesBackdrop != null -> seriesBackdrop.thumbhash
+                coverAspectRatio != null -> detail.posterThumbhash
+                else -> detail.backdropThumbhash ?: detail.posterThumbhash
+            },
+            coverAspectRatio = coverAspectRatio,
+            hidden = seriesBackdrop == null && detail.hidesEpisodeArtwork(
                 if (detail.backdropUrl != null) detail.backdropIsEpisodeStill else detail.posterIsEpisodeStill,
             ),
             contentDescription = detail.title,
         ) {
-            HeroTitle(detail = detail)
+            HeroTitle(detail = detail, displayTitle = displayTitle)
         }
 
         Column(
@@ -618,6 +708,9 @@ fun DetailHero(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (showEyebrow && !eyebrow.isNullOrBlank()) {
+                EyebrowChip(text = eyebrow)
+            }
             val metadataTokens = (factsLine + sourceTokens).distinct()
             val ratings = detail.titleRatings()
             if (metadataTokens.isNotEmpty() || detail.contentRating != null || ratings.isNotEmpty()) {
@@ -657,10 +750,18 @@ internal fun DetailHeroArtwork(
     artworkThumbhash: String?,
     contentDescription: String? = null,
     hidden: Boolean = false,
+    /**
+     * Scales the artwork's height. A page whose content matters more than its
+     * art, such as a box set's movies, passes less than 1 so that content
+     * starts on the first screen.
+     */
+    heightFactor: Float = 1f,
+    /** Draws [artworkUrl] whole at this aspect over a blurred wash of itself instead of cropped. */
+    coverAspectRatio: Float? = null,
     title: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val artworkHeight = (maxWidth * 1.18f).coerceIn(430.dp, 540.dp)
+        val artworkHeight = (maxWidth * 1.18f).coerceIn(430.dp, 540.dp) * heightFactor
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -703,19 +804,36 @@ internal fun DetailHeroArtwork(
                         )
                     },
             ) {
-                SpoilerImage(
-                    url = artworkUrl,
-                    thumbhash = artworkThumbhash,
-                    hidden = hidden,
-                    contentDescription = contentDescription,
-                    contentScale = ContentScale.Crop,
-                    crossfadeMillis = DetailArtworkCrossfadeMs,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            translationY = parallaxDp * ParallaxFactor * density
-                        },
-                )
+                if (coverAspectRatio != null) {
+                    DetailCoverArtwork(
+                        url = artworkUrl,
+                        thumbhash = artworkThumbhash,
+                        hidden = hidden,
+                        aspectRatio = coverAspectRatio,
+                        coverHeight = (artworkHeight * 0.48f).coerceIn(190.dp, 250.dp),
+                        contentDescription = contentDescription,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                translationY = parallaxDp * ParallaxFactor * density
+                            },
+                    )
+                } else {
+                    SpoilerImage(
+                        url = artworkUrl,
+                        thumbhash = artworkThumbhash,
+                        hidden = hidden,
+                        contentDescription = contentDescription,
+                        contentScale = ContentScale.Crop,
+                        crossfadeMillis = DetailArtworkCrossfadeMs,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                translationY = parallaxDp * ParallaxFactor * density
+                            },
+                        holdPreviousImage = true,
+                    )
+                }
                 // Deepens as the hero leaves, so the artwork recedes
                 // instead of just sliding.
                 if (scrimAlpha > 0f) {
@@ -747,6 +865,75 @@ internal fun DetailHeroArtwork(
                 title()
             }
         }
+    }
+}
+
+/**
+ * Apple's `PhoneDetailCoverArtwork`: the cover drawn whole, 100dp down so it
+ * clears the floating top controls, over a blurred, saturated, dimmed wash
+ * of itself that fills the hero. The title overlays the lower part as usual.
+ * Below API 31, where `Modifier.blur` does nothing, the wash is the cover
+ * dimmed further instead of a sharp enlarged copy.
+ */
+@Composable
+private fun DetailCoverArtwork(
+    url: String?,
+    thumbhash: String?,
+    /** Spoiler protection hides the artwork: draw the plain surface instead. */
+    hidden: Boolean,
+    aspectRatio: Float,
+    coverHeight: Dp,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+) {
+    val canBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    Box(modifier = modifier, contentAlignment = Alignment.TopCenter) {
+        if (hidden) {
+            Box(modifier = Modifier.fillMaxSize().background(SiloSurfaceElevated))
+            return@Box
+        }
+        if (!url.isNullOrBlank() || !thumbhash.isNullOrBlank()) {
+            ThumbhashImage(
+                url = url,
+                thumbhash = thumbhash,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                decodeSizePx = 256,
+                crossfadeMillis = 0,
+                colorFilter = ColorFilter.colorMatrix(
+                    ColorMatrix().apply { setToSaturation(1.2f) },
+                ),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = 1.25f
+                        scaleY = 1.25f
+                    }
+                    .then(if (canBlur) Modifier.blur(44.dp, BlurredEdgeTreatment.Rectangle) else Modifier),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = if (canBlur) 0.26f else 0.62f)),
+            )
+        } else {
+            Box(modifier = Modifier.fillMaxSize().background(SiloSurfaceElevated))
+        }
+        ThumbhashImage(
+            url = url,
+            thumbhash = thumbhash,
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            crossfadeMillis = DetailArtworkCrossfadeMs,
+            holdPreviousImage = true,
+            defaultArtwork = DefaultArtworkKind.Audiobook,
+            modifier = Modifier
+                .padding(top = 100.dp)
+                .height(coverHeight)
+                .aspectRatio(aspectRatio)
+                .clip(RoundedCornerShape(12.dp))
+                .border(0.5.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(12.dp)),
+        )
     }
 }
 
@@ -866,7 +1053,7 @@ private fun ItemDetail.hidesEpisodeArtwork(artworkIsEpisodeStill: Boolean?): Boo
         LocalEpisodeSpoilerPrefs.current.hidesImage(EpisodeSpoilers.isUnwatched(userData), artworkIsEpisodeStill)
 
 @Composable
-private fun HeroTitle(detail: ItemDetail) {
+private fun HeroTitle(detail: ItemDetail, displayTitle: String) {
     val isEpisode = detail.type == "episode"
     val seriesTitle = detail.seriesTitle?.takeIf { it.isNotBlank() }
 
@@ -925,6 +1112,7 @@ private fun HeroTitle(detail: ItemDetail) {
             contentDescription = detail.title,
             contentScale = ContentScale.Fit,
             transparent = true,
+            holdPreviousImage = true,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(160.dp),
@@ -934,7 +1122,7 @@ private fun HeroTitle(detail: ItemDetail) {
 
     // iOS PhoneHeroTitle: primary 30pt heavy, optional subtitle 13pt heavy
     // tracked, spacing 4.
-    val (primary, subtitle) = splitHeroTitle(detail.title)
+    val (primary, subtitle) = splitHeroTitle(displayTitle)
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1025,12 +1213,16 @@ private fun SourceRow(
                     color = DetailPrimaryText.copy(alpha = 0.4f),
                 )
             }
+            // The last token (usually the genres) gives way when a longer
+            // translated token leaves too little room; the chip never wraps.
             Text(
                 text = token,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
                 color = DetailPrimaryText.copy(alpha = 0.85f),
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = if (index == tokens.lastIndex) Modifier.weight(1f, fill = false) else Modifier,
             )
         }
         if (!ratingChip.isNullOrBlank()) {
@@ -1079,6 +1271,8 @@ private fun ContentRatingChip(text: String) {
             fontWeight = FontWeight.ExtraBold,
             letterSpacing = 0.8.sp,
             color = DetailPrimaryText,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }
@@ -1115,45 +1309,129 @@ private fun OverviewBlock(
 // ── Action buttons ────────────────────────────────────────────
 
 /**
- * Solid white capsule used for the primary "Play" CTA in the hero.
- * Full width, 52dp tall, label inline with the icon.
+ * False while a detail page draws the card it was opened from
+ * (`ItemDetailUiState.isProvisional`): the page's actions need the fetched
+ * detail, so they show as unavailable and Play reads Loading until it lands.
+ */
+val LocalDetailActionsReady = compositionLocalOf { true }
+
+internal const val DetailActionDisabledAlpha = 0.45f
+
+/**
+ * Solid-white Play pill for a movie, series or box set, matching the iOS
+ * `PhoneVideoPlayButton`. Full width, 52dp tall, label inline with the icon.
+ *
+ * While this phone controls a TV, the pill carries a TV glyph and names the
+ * TV underneath, so it is plain before the tap that playback starts there.
  */
 @Composable
 fun PrimaryPillButton(
-    icon: ImageVector,
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Listening or watching progress, 0..1, drawn as a thin track along the pill's bottom (Apple `progress`). */
+    progress: Float? = null,
+    /**
+     * False when this Play always starts on the phone (audiobooks), so a
+     * connected TV doesn't decorate a pill whose playback never goes there.
+     */
+    playsOnConnectedTv: Boolean = true,
 ) {
-    Button(
-        onClick = onClick,
-        shape = PillShape,
-        colors = ButtonDefaults.buttonColors(
-            containerColor = Color.White,
-            contentColor = Color.Black,
-        ),
-        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 0.dp),
-        modifier = modifier
-            .fillMaxWidth()
-            .height(52.dp),
+    val castState by koinInject<SiloCastController>().state.collectAsState()
+    val remoteStatus = castState.engagedStatus()?.takeIf { playsOnConnectedTv }
+    val ready = LocalDetailActionsReady.current
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // iOS PhonePrimaryPillButton: icon 17pt bold, label 17pt semibold, spacing 10.
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(17.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = label,
-            fontSize = 17.sp,
-            lineHeight = 22.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Button(
+            onClick = onClick,
+            enabled = ready,
+            shape = PillShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.White,
+                contentColor = Color.Black,
+                disabledContainerColor = Color.White.copy(alpha = 0.45f),
+                disabledContentColor = Color.Black.copy(alpha = 0.7f),
+            ),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 0.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .then(if (progress != null && progress > 0f) Modifier.pillProgressTrack(progress) else Modifier)
+                // TalkBack reads the destination with Play, not as a separate stop.
+                .semantics { remoteStatus?.let { stateDescription = it } },
+        ) {
+            // iOS PhonePrimaryPillButton: icon 17pt bold, label 17pt semibold, spacing 10.
+            Icon(
+                imageVector = if (remoteStatus == null) Icons.Filled.PlayArrow else Icons.Filled.OndemandVideo,
+                contentDescription = null,
+                modifier = Modifier.size(17.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = if (ready) label else stringResource(CommonR.string.common_loading),
+                fontSize = 17.sp,
+                lineHeight = 22.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (remoteStatus != null) {
+            Row(
+                modifier = Modifier.clearAndSetSemantics { },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.SettingsRemote,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.8f),
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = remoteStatus,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
+
+/** Apple `PhonePrimaryPillButton.progressTrack`: a 3dp track inset 24dp, 6dp above the pill's bottom. */
+private fun Modifier.pillProgressTrack(progress: Float): Modifier = drawWithContent {
+    drawContent()
+    val inset = 24.dp.toPx()
+    val width = (size.width - inset * 2).coerceAtLeast(0f)
+    val height = 3.dp.toPx()
+    val top = size.height - 6.dp.toPx() - height
+    val radius = CornerRadius(height / 2, height / 2)
+    drawRoundRect(
+        color = Color.Black.copy(alpha = 0.14f),
+        topLeft = Offset(inset, top),
+        size = Size(width, height),
+        cornerRadius = radius,
+    )
+    drawRoundRect(
+        color = Color.Black.copy(alpha = 0.78f),
+        topLeft = Offset(inset, top),
+        size = Size(maxOf(4.dp.toPx(), width * progress.coerceIn(0f, 1f)), height),
+        cornerRadius = radius,
+    )
+}
+
+/**
+ * The caption and spoken labels of a [HeroActionStack] toggle, for a page
+ * that names it in its own words (an audiobook's "Want to Listen" and
+ * "Finished" in place of Watchlist and Watched).
+ */
+data class HeroToggleLabels(val caption: String, val turnOn: String, val turnOff: String)
 
 /**
  * 42dp circle toggle used for favorite, watchlist, watched. Active
@@ -1170,8 +1448,11 @@ fun CircleActionButton(
     label: String,
     modifier: Modifier = Modifier,
 ) {
+    val ready = LocalDetailActionsReady.current
     Column(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier
+            .alpha(if (ready) 1f else DetailActionDisabledAlpha)
+            .clickable(enabled = ready, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -1205,14 +1486,17 @@ fun CircleActionButton(
  */
 @Composable
 fun CircleOverflowButton(
-    contentDescription: String = "More options",
+    contentDescription: String = stringResource(CommonR.string.detail_moreOptions),
     menuContent: @Composable (dismiss: () -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val ready = LocalDetailActionsReady.current
     Box(modifier = modifier, contentAlignment = Alignment.TopCenter) {
         Column(
-            modifier = Modifier.clickable { expanded = true },
+            modifier = Modifier
+                .alpha(if (ready) 1f else DetailActionDisabledAlpha)
+                .clickable(enabled = ready) { expanded = true },
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -1230,7 +1514,7 @@ fun CircleOverflowButton(
                     modifier = Modifier.size(19.dp),
                 )
             }
-            Text("More", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.60f))
+            Text(stringResource(CommonR.string.detail_more), fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.60f))
         }
         SiloDropdownMenu(
             expanded = expanded,
@@ -1250,7 +1534,7 @@ fun VersionPillButton(
     currentValue: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    label: String = "Version",
+    label: String = stringResource(CommonR.string.detail_version),
 ) {
     Surface(
         shape = PillShape,
@@ -1260,7 +1544,7 @@ fun VersionPillButton(
             .height(36.dp)
             .clickable(onClick = onClick),
     ) {
-        // iOS PhoneVersionPillButton: leading stack icon 13pt (0.78), label
+        // iOS PhoneVersionPillButton: leading version icon 13pt (0.78), label
         // 12pt medium (0.7), value 13pt semibold, chevron 10pt (0.6).
         Row(
             modifier = Modifier.padding(horizontal = 14.dp),
@@ -1268,7 +1552,7 @@ fun VersionPillButton(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Icon(
-                imageVector = Icons.Filled.Layers,
+                imageVector = Icons.Filled.VideoLibrary,
                 contentDescription = null,
                 tint = SiloOnOpaqueControl.copy(alpha = 0.78f),
                 modifier = Modifier.size(13.dp),
@@ -1324,6 +1608,14 @@ fun HeroActionStack(
     // resuming immediately, matching iOS. Null → the button plays directly.
     onPlayFromBeginning: (() -> Unit)? = null,
     resumeStoppedAtLabel: String? = null,
+    /** Replaces the Watchlist toggle's wording; null keeps it. */
+    watchlistLabels: HeroToggleLabels? = null,
+    /** Replaces the Watched toggle's wording; null keeps it. */
+    watchedLabels: HeroToggleLabels? = null,
+    /** Resume progress drawn along the Play pill, 0..1. */
+    primaryProgress: Float? = null,
+    /** See [PrimaryPillButton]'s `playsOnConnectedTv`. */
+    playsOnConnectedTv: Boolean = true,
 ) {
     var showResumeDialog by remember { mutableStateOf(false) }
     Column(
@@ -1332,9 +1624,10 @@ fun HeroActionStack(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         PrimaryPillButton(
-            icon = Icons.Filled.PlayArrow,
             label = primaryLabel,
             onClick = { if (onPlayFromBeginning != null) showResumeDialog = true else onPlay() },
+            progress = primaryProgress,
+            playsOnConnectedTv = playsOnConnectedTv,
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1345,27 +1638,35 @@ fun HeroActionStack(
                 icon = Icons.Filled.FavoriteBorder,
                 activeIcon = Icons.Filled.Favorite,
                 isActive = isFavorite,
-                contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
+                contentDescription = stringResource(
+                    if (isFavorite) CommonR.string.detail_favoriteRemove else CommonR.string.detail_favoriteAdd,
+                ),
                 onClick = onToggleFavorite,
-                label = "Favorite",
+                label = stringResource(CommonR.string.detail_favorite),
                 modifier = Modifier.weight(1f),
             )
             CircleActionButton(
                 icon = Icons.Filled.BookmarkBorder,
                 activeIcon = Icons.Filled.Bookmark,
                 isActive = isInWatchlist,
-                contentDescription = if (isInWatchlist) "Remove from watchlist" else "Add to watchlist",
+                contentDescription = watchlistLabels?.let { if (isInWatchlist) it.turnOff else it.turnOn }
+                    ?: stringResource(
+                        if (isInWatchlist) CommonR.string.detail_watchlistRemove else CommonR.string.detail_watchlistAdd,
+                    ),
                 onClick = onToggleWatchlist,
-                label = "Watchlist",
+                label = watchlistLabels?.caption ?: stringResource(CommonR.string.detail_watchlist),
                 modifier = Modifier.weight(1f),
             )
             CircleActionButton(
                 icon = Icons.Filled.CheckCircleOutline,
                 activeIcon = Icons.Filled.CheckCircle,
                 isActive = isWatched,
-                contentDescription = if (isWatched) "Mark as unwatched" else "Mark as watched",
+                contentDescription = watchedLabels?.let { if (isWatched) it.turnOff else it.turnOn }
+                    ?: stringResource(
+                        if (isWatched) CommonR.string.detail_markUnwatched else CommonR.string.detail_markWatched,
+                    ),
                 onClick = onToggleWatched,
-                label = "Watched",
+                label = watchedLabels?.caption ?: stringResource(CommonR.string.detail_watched),
                 modifier = Modifier.weight(1f),
             )
             if (downloadSlot != null) {
@@ -1375,7 +1676,7 @@ fun HeroActionStack(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     downloadSlot()
-                    Text("Download", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.60f))
+                    Text(stringResource(CommonR.string.detail_download), fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.60f))
                 }
             }
             if (overflow != null) {
@@ -1402,12 +1703,12 @@ fun HeroActionStack(
     if (showResumeDialog && onPlayFromBeginning != null) {
         val stoppedAt = resumeStoppedAtLabel
         SiloDialog(
-            title = "Continue Watching?",
-            message = stoppedAt?.let { "You stopped at $it." },
+            title = stringResource(CommonR.string.detail_resumeDialog_title),
+            message = stoppedAt?.let { stringResource(CommonR.string.detail_resumeDialog_stoppedAt, it) },
             onDismissRequest = { showResumeDialog = false },
             actions = listOf(
                 SiloDialogAction(
-                    label = "Resume",
+                    label = stringResource(CommonR.string.detail_resumeDialog_resume),
                     style = SiloDialogActionStyle.Primary,
                     onClick = {
                         showResumeDialog = false
@@ -1415,7 +1716,7 @@ fun HeroActionStack(
                     },
                 ),
                 SiloDialogAction(
-                    label = "Play from Beginning",
+                    label = stringResource(CommonR.string.detail_resumeDialog_playFromBeginning),
                     onClick = {
                         showResumeDialog = false
                         onPlayFromBeginning()
@@ -1436,7 +1737,7 @@ fun SectionHeader(
     modifier: Modifier = Modifier,
 ) {
     // iOS PhoneSectionHeader: optional eyebrow label 11pt bold tracking 1.6
-    // (0.55 alpha), title 22pt semibold single-line, trailing 13pt medium,
+    // (0.55 alpha), title 22pt semibold (up to two lines), trailing 13pt medium,
     // column spacing 4.
     Row(
         modifier = modifier
@@ -1450,7 +1751,7 @@ fun SectionHeader(
         ) {
             if (!label.isNullOrBlank()) {
                 Text(
-                    text = label.uppercase(),
+                    text = label.displayUppercase(),
                     fontSize = 12.sp,
                     lineHeight = 15.sp,
                     fontWeight = FontWeight.Bold,
@@ -1460,13 +1761,15 @@ fun SectionHeader(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            // Two lines, so a longer translated title such as "Episodios de
+            // Temporada 1" wraps instead of ellipsizing beside the count.
             Text(
                 text = title,
                 fontSize = 22.sp,
                 lineHeight = 28.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = DetailPrimaryText,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -1501,27 +1804,34 @@ fun SeasonChips(
     val selectedSeasonIndex = seasons.indexOfFirst {
         it.seasonNumber == selectedSeasonNumber
     }
-    val listState = rememberLazyListState(
-        initialFirstVisibleItemIndex = selectedSeasonIndex.coerceAtLeast(0),
-    )
+    // The row opens at its start, so Specials (always first) stay in view
+    // whenever the selected chip fits there too.
+    val listState = rememberLazyListState()
+    var hasPositioned by remember { mutableStateOf(false) }
 
-    // Pager swipes can move beyond the chips visible on compact cover screens.
-    // Follow the shared selection, but leave the row alone while its chip is
-    // already fully visible so nearby swipes do not cause needless movement.
+    // Bring the selected chip into view when it doesn't fit: on opening (a
+    // later season on a narrow screen) and after pager swipes. Leave the row
+    // alone while the chip is fully visible so nearby swipes don't move it.
     LaunchedEffect(selectedSeasonIndex, seasons.size) {
         if (selectedSeasonIndex < 0) return@LaunchedEffect
+        // Wait for the first layout; an empty one reads as "not visible".
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.isNotEmpty() }.first { it }
 
-        val layoutInfo = listState.layoutInfo
-        val selectedItem = layoutInfo.visibleItemsInfo.firstOrNull {
-            it.index == selectedSeasonIndex
+        fun selectedChipFullyVisible(): Boolean {
+            val layoutInfo = listState.layoutInfo
+            val item = layoutInfo.visibleItemsInfo.firstOrNull { it.index == selectedSeasonIndex }
+            return item != null &&
+                item.offset >= layoutInfo.viewportStartOffset &&
+                item.offset + item.size <= layoutInfo.viewportEndOffset
         }
-        val isFullyVisible = selectedItem != null &&
-            selectedItem.offset >= layoutInfo.viewportStartOffset &&
-            selectedItem.offset + selectedItem.size <= layoutInfo.viewportEndOffset
 
-        if (!isFullyVisible) {
-            listState.animateScrollToItem(selectedSeasonIndex)
+        if (!selectedChipFullyVisible()) {
+            // Keep the previous chip in view as a hint that the row continues.
+            val target = (selectedSeasonIndex - 1).coerceAtLeast(0)
+            if (hasPositioned) listState.animateScrollToItem(target) else listState.scrollToItem(target)
+            if (!selectedChipFullyVisible()) listState.scrollToItem(selectedSeasonIndex)
         }
+        hasPositioned = true
     }
 
     LazyRow(
@@ -1536,7 +1846,7 @@ fun SeasonChips(
             contentType = { "season-chip" },
         ) { season ->
             val isSelected = season.seasonNumber == selectedSeasonNumber
-            val label = phoneSeasonLabel(season)
+            val label = phoneSeasonLabel(localizedResources(), season)
             val isWatched = season.userData?.played == true
             var menuExpanded by remember { mutableStateOf(false) }
             // iOS PhoneSeasonChips: 14pt (semibold selected / medium
@@ -1576,7 +1886,17 @@ fun SeasonChips(
                     onDismissRequest = { menuExpanded = false },
                 ) {
                     SiloDropdownMenuItem(
-                        text = { Text(if (isWatched) "Mark Season Unwatched" else "Mark Season Watched") },
+                        text = {
+                            Text(
+                                stringResource(
+                                    if (isWatched) {
+                                        CommonR.string.detail_more_markSeasonUnwatched
+                                    } else {
+                                        CommonR.string.detail_more_markSeasonWatched
+                                    },
+                                ),
+                            )
+                        },
                         onClick = {
                             menuExpanded = false
                             onSeasonWatchedChange?.invoke(season, !isWatched)
@@ -1592,12 +1912,13 @@ fun SeasonChips(
 
 object HeroMetadata {
 
-    fun episodeEyebrow(detail: ItemDetail): String? {
+    fun episodeEyebrow(resources: Resources, detail: ItemDetail): String? {
         val s = detail.seasonNumber
         val e = detail.episodeNumber
         return when {
-            s != null && e != null -> "${phoneSeasonNumberLabel(s)} · Episode $e"
-            s != null -> phoneSeasonNumberLabel(s)
+            s != null && e != null ->
+                resources.getString(CommonR.string.detail_episodeEyebrow, phoneSeasonNumberLabel(resources, s), LocaleFormat.integer(e))
+            s != null -> phoneSeasonNumberLabel(resources, s)
             else -> null
         }
     }
@@ -1612,38 +1933,49 @@ object HeroMetadata {
             ?.let { listOf(it.joinToString(", ")) }
             .orEmpty()
 
+    @Composable
     fun movieFactsLine(
         detail: ItemDetail,
         runtimeMinutes: Int = detail.runtime,
+    ): List<String> = movieFactsLine(localizedResources(), detail, runtimeMinutes)
+
+    fun movieFactsLine(
+        resources: Resources,
+        detail: ItemDetail,
+        runtimeMinutes: Int = detail.runtime,
     ): List<String> = buildList {
-        if (detail.year > 0) add(detail.year.toString())
-        if (runtimeMinutes > 0) add(formatRuntime(runtimeMinutes))
+        if (detail.year > 0) add(LocaleFormat.integer(detail.year))
+        if (runtimeMinutes > 0) add(runtimeText(resources, runtimeMinutes))
     }
 
-    fun seriesFactsLine(detail: ItemDetail): List<String> = buildList {
-        if (detail.year > 0) add(detail.year.toString())
-        detail.seasonCount?.takeIf { it > 0 }?.let {
-            add("$it Season${if (it > 1) "s" else ""}")
-        }
-    }
-
-    private fun formatRuntime(minutes: Int): String {
-        if (minutes <= 0) return ""
-        val h = minutes / 60
-        val m = minutes % 60
-        return when {
-            h > 0 && m > 0 -> "${h}h ${m}m"
-            h > 0 -> "${h}h"
-            else -> "${m}m"
+    @Composable
+    fun seriesFactsLine(detail: ItemDetail): List<String> {
+        val seasons = detail.seasonCount?.takeIf { it > 0 }
+            ?.let { pluralStringResource(CommonR.plurals.catalog_seasons, it, it) }
+        return buildList {
+            if (detail.year > 0) add(LocaleFormat.integer(detail.year))
+            seasons?.let { add(it) }
         }
     }
 }
 
-internal fun phoneSeasonLabel(season: Season): String =
-    if (season.isSpecialsForDisplay()) "Specials" else phoneSeasonNumberLabel(season.seasonNumber)
+internal fun phoneSeasonLabel(resources: Resources, season: Season): String =
+    if (season.isSpecialsForDisplay()) {
+        resources.getString(CommonR.string.detail_specials)
+    } else {
+        phoneSeasonNumberLabel(resources, season.seasonNumber)
+    }
 
-private fun phoneSeasonNumberLabel(seasonNumber: Int): String =
-    if (seasonNumber == 0) "Specials" else "Season $seasonNumber"
+internal fun phoneSeasonNumberLabel(resources: Resources, seasonNumber: Int): String =
+    if (seasonNumber == 0) {
+        resources.getString(CommonR.string.detail_specials)
+    } else {
+        resources.getString(CommonR.string.detail_season, LocaleFormat.integer(seasonNumber))
+    }
+
+/** "S1·E2", the short episode code on play buttons and party subtitles. */
+internal fun episodeCode(resources: Resources, seasonNumber: Int, episodeNumber: Int): String =
+    resources.getString(CommonR.string.detail_episodeCode, LocaleFormat.codeNumber(seasonNumber), LocaleFormat.codeNumber(episodeNumber))
 
 // ── Play label helper ─────────────────────────────────────────
 
@@ -1653,20 +1985,27 @@ private fun phoneSeasonNumberLabel(seasonNumber: Int): String =
 // label — mirrors silo-apple MovieDetailContent.swift +
 // ViewExtensions.continuumResumePlaybackAlert (Jim phone QA 2026-07-10).
 fun computePlayLabel(
+    resources: Resources,
     detail: ItemDetail,
     nextEpisodeLabel: String? = null,
 ): String {
     if (detail.type == "series" && nextEpisodeLabel != null) {
-        return "Play $nextEpisodeLabel"
+        return resources.getString(CommonR.string.detail_playEpisodeCode, nextEpisodeLabel)
     }
     if (detail.type == "episode") {
         val s = detail.seasonNumber
         val e = detail.episodeNumber
         if (s != null && e != null) {
-            return if (s == 0) "Play E$e" else "Play S$s·E$e"
+            val code = if (s == 0) {
+                // A `%d` code read without arguments: resources would print the app's digits (D75), codes stay ASCII (D78).
+                String.format(Locale.ROOT, resources.getString(CommonR.string.detail_episodeCodeNoSeason), e)
+            } else {
+                episodeCode(resources, s, e)
+            }
+            return resources.getString(CommonR.string.detail_playEpisodeCode, code)
         }
     }
-    return "Play"
+    return resources.getString(CommonR.string.common_play)
 }
 
 /** Clock for the "Continue Watching?" dialog's "You stopped at …" line. */
@@ -1675,7 +2014,7 @@ fun formatResumeStoppedAt(positionSeconds: Double): String {
     val h = totalSec / 3600
     val m = (totalSec % 3600) / 60
     val s = totalSec % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return LocaleFormat.clock(h, m, s)
 }
 
 // ── Details list (key/value facts) ────────────────────────────
@@ -1685,12 +2024,18 @@ fun DetailFactsList(
     detail: ItemDetail,
     runtimeMinutes: Int = detail.runtime,
     modifier: Modifier = Modifier,
+    /** Rows to show in place of the film facts (an audiobook's author, narrator, length and format). */
+    facts: List<Pair<String, String>>? = null,
 ) {
-    val rows = buildDetailFacts(detail, runtimeMinutes)
+    val rows = facts ?: buildDetailFacts(detail, runtimeMinutes)
     if (rows.isEmpty()) return
 
-    SectionHeader(title = "Details")
+    SectionHeader(title = stringResource(CommonR.string.detail_details))
     Spacer(modifier = Modifier.height(14.dp))
+
+    val labels = rows.map { (label, _) -> label.displayUppercase() }
+    val labelStyle = LocalTextStyle.current.merge(FactLabelStyle)
+    val labelColumnWidth = factLabelColumnWidth(labels, labelStyle)
 
     // iOS PhoneDetailFactsSection: thin 1px dividers (white 0.08) between
     // rows, label 11pt bold tracking 1.2 (0.5 alpha) width 100, value 14pt
@@ -1700,7 +2045,7 @@ fun DetailFactsList(
             .fillMaxWidth()
             .padding(horizontal = SafePadding),
     ) {
-        rows.forEachIndexed { index, (label, value) ->
+        rows.forEachIndexed { index, (_, value) ->
             if (index > 0) {
                 Box(
                     modifier = Modifier
@@ -1716,13 +2061,10 @@ fun DetailFactsList(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Text(
-                    text = label.uppercase(),
-                    fontSize = 12.sp,
-                    lineHeight = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp,
+                    text = labels[index],
+                    style = labelStyle,
                     color = SiloOnSurface.copy(alpha = 0.7f),
-                    modifier = Modifier.width(100.dp),
+                    modifier = Modifier.width(labelColumnWidth),
                 )
                 Text(
                     text = value,
@@ -1737,28 +2079,58 @@ fun DetailFactsList(
     }
 }
 
+private val FactLabelStyle = TextStyle(
+    fontSize = 12.sp,
+    lineHeight = 15.sp,
+    fontWeight = FontWeight.Bold,
+    letterSpacing = 1.2.sp,
+)
+
+/**
+ * The facts label column: 100dp, as on iOS, widened to the longest single word
+ * when a translated label has one that would otherwise break mid-word, up to
+ * [FactLabelMaxWidth]. English labels fit in 100dp.
+ */
+@Composable
+private fun factLabelColumnWidth(labels: List<String>, style: TextStyle): Dp {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    return remember(labels, style, density) {
+        val widestWord = labels
+            .flatMap { it.split(' ') }
+            .maxOfOrNull { measurer.measure(it, style, softWrap = false).size.width }
+            ?: 0
+        with(density) { widestWord.toDp() + 1.dp }.coerceIn(FactLabelMinWidth, FactLabelMaxWidth)
+    }
+}
+
+private val FactLabelMinWidth = 100.dp
+private val FactLabelMaxWidth = 160.dp
+
+@Composable
 private fun buildDetailFacts(
     detail: ItemDetail,
     runtimeMinutes: Int,
 ): List<Pair<String, String>> = buildList {
-    detail.releaseDate?.takeIf { it.isNotBlank() }?.let { add("Release date" to it) }
-    detail.firstAirDate?.takeIf { it.isNotBlank() }?.let { add("First aired" to it) }
-    detail.lastAirDate?.takeIf { it.isNotBlank() }?.let { add("Last aired" to it) }
-    if (runtimeMinutes > 0) add("Runtime" to runtimeText(runtimeMinutes))
-    detail.contentRating?.takeIf { it.isNotBlank() }?.let { add("Rated" to it) }
-    if (detail.studios.isNotEmpty()) add("Studio" to detail.studios.joinToString(", "))
-    if (detail.networks.isNotEmpty()) add("Network" to detail.networks.joinToString(", "))
-    if (detail.countries.isNotEmpty()) add("Country" to detail.countries.joinToString(", "))
+    detail.releaseDate?.takeIf { it.isNotBlank() }?.let { add(stringResource(CommonR.string.detail_facts_releaseDate) to it) }
+    detail.firstAirDate?.takeIf { it.isNotBlank() }?.let { add(stringResource(CommonR.string.detail_facts_firstAired) to it) }
+    detail.lastAirDate?.takeIf { it.isNotBlank() }?.let { add(stringResource(CommonR.string.detail_facts_lastAired) to it) }
+    if (runtimeMinutes > 0) add(stringResource(CommonR.string.detail_facts_runtime) to runtimeText(localizedResources(), runtimeMinutes))
+    detail.contentRating?.takeIf { it.isNotBlank() }?.let { add(stringResource(CommonR.string.detail_facts_rated) to it) }
+    if (detail.studios.isNotEmpty()) add(stringResource(CommonR.string.detail_studio) to detail.studios.joinToString(", "))
+    if (detail.networks.isNotEmpty()) add(stringResource(CommonR.string.detail_network) to detail.networks.joinToString(", "))
+    if (detail.countries.isNotEmpty()) add(stringResource(CommonR.string.detail_country) to detail.countries.joinToString(", "))
     // Genres are already carried by the hero facts line (HeroMetadata); iOS's
     // detail facts list omits them, so listing them here duplicated them.
 }
 
-private fun runtimeText(minutes: Int): String {
+/** A runtime such as "2h 4m", "2h" or "45m". */
+private fun runtimeText(resources: Resources, minutes: Int): String {
     val h = minutes / 60
     val m = minutes % 60
     return when {
-        h > 0 && m > 0 -> "${h}h ${m}m"
-        h > 0 -> "${h}h"
-        else -> "${m}m"
+        h > 0 && m > 0 -> resources.getString(CommonR.string.catalog_runtimeHoursMinutes, LocaleFormat.integer(h), LocaleFormat.integer(m))
+        h > 0 -> resources.getString(CommonR.string.catalog_runtimeHours, LocaleFormat.integer(h))
+        else -> resources.getString(CommonR.string.catalog_runtimeMinutesShort, LocaleFormat.integer(m))
     }
 }

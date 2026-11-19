@@ -7,6 +7,7 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.Transient
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
@@ -56,6 +57,8 @@ data class PlayerSubtitleInfo(
     val source: String? = null,
     val forced: Boolean? = null,
     val url: String,
+    /** The server's SDH flag; a label naming SDH counts too ([isHearingImpaired]). */
+    @SerialName("hearing_impaired") val hearingImpaired: Boolean? = null,
     /** Catalog-facing identity retained when a mounted artifact has a generic runtime label. */
     @SerialName("catalog_label") val catalogLabel: String? = null,
     /** Catalog provenance retained separately from the runtime artifact source. */
@@ -79,6 +82,12 @@ data class PlayerSubtitleInfo(
     @SerialName("hls_rendition") val hlsRendition: SubtitleHlsRendition? = null,
     /** The inventory's `sync_key`: present when the server can sync this track to the audio. */
     @SerialName("sync_key") val syncKey: String? = null,
+    /**
+     * No route can show this server track ([isUnplayableSubtitle]). Pickers
+     * list it disabled and Auto never picks it; the row stays so the
+     * combined ordinals keep their places.
+     */
+    val unplayable: Boolean = false,
 )
 
 /**
@@ -89,6 +98,12 @@ data class PlayerSubtitleInfo(
 data class SubtitleHlsRendition(
     @SerialName("group_id") val groupId: String,
     val name: String,
+    /**
+     * 1-based place in the group, present only when the stream lists every
+     * embedded text track as a rendition: the player can then switch to this
+     * track on the stream it already plays.
+     */
+    val index: Int? = null,
 ) {
     /**
      * The `Format.id` Media3's `HlsPlaylistParser` gives the rendition:
@@ -283,6 +298,12 @@ data class PlaybackExecutionPlan(
      * bitrate to tell a plan that plays the source from a conversion.
      */
     @SerialName("source_file") val sourceFile: PlaybackSourceDescriptorV3 = PlaybackSourceDescriptorV3(),
+    /** [PlaybackPlanV3.bandwidthLimit]: a learned limit lowered this Auto plan. */
+    @SerialName("bandwidth_limit") val bandwidthLimit: PlaybackBandwidthLimitV3? = null,
+    /** [PlaybackPlanV3.activeQuality]. */
+    @SerialName("active_quality") val activeQuality: String? = null,
+    /** [PlaybackPlanV3.activeQualityReported]; never read from the wire. */
+    @Transient val activeQualityReported: Boolean = false,
 )
 
 /**

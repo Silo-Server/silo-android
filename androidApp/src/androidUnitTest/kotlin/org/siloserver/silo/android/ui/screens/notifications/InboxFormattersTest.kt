@@ -1,5 +1,10 @@
 package org.siloserver.silo.android.ui.screens.notifications
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.siloserver.silo.model.notifications.NotificationRow
 import java.time.Instant
 import kotlin.test.Test
@@ -7,7 +12,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 class InboxFormattersTest {
+
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
+    /** Card text as the card shows it in English; absent text shows as "". */
+    private fun InboxText?.shown(): String = this?.resolve(resources).orEmpty()
 
     private val now = Instant.parse("2026-06-12T12:00:00Z")
 
@@ -59,8 +71,8 @@ class InboxFormattersTest {
         )
 
         assertTrue(model.isRich)
-        assertEquals("The Show", model.title)
-        assertEquals("S1E4 • The One", model.subtitle)
+        assertEquals("The Show", model.title.shown())
+        assertEquals("S1E4 • The One", model.subtitle.shown())
         assertEquals("series-1", model.targetContentId)
         assertTrue(model.isUnread)
     }
@@ -81,14 +93,14 @@ class InboxFormattersTest {
             now,
         )
         assertFalse(model.isRich)
-        assertEquals("System", model.title)
+        assertEquals("System", model.title.shown())
     }
 
     @Test
     fun knownNonEpisodeTypesGetFriendlyTitles() {
-        assertEquals("Request fulfilled", fallbackTitleForType("request.fulfilled"))
-        assertEquals("Webhook disabled", fallbackTitleForType("webhook.auto_disabled"))
-        assertEquals("Notification", fallbackTitleForType(""))
+        assertEquals("Request fulfilled", fallbackTitleForType("request.fulfilled").shown())
+        assertEquals("Webhook disabled", fallbackTitleForType("webhook.auto_disabled").shown())
+        assertEquals("Notification", fallbackTitleForType("").shown())
     }
 
     @Test
@@ -113,27 +125,27 @@ class InboxFormattersTest {
             now,
         )
         assertTrue(model.isRich)
-        assertEquals("New episode available", model.title)
+        assertEquals("New episode available", model.title.shown())
     }
 
     @Test
     fun relativeTimeBuckets() {
-        assertEquals("now", relativeTime("2026-06-12T11:59:30Z", now))
-        assertEquals("5m", relativeTime("2026-06-12T11:55:00Z", now))
-        assertEquals("2h", relativeTime("2026-06-12T10:00:00Z", now))
-        assertEquals("3d", relativeTime("2026-06-09T12:00:00Z", now))
+        assertEquals("now", relativeTime("2026-06-12T11:59:30Z", now).shown())
+        assertEquals("5m", relativeTime("2026-06-12T11:55:00Z", now).shown())
+        assertEquals("2h", relativeTime("2026-06-12T10:00:00Z", now).shown())
+        assertEquals("3d", relativeTime("2026-06-09T12:00:00Z", now).shown())
     }
 
     @Test
     fun relativeTimeOlderThanWeekIsAbsoluteDate() {
         // 10 days earlier -> "MMM d" absolute label, not a bucket.
-        val label = relativeTime("2026-06-02T12:00:00Z", now)
+        val label = relativeTime("2026-06-02T12:00:00Z", now).shown()
         assertFalse(label.endsWith("d") && label.length <= 4)
         assertTrue(label.isNotBlank())
     }
 
     @Test
     fun unparseableTimestampDegradesToEmpty() {
-        assertEquals("", relativeTime("not-a-date", now))
+        assertEquals("", relativeTime("not-a-date", now).shown())
     }
 }

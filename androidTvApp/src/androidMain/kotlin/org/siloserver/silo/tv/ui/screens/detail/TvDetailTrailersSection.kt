@@ -52,12 +52,14 @@ import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.ItemVideo
 import org.siloserver.silo.model.catalog.TrailerRailEntry
 import org.siloserver.silo.model.catalog.trailerRailDurationLabel
-import org.siloserver.silo.model.catalog.youtubeThumbnailUrl
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
 import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 @Composable
 internal fun TvDetailTrailersSection(
@@ -75,7 +77,7 @@ internal fun TvDetailTrailersSection(
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         TvDetailSectionHeader(
-            title = "Trailers & More",
+            title = stringResource(CommonR.string.detail_trailers),
             modifier = Modifier.padding(horizontal = TvDetailHorizontalInset),
         )
         TvRailScrollBehavior {
@@ -163,14 +165,17 @@ private fun TvDetailTrailerCard(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            when (entry) {
-                is TrailerRailEntry.Remote -> AsyncImage(
-                    model = youtubeThumbnailUrl(entry.video.siteKey),
-                    contentDescription = entry.title,
+            val thumbnailUrl = entry.thumbnailUrl
+            if (thumbnailUrl != null) {
+                AsyncImage(
+                    model = thumbnailUrl,
+                    // The card's title text already names it.
+                    contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-                is TrailerRailEntry.Local -> Icon(
+            } else {
+                Icon(
                     imageVector = Icons.Filled.Movie,
                     contentDescription = null,
                     tint = SiloSecondaryText,
@@ -194,7 +199,7 @@ private fun TvDetailTrailerCard(
         }
 
         Text(
-            text = entry.title,
+            text = entry.title.text(),
             color = if (isFocused) SiloOnSurface else SiloOnSurface.copy(alpha = 0.92f),
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,

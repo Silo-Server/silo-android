@@ -109,10 +109,10 @@ already shows; the screen polls and saves the session, so there is only one
 request. The TV advertises only while its sign-in screen is visible.
 Advertising `st=login` sits behind a rollout gate shared with silo-apple
 (`PairingProtocol.advertisesSignInTVs` there, `TvLoginViewModel`'s
-`advertisesSignIn`, set from `BuildConfig.DEBUG`, here): on in debug builds,
-off in release until the iOS and Android phone apps that accept `login` TVs
-have both shipped. A phone that predates them offers a sign-in TV the setup
-chooser and pushes servers without an identity, which the TV refuses. First-run
+`advertisesSignIn` here), on in every build now that the iOS and Android phone
+apps that accept `login` TVs have both shipped. A phone that predates them
+offers a sign-in TV the setup chooser and pushes servers without an identity,
+which the TV refuses. First-run
 TVs keep `st=setup` and
 the chooser, with the phone's active server preselected. `pushServer` carries
 `serverIdentity` and `endpoints` (from `GET /api/v2/system/connections`); the
@@ -260,7 +260,14 @@ signed in, and to try again.
 The phone claim flow uses public v2 invitation capabilities, lookup and acceptance.
 It checks global support and the token's `acceptance_available` separately. Only a
 lookup 404 marks the token invalid; server failures remain retryable lookup errors.
-All requests pin the invitation origin and omit existing credentials. Acceptance
+All requests pin the invitation origin and omit existing credentials. When the
+capability reports `token_in_body`, lookup and acceptance send the claim token in
+the JSON body (`POST /invitations/lookup` and `POST /invitations/accept`) so it
+never appears in a request URL; older servers that omit the field get the
+deprecated path forms. The lookup's form is carried to acceptance. On a cleartext
+HTTP origin the body-form lookup is a credential-bearing POST, so the auth plugin
+refuses it until the user approves the origin; the screen then asks and repeats
+the lookup. Acceptance
 is a single-attempt POST requiring 201 and the typed accepted outcome with string
 account IDs. Invalid or inconsistent token wrappers are failures, not sessions.
 
