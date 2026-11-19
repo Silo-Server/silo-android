@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -16,6 +17,7 @@ import org.siloserver.silo.android.ui.components.CollectionPosterRow
 import org.siloserver.silo.android.ui.components.ExploreAllCard
 import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.android.ui.components.rememberCollectionOwnerName
+import org.siloserver.silo.android.ui.components.sharedArtworkAspectRatio
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.i18n.stringResourceWithNames
@@ -47,6 +49,8 @@ internal fun ItemCollectionsRail(
         when (row) {
             is ItemCollectionsRow.Preview -> {
                 SectionHeader(title = row.collection.title)
+                // Square covers when every title is an audiobook; one card height otherwise.
+                val posterAspectRatio = remember(row.items) { sharedArtworkAspectRatio(row.items.map { it.type }) }
                 ItemCollectionsLazyRow {
                     items(row.items, key = { it.contentId }, contentType = { "collection-title" }) { item ->
                         MediaCard(
@@ -64,6 +68,7 @@ internal fun ItemCollectionsRail(
                                 DetailSeeds.offer(item)
                                 onItemClick(item)
                             },
+                            artworkAspectRatio = posterAspectRatio,
                             overlay = OverlayDataExtractor.fromBrowseItem(item),
                             sharedContentId = item.contentId,
                             widthIsExact = true,
@@ -74,6 +79,7 @@ internal fun ItemCollectionsRail(
                             cardStyle = CardStyle.Poster,
                             onClick = { onCollectionClick(row.collection) },
                             width = cardWidth,
+                            posterAspectRatio = posterAspectRatio,
                         )
                     }
                 }
