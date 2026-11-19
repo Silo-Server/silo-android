@@ -43,8 +43,11 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
      */
     val unconfirmedAttempts: SharedFlow<Intent> = mutableUnconfirmedAttempts.asSharedFlow()
 
+    /** Restored commands whose one automatic retry hasn't started yet; a cancelled restore resumes them. */
+    private val unretriedRestores = MutableStateFlow<Set<Long>>(emptySet())
+
     init {
-        identity.installGate { mutableActions.value = emptyMap(); mutableLegacyNotice.value = false }
+        identity.installGate { mutableActions.value = emptyMap(); unretriedRestores.value = emptySet(); mutableLegacyNotice.value = false }
     }
 
     fun begin(itemId: String, kind: MembershipPort.Kind, present: Boolean): Intent {
@@ -190,11 +193,21 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
                     } else states + (key to Action(intent, command,
                         MembershipPort.Completion(projection.disposition ?: MembershipPort.Disposition.NEEDS_RECONCILIATION, false), busy = retry))
                 }
-                if (retry && mutableActions.value[key]?.intent == intent) unresolved += intent to command
+                if (!retry) continue
+                if (mutableActions.value[key]?.intent == intent) unretriedRestores.update { it + command.id }
+                if (command.id !in unretriedRestores.value) continue
+                // A witness an earlier, cancelled pass restored but never retried gets its retry now.
+                val witness = mutableActions.value[key]?.takeIf { it.command?.id == command.id && current(it.intent) && !it.confirmed } ?: continue
+                if (witness.intent != intent) {
+                    if (witness.busy) continue
+                    update(witness.intent) { it.copy(busy = true) }
+                }
+                unresolved += witness.intent to command
             }
             while (next < unresolved.size) {
                 val (intent, command) = unresolved[next++]
                 if (!current(intent)) continue
+                unretriedRestores.update { it - command.id }
                 try {
                     complete(intent, activePort.retry(command))
                 } catch (cancelled: CancellationException) {

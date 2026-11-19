@@ -340,13 +340,20 @@ interface DirtyOperationDao {
         "WHERE older.coalesceKey = dirty_operations.coalesceKey AND older.state = 'membership_sending')")
     suspend fun claimMembership(id: Long, authority: String, claim: String, owner: String): Int
 
-    /** Resends a paused command only while it is the item's latest one and no sibling is sending. */
+    /**
+     * Resends a paused command only while it is the item's latest one, no sibling is sending, and
+     * the item's projection doesn't name a newer command (one that was acknowledged and deleted).
+     */
     @Query("UPDATE dirty_operations SET state = 'membership_sending', membershipClaim = :claim, " +
         "membershipOwner = :owner WHERE id = :id AND membershipAuthority = :authority " +
         "AND membershipClaim = :previousClaim AND state = 'membership_paused' AND NOT EXISTS (SELECT 1 " +
         "FROM dirty_operations other WHERE other.coalesceKey = dirty_operations.coalesceKey " +
         "AND other.id != dirty_operations.id AND other.state != 'legacy_membership_quarantined' " +
-        "AND (other.id > dirty_operations.id OR other.state = 'membership_sending'))")
+        "AND (other.id > dirty_operations.id OR other.state = 'membership_sending')) " +
+        "AND NOT EXISTS (SELECT 1 FROM membership_projection projection WHERE projection.authority = :authority " +
+        "AND projection.itemId = dirty_operations.targetContentId " +
+        "AND projection.kind = substr(dirty_operations.opKind, length('MEMBERSHIP_') + 1) " +
+        "AND projection.commandId != dirty_operations.id)")
     suspend fun reclaimMembership(id: Long, authority: String, previousClaim: String, claim: String, owner: String): Int
 
     @Query("UPDATE dirty_operations SET state = :state WHERE id = :id AND membershipClaim = :claim " +

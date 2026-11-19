@@ -93,6 +93,8 @@ class MembershipOutbox(
      * PUT and DELETE are idempotent, so resending a write that did land is harmless.
      */
     suspend fun retry(id: Long, authority: Authority): Result {
+        // Cancelled between record and send: nothing was sent yet, so send it through the usual claim.
+        if (dao.getById(id)?.state == READY) return send(id, authority)
         val observed = reconcile(id, authority)
         if (observed.resolution != Resolution.PAUSED) return observed
         val command = dao.getById(id) ?: return Result(Resolution.NOT_CLAIMED)

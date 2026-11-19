@@ -101,6 +101,12 @@ class RoomMembershipPort(
 
     private suspend fun completion(command: MembershipPort.Command, result: MembershipOutbox.Result): MembershipPort.Completion {
         val current = projection(command.authority, command.itemId, command.kind)
+        val durable = current?.disposition?.takeIf {
+            current.commandId == command.id && it in listOf(MembershipPort.Disposition.ACKNOWLEDGED, MembershipPort.Disposition.RECONCILED)
+        }
+        // The row is gone because this exact command was already confirmed, e.g. its acknowledgement
+        // committed as the caller was cancelled. Report that rather than a lost claim.
+        if (result.resolution == MembershipOutbox.Resolution.NOT_CLAIMED && durable != null) return MembershipPort.Completion(durable, true)
         return MembershipPort.Completion(MembershipPort.Disposition.valueOf(result.resolution.name),
             result.resolution in listOf(MembershipOutbox.Resolution.ACKNOWLEDGED, MembershipOutbox.Resolution.RECONCILED) &&
                 current?.commandId == command.id && current.disposition in listOf(
