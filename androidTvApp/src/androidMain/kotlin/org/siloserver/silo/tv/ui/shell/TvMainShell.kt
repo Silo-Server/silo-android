@@ -777,8 +777,21 @@ fun TvMainShell(
     }
 
     val navigateToRoute: (String) -> Unit = { route ->
-        if (route != currentRoute) {
-            val startRoute = nestedNav.graph.startDestinationRoute
+        // A For You opened from its dropdown is pushed on top of the tab it was
+        // opened from, so Back returns to that tab. Leaving it for another tab
+        // pops it first: saved with the tab, it came back on top of that tab on
+        // the next visit and pinned the tab to For You (Movies, Series, Calendar).
+        val startRoute = nestedNav.graph.startDestinationRoute
+        val previousRoute = nestedNav.previousBackStackEntry?.destination?.route
+        val forYouPushedOverTab = route != currentRoute && currentRoute == TvMainRoute.ForYou.route &&
+            previousRoute != null && previousRoute != startRoute
+        if (forYouPushedOverTab) nestedNav.popBackStack()
+        val effectiveRoute = if (forYouPushedOverTab) {
+            nestedNav.currentBackStackEntry?.destination?.route
+        } else {
+            currentRoute
+        }
+        if (route != effectiveRoute) {
             if (route == startRoute && nestedNav.popBackStack(route, inclusive = false, saveState = true)) {
                 // Home is the graph root, so "go Home" is a pop, never a push.
                 // The bottom-nav idiom below (popUpTo(start){saveState} +
