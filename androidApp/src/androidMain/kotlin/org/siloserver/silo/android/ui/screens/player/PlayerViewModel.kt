@@ -136,6 +136,7 @@ import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
 import org.siloserver.silo.model.subtitles.SubtitleAiJob
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
 import org.siloserver.silo.model.subtitles.SubtitleAiStatus
+import org.siloserver.silo.model.subtitles.SUBTITLE_PROVIDER_STATUS_TIMEOUT_MS
 import org.siloserver.silo.model.subtitles.subtitleSearchAvailabilityAfter
 import org.siloserver.silo.model.subtitles.SubtitleDownloadRequest
 import org.siloserver.silo.model.subtitles.SubtitleResult
@@ -5688,7 +5689,8 @@ class PlayerViewModel(
     fun onTracksSheetOpened() {
         // Opening re-reads sync state so a job that finished meanwhile shows.
         subtitleSync.reload()
-        refreshSubtitleProviderStatus()
+        // Search needs a live session; downloaded playback never shows it.
+        if (_uiState.value.sessionId != null && _uiState.value.mediaFileId != null) refreshSubtitleProviderStatus()
         if (aiStatusFetched) return
         aiStatusFetched = true
         viewModelScope.launch {
@@ -5712,7 +5714,7 @@ class PlayerViewModel(
         // pending; only the newest answer is applied.
         val generation = ++subtitleProviderStatusGeneration
         viewModelScope.launch {
-            val result = subtitlesRepository.providerStatus()
+            val result = withTimeoutOrNull(SUBTITLE_PROVIDER_STATUS_TIMEOUT_MS) { subtitlesRepository.providerStatus() }
             if (generation != subtitleProviderStatusGeneration) return@launch
             _subtitleTools.update {
                 it.copy(providerSearchAvailable = subtitleSearchAvailabilityAfter(result, it.providerSearchAvailable))

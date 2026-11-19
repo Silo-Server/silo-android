@@ -21,5 +21,8 @@ class SubtitleProviderStatusTest {
         assertEquals(false, subtitleSearchAvailabilityAfter(failed, previous = false))
         assertEquals(true, subtitleSearchAvailabilityAfter(failed, previous = true))
         assertEquals(true, subtitleSearchAvailabilityAfter(failed, previous = null))
+        // A timed-out probe (null) follows the same rule as a failed one.
+        assertEquals(false, subtitleSearchAvailabilityAfter(null, previous = false))
+        assertEquals(true, subtitleSearchAvailabilityAfter(null, previous = null))
     }
 }

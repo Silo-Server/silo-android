@@ -112,12 +112,19 @@ data class SubtitleProviderStatus(
 }
 
 /**
- * Next "Search subtitles" availability after a provider-status probe. A
- * server answer decides it; a failed probe (an older server without the
- * endpoint, or no network) keeps a known answer and otherwise offers search,
- * because hiding it would remove a working feature on those servers.
+ * How long a provider-status probe may take before it counts as failed, so a
+ * slow read doesn't keep search hidden for the full HTTP timeout.
  */
-fun subtitleSearchAvailabilityAfter(result: ApiResult<SubtitleProviderStatus>, previous: Boolean?): Boolean =
+const val SUBTITLE_PROVIDER_STATUS_TIMEOUT_MS = 5_000L
+
+/**
+ * Next "Search subtitles" availability after a provider-status probe. A
+ * server answer decides it. A failed probe (an older server without the
+ * endpoint, or no network) or a timed-out one (null) keeps a known answer
+ * and otherwise offers search, because hiding it would remove a working
+ * feature on those servers.
+ */
+fun subtitleSearchAvailabilityAfter(result: ApiResult<SubtitleProviderStatus>?, previous: Boolean?): Boolean =
     when (result) {
         is ApiResult.Success -> result.data.searchAvailable
         else -> previous ?: true

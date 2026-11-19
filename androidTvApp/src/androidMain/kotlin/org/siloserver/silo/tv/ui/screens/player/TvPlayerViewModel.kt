@@ -156,6 +156,7 @@ import org.siloserver.silo.playback.activeSyncKey
 import org.siloserver.silo.playback.statusLabelFor
 import org.siloserver.silo.playback.syncKeyFor
 import org.siloserver.silo.playback.timingActionsFor
+import org.siloserver.silo.model.subtitles.SUBTITLE_PROVIDER_STATUS_TIMEOUT_MS
 import org.siloserver.silo.model.subtitles.subtitleSearchAvailabilityAfter
 import org.siloserver.silo.model.subtitles.SubtitleSyncState
 import org.siloserver.silo.common.player.subtitleSyncName
@@ -6944,7 +6945,7 @@ class TvPlayerViewModel(
         // pending; only the newest answer is applied.
         val generation = ++subtitleProviderStatusGeneration
         viewModelScope.launch {
-            val result = subtitlesRepository.providerStatus()
+            val result = withTimeoutOrNull(SUBTITLE_PROVIDER_STATUS_TIMEOUT_MS) { subtitlesRepository.providerStatus() }
             if (generation != subtitleProviderStatusGeneration) return@launch
             _subtitleSearch.update {
                 it.copy(providerAvailable = subtitleSearchAvailabilityAfter(result, it.providerAvailable))
