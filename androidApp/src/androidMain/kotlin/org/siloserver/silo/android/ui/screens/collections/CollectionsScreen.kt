@@ -1,6 +1,6 @@
 package org.siloserver.silo.android.ui.screens.collections
 
-import org.siloserver.silo.common.i18n.pluralStringResourceWithNames
+import org.siloserver.silo.common.ui.components.collectionRowSubtitle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -205,10 +205,5 @@ private fun CollectionCard(
 @Composable
 private fun rowSubtitle(collection: Collection): String {
     val kind = collection.collectionType.replaceFirstChar { it.uppercase() }
-    val count = collection.itemCount
-    return if (count != null && count > 0) {
-        pluralStringResourceWithNames(CommonR.plurals.collections_rowSubtitle, count, kind)
-    } else {
-        kind
-    }
+    return collectionRowSubtitle(kind, collection.itemCount, collection.countState)
 }

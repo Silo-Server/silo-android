@@ -150,7 +150,6 @@ class CollectionDetailViewModel(
                     _uiState.update {
                         it.copy(
                             title = collection?.name,
-                            total = collection?.itemCount ?: it.total,
                         )
                     }
                 }

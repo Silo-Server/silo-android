@@ -1,8 +1,7 @@
 package org.siloserver.silo.android.ui.screens.collections
 
+import org.siloserver.silo.common.ui.components.collectionCountBadge
 import org.siloserver.silo.common.i18n.UiText
-import org.siloserver.silo.common.i18n.LocaleFormat
-import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.common.i18n.detailedErrorText
@@ -304,8 +303,7 @@ private fun LibraryCollectionCard(
     collection: LibraryCollection,
     onClick: () -> Unit,
 ) {
-    val countLabel = collection.itemCount?.takeIf { it > 0 }?.let { LocaleFormat.groupedCount(it, currentNumberLocale()) }
-        ?: stringResource(CommonR.string.collections_type_smart)
+    val countLabel = collectionCountBadge(collection.itemCount, collection.countState)
     val typeLabel = when {
         collection.kind == "user_collections" -> stringResource(CommonR.string.collections_userCollection)
         else -> collection.collectionType

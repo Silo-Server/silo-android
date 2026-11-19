@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.ui.components.collectionCountBadge
+import org.siloserver.silo.common.ui.components.collectionCountLine
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,15 +32,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalViewConfiguration
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalCardPresentation
-import org.siloserver.silo.common.i18n.LocaleFormat
-import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.section.LibraryCollection
@@ -99,7 +98,7 @@ internal fun CollectionPosterCard(
                 )
             }
             if (showItemCount) Text(
-                text = collection.itemCount?.takeIf { it > 0 || exactCount }?.let { LocaleFormat.groupedCount(it, currentNumberLocale()) } ?: stringResource(CommonR.string.collections_type_smart),
+                text = collectionCountBadge(collection.itemCount, collection.countState, exact = exactCount),
                 fontSize = 12.sp,
                 color = Color.White,
                 modifier = Modifier
@@ -119,8 +118,7 @@ internal fun CollectionPosterCard(
         )
         Text(
             text = secondaryText
-                ?: collection.itemCount?.takeIf { showItemCount }
-                    ?.let { pluralStringResource(CommonR.plurals.collections_itemCount, it, it, LocaleFormat.groupedCount(it)) }
+                ?: (if (showItemCount) collectionCountLine(collection.itemCount, collection.countState) else null)
                 ?: stringResource(CommonR.string.collections_collection),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

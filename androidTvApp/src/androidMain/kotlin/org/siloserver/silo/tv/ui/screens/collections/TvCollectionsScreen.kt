@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.collections
 
+import org.siloserver.silo.common.ui.components.collectionRowSubtitle
+import org.siloserver.silo.model.personal.CollectionCountState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -279,7 +281,12 @@ private fun CollectionCard(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = collection.collectionType.replaceFirstChar { it.uppercase() },
+                    text = collection.collectionType.replaceFirstChar { it.uppercase() }.let { kind ->
+                        // TV cards add the count only where the server marks it, so an
+                        // older server's cards keep showing the kind alone.
+                        if (collection.countState == CollectionCountState.Legacy) kind
+                        else collectionRowSubtitle(kind, collection.itemCount, collection.countState)
+                    },
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
