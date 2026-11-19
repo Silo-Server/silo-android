@@ -40,11 +40,28 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
     override fun onCreate() {
         super.onCreate()
         DiagnosticsStartup.installCrashCapture(this)
+        // Before any request: v2 problem details show in the app's language.
+        org.siloserver.silo.common.i18n.ServerText.install(this)
+        org.siloserver.silo.common.i18n.LocaleFormat.refresh(this)
+        org.siloserver.silo.common.i18n.EnglishText.install(this)
         val koinApp = startKoin {
             androidContext(this@SiloApplication)
             modules(sharedModules() + playerModule + playerInfraModule + marqueeModule + watchPartyModule + androidModule + diagnosticsModule)
         }
         DiagnosticsStartup.startCoordinator { koinApp.koin.get<DiagnosticsCoordinator>() }
+        // Account-scoped preferences and local state: adopt pre-account values
+        // into the migrated account (synchronously, before any store reads
+        // them), purge signed-out accounts, and remember the last tile.
+        // Guarded — never load-bearing for cold start.
+        runCatching {
+            org.siloserver.silo.common.store.AccountLocalData(
+                context = this@SiloApplication,
+                registry = koinApp.koin.get(),
+                launchPreferences = koinApp.koin.get(),
+            ).start()
+        }.onFailure {
+            android.util.Log.w("SiloApplication", "Account local data init failed: ${it::class.simpleName}")
+        }
         koinApp.koin.get<org.siloserver.silo.repository.ImageCapabilitiesSession>().start(
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
         )
@@ -70,6 +87,7 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
             AndroidPushRegistrationStarter(
                 registrar = koinApp.koin.get(),
                 notificationsRepository = koinApp.koin.get(),
+                registry = koinApp.koin.get(),
             ).register()
         }.onFailure {
             android.util.Log.w("SiloApplication", "Android push registration starter init failed", it)
@@ -124,6 +142,27 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
         }.onFailure {
             android.util.Log.w("SiloApplication", "Local route starter init failed", it)
         }
+        // Measure the connection in the background after sign-in and each
+        // return to the foreground, for Auto quality and Settings. Guarded —
+        // without it playback sends no estimate.
+        runCatching {
+            koinApp.koin.get<org.siloserver.silo.common.player.probe.BandwidthProbeScheduler>()
+                .start(androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle, phoneOrTablet = true)
+        }.onFailure {
+            android.util.Log.w("SiloApplication", "Bandwidth probe scheduler init failed: ${it::class.simpleName}")
+        }
+        // Send the playback telemetry an earlier launch left unsent, such as
+        // the summary of a plan still playing when the app was backgrounded
+        // and its process died. Off the main thread. Guarded — never
+        // load-bearing for cold start.
+        runCatching {
+            org.siloserver.silo.common.player.RouteEventReplayStarter(
+                registry = koinApp.koin.get(),
+                playback = koinApp.koin.get(),
+            ).start()
+        }.onFailure {
+            android.util.Log.w("SiloApplication", "Route event replay starter init failed: ${it::class.simpleName}")
+        }
         // Drain the user-state outbox (Track B) on launch + when connectivity
         // returns. Guarded — never load-bearing for cold start.
         runCatching {
@@ -145,6 +184,7 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
                 registry = koinApp.koin.get(),
                 database = koinApp.koin.get(),
                 storage = koinApp.koin.get(),
+                legacyImporter = koinApp.koin.getOrNull(),
             )
         }.onFailure {
             android.util.Log.w("SiloApplication", "Orphaned server purge init failed", it)
@@ -203,12 +243,14 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
     private fun registerDownloadsNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NotificationManager::class.java) ?: return
+        // Shown in system settings: use the app language, as the activities do.
+        val text = org.siloserver.silo.common.i18n.AppLocales.wrap(this)
         val channel = NotificationChannel(
             DownloadWorker.NOTIFICATION_CHANNEL_ID,
-            "Downloads",
+            text.getString(org.siloserver.silo.common.R.string.downloads_notification_channelName),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Progress and completion for offline downloads"
+            description = text.getString(org.siloserver.silo.common.R.string.downloads_notification_channelDescription)
             setShowBadge(false)
         }
         nm.createNotificationChannel(channel)

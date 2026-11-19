@@ -2,13 +2,17 @@ package org.siloserver.silo.android.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.uiText
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.repository.AuthRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.errorText
 
 data class SignupUiState(
     val username: String = "",
@@ -16,7 +20,7 @@ data class SignupUiState(
     val password: String = "",
     val inviteCode: String = "",
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val signupSuccess: Boolean = false,
 )
 
@@ -71,9 +75,9 @@ class SignupViewModel(
 
                 is ApiResult.Error -> {
                     val message = when (result.code) {
-                        409 -> "Username or email already in use"
-                        403 -> "Invalid invite code"
-                        else -> result.message.ifBlank { "Signup failed" }
+                        409 -> uiText(CommonR.string.account_create_error_taken)
+                        403 -> uiText(CommonR.string.account_create_error_inviteInvalid)
+                        else -> result.errorText(CommonR.string.account_create_error_failed)
                     }
                     _uiState.update { it.copy(isLoading = false, error = message) }
                 }
@@ -82,7 +86,7 @@ class SignupViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "Network error. Please check your connection.",
+                            error = uiText(CommonR.string.signIn_error_networkConnection),
                         )
                     }
                 }
@@ -94,13 +98,13 @@ class SignupViewModel(
         _uiState.update { it.copy(signupSuccess = false) }
     }
 
-    private fun validateFields(state: SignupUiState): String? {
-        if (state.username.isBlank()) return "Username is required"
-        if (state.email.isBlank()) return "Email is required"
-        if (!state.email.contains("@")) return "Please enter a valid email address"
-        if (state.password.isBlank()) return "Password is required"
-        if (state.password.length < 8) return "Password must be at least 8 characters"
-        if (state.inviteCode.isBlank()) return "Invite code is required"
+    private fun validateFields(state: SignupUiState): UiText? {
+        if (state.username.isBlank()) return uiText(CommonR.string.tvSignIn_error_usernameRequired)
+        if (state.email.isBlank()) return uiText(CommonR.string.account_create_error_emailRequired)
+        if (!state.email.contains("@")) return uiText(CommonR.string.account_create_error_emailInvalid)
+        if (state.password.isBlank()) return uiText(CommonR.string.tvSignIn_error_passwordRequired)
+        if (state.password.length < 8) return uiText(CommonR.string.account_create_error_passwordShort)
+        if (state.inviteCode.isBlank()) return uiText(CommonR.string.account_create_error_inviteRequired)
         return null
     }
 }

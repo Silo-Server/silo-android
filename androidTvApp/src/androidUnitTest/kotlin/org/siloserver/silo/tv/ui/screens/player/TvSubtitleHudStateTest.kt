@@ -1,5 +1,14 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.i18n.UiText
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import kotlin.test.Test
@@ -8,15 +17,21 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class TvSubtitleHudStateTest {
+    // The HUD builders read their words from the app's resources (English here).
+    private val resources
+        get() = ApplicationProvider.getApplicationContext<Application>().resources
+
     @Test
     fun `sync status resolves server tracks by ordinal and merged stored rows by download id`() {
         val sync = TvHudSubtitleSync(
-            statusByServerIndex = mapOf(0 to "Synced −3.0 s"),
-            statusByDownloadId = mapOf(9 to "Syncing… 40%"),
+            statusByServerIndex = mapOf(0 to UiText.Raw("Synced −3.0 s")),
+            statusByDownloadId = mapOf(9 to UiText.Raw("Syncing… 40%")),
         )
-        assertEquals("Synced −3.0 s", sync.statusFor(SubtitleIdentity.ServerSidecar(0)))
-        assertEquals("Syncing… 40%", sync.statusFor(SubtitleIdentity.Downloaded(9, SubtitleMediaIdentity())))
+        assertEquals(UiText.Raw("Synced −3.0 s"), sync.statusFor(SubtitleIdentity.ServerSidecar(0)))
+        assertEquals(UiText.Raw("Syncing… 40%"), sync.statusFor(SubtitleIdentity.Downloaded(9, SubtitleMediaIdentity())))
         assertEquals(null, sync.statusFor(SubtitleIdentity.ServerSidecar(1)))
         assertEquals(null, sync.statusFor(SubtitleIdentity.Off))
     }
@@ -86,6 +101,7 @@ class TvSubtitleHudStateTest {
             pendingIdentity = null,
             hudOpen = false,
             focusedStableId = id(sidecar(4)),
+            resources = resources,
         )
 
         assertFalse(presentation.hudOpen)
@@ -100,6 +116,7 @@ class TvSubtitleHudStateTest {
             pendingIdentity = sidecar(4),
             hudOpen = true,
             focusedStableId = id(sidecar(4)),
+            resources = resources,
         )
 
         assertTrue(presentation.hudOpen)
@@ -132,6 +149,7 @@ class TvSubtitleHudStateTest {
             pendingIdentity = null,
             hudOpen = true,
             focusedStableId = id(sidecar(4)),
+            resources = resources,
         )
 
         assertTrue(cancelled.focusTrapActive)
@@ -160,10 +178,51 @@ class TvSubtitleHudStateTest {
             pendingIdentity = sidecar(4),
             hudOpen = true,
             focusedStableId = before.focusedStableId,
+            resources = resources,
         )
 
         assertEquals(id(sidecar(4)), refreshed.focusedStableId)
         assertTrue(refreshed.rows.single { it.identity == sidecar(4) }.focused)
+    }
+
+    @Test
+    fun `a track no route can show is listed in place but never takes focus`() {
+        val english = PlayerSubtitleInfo(
+            index = 0,
+            language = "eng",
+            codec = "srt",
+            source = "external",
+            url = "/s/0.vtt",
+            serverTrackId = "file:1:subtitle:0",
+            serverDelivery = SUBTITLE_DELIVERY_SIDECAR,
+        )
+        val unrecognized = PlayerSubtitleInfo(
+            index = 1,
+            language = "eng",
+            source = "embedded",
+            url = "",
+            serverTrackId = "file:1:subtitle:1",
+            serverDelivery = SUBTITLE_DELIVERY_BURN_IN_ONLY,
+            unplayable = true,
+        )
+        val options = buildTvSubtitleHudOptions(
+            subtitleUrls = listOf(english, unrecognized),
+            subtitleTracks = emptyList(),
+            resources = resources,
+        )
+        assertEquals(listOf(false, false, true), options.map(TvSubtitleHudOption::unplayable))
+
+        // A stale focus on it, or Off committed, lands on a row that can take focus.
+        val presentation = buildTvSubtitleHudPresentation(
+            options = options,
+            committedIdentity = SubtitleIdentity.Off,
+            pendingIdentity = null,
+            hudOpen = true,
+            focusedStableId = options[2].stableId,
+            resources = resources,
+        )
+        assertEquals(options[0].stableId, presentation.focusedStableId)
+        assertTrue(presentation.rows[2].unplayable)
     }
 
     @Test
@@ -183,6 +242,7 @@ class TvSubtitleHudStateTest {
             pendingIdentity = full,
             hudOpen = true,
             focusedStableId = choices[1].stableId,
+            resources = resources,
         )
         assertEquals(2, presentation.rows.map { it.stableId }.distinct().size)
         assertTrue(presentation.rows.single { it.identity == full }.focused)
@@ -198,6 +258,7 @@ class TvSubtitleHudStateTest {
         pendingIdentity = pending,
         hudOpen = true,
         focusedStableId = focusedId,
+        resources = resources,
     )
 
     private fun options(): List<TvSubtitleHudOption> = listOf(

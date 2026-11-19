@@ -41,7 +41,21 @@ class TvStartupMetadataOwnerTest {
     @Test fun finalOwnerChangeRestoresDeferredPredecessor() = runTest { scenario("predecessor") }
     @Test fun changedOwnerDuringLocalPreparationCannotStart() = runTest { scenario("preparation") }
 
-    private suspend fun TestScope.scenario(stage: String) {
+    // A renewal re-reads the saved settings, so only a quality picked in the
+    // player (or named by the route) is carried in the renewal parameters.
+    @Test fun aRenewalCarriesNoQualityThatCameFromTheSettings() = runTest {
+        scenario("success", settings = FakePlayerSettingsStore().apply { preferredQualityFlow.value = "720p" })
+    }
+    @Test fun aRenewalCarriesAQualityPickedInThePlayer() = runTest {
+        scenario("success", pickedQuality = "1080p", expectedCarriedQuality = "1080p")
+    }
+
+    private suspend fun TestScope.scenario(
+        stage: String,
+        settings: FakePlayerSettingsStore = FakePlayerSettingsStore(),
+        pickedQuality: String? = null,
+        expectedCarriedQuality: String? = null,
+    ) {
         val tokens = FakeTokenManager()
         val original = tokens.metadataOwner!!
         if (stage == "missing") tokens.metadataOwner = null
@@ -131,10 +145,17 @@ class TvStartupMetadataOwnerTest {
             val starter = TvVideoPlaybackStarter(
                 CatalogRepository(CatalogApi(client, watchDetail = WatchDetailV2Api(client, tokens, ApiV2Gate.Unrestricted))), manager, profiles,
                 PlaybackCapabilityDetector(context, AudioCapabilityManager(context), LibassBridge(false), SiloClientBuildIdentity(buildNumber = "5", channel = "release")),
-                FakePlayerSettingsStore(), lifecycle,
+                settings, lifecycle,
                 ServerReachabilityMonitor(ApiV2Probe(client)::probeFresh, backgroundScope, { null }), localState,
             )
-            val start = async(startupCoroutine) { starter.start(VideoPlaybackStartRequest(contentId = "item", preferredFileId = 41, roomId = null, resumePositionOverride = null)) }
+            val start = async(startupCoroutine) {
+                starter.start(
+                    VideoPlaybackStartRequest(
+                        contentId = "item", preferredFileId = 41, roomId = null, resumePositionOverride = null,
+                        playbackQualityIntent = pickedQuality,
+                    ),
+                )
+            }
             if (stage in listOf("final", "cancel", "newer", "predecessor")) {
                 entered.await()
                 val active = lifecycle.state.value as SessionState.Active
@@ -165,6 +186,7 @@ class TvStartupMetadataOwnerTest {
                     assertEquals(41, result.fileId)
                     assertEquals("Title", result.title)
                     assertTrue(field("pendingActiveSessionPublication") != null)
+                    assertEquals(expectedCarriedQuality, (field("lastStartParams") as StartParams).qualityPreference)
                     assertEquals(emptyList(), stops)
                 } else { assertIs<VideoPlaybackStartResult.Error>(result); assertEquals(0, starts); assertEquals(emptyList(), stops) }
             }

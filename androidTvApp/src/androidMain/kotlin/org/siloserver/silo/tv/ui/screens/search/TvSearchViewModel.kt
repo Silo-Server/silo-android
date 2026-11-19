@@ -1,5 +1,12 @@
 package org.siloserver.silo.tv.ui.screens.search
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
+import org.siloserver.silo.repository.BOX_SET_SEARCH_GRACE_MILLIS
+import org.siloserver.silo.model.catalog.BOX_SET_TYPE
+import org.siloserver.silo.model.catalog.toSearchCard
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -9,7 +16,6 @@ import org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType
 import org.siloserver.silo.model.navigation.tvMediaModeCapabilities
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.searchPeopleForQuery
@@ -26,13 +32,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.R as CommonR
 
 /** Media type filter in the search header. */
-enum class TvSearchMediaType(val label: String, val wire: String?) {
-    All("All", null),
-    Movies("Movies", "movie"),
-    Series("Series", "series"),
-    Audiobooks("Audiobooks", "audiobook"),
+enum class TvSearchMediaType(@StringRes val label: Int, val wire: String?) {
+    All(CommonR.string.search_filter_all, null),
+    Movies(CommonR.string.search_filter_movies, "movie"),
+    Series(CommonR.string.search_filter_series, "series"),
+    Audiobooks(CommonR.string.search_filter_audiobooks, "audiobook"),
 }
 
 /**
@@ -40,6 +48,10 @@ enum class TvSearchMediaType(val label: String, val wire: String?) {
  * plus audiobooks only when that tab is enabled. Book and manga credits are
  * never searched, because TV does not show those media types.
  */
+/** Box sets are movies; the Series and Audiobooks filters leave them out. */
+internal val TvSearchMediaType.includesBoxSets: Boolean
+    get() = this == TvSearchMediaType.All || this == TvSearchMediaType.Movies
+
 internal fun TvSearchMediaType.peopleMediaScopes(showAudiobooks: Boolean): List<String?> = when (this) {
     TvSearchMediaType.All -> if (showAudiobooks) listOf("video", "audiobook") else listOf("video")
     TvSearchMediaType.Movies -> listOf("movie")
@@ -73,7 +85,7 @@ class TvSearchViewModel(
         val hasMore: Boolean = false,
         val isLoading: Boolean = false,
         val isLoadingMore: Boolean = false,
-        val error: String? = null,
+        val error: UiText? = null,
         val rawResultCount: Int = 0,
         val showAudiobooks: Boolean = false,
     )
@@ -104,6 +116,10 @@ class TvSearchViewModel(
             val caps = libraries.tvMediaModeCapabilities()
             val showAudiobooks = libraryScopeStore.getShowAudiobooksTab()
             ensureActive()
+            // Servers without box sets report no library with them on, so
+            // search never asks those servers for any.
+            val hadBoxSets = boxSetsAvailable
+            boxSetsAvailable = libraries.any { it.boxSetsEnabled }
             // The "Audiobooks" chip sends type=audiobook, so gate it on an
             // actual audiobook-like library — hasAudio also covers music, which
             // wouldn't match the audiobook filter.
@@ -128,7 +144,10 @@ class TvSearchViewModel(
             // If the active filter was forced to change while a query is live,
             // re-run so results aren't left stale under the old filter.
             if (
-                (nextMediaType != current.mediaType || showAudiobooks != current.showAudiobooks) &&
+                (
+                    nextMediaType != current.mediaType || showAudiobooks != current.showAudiobooks ||
+                        boxSetsAvailable != hadBoxSets
+                    ) &&
                 current.query.isNotBlank()
             ) {
                 searchGeneration += 1
@@ -138,6 +157,9 @@ class TvSearchViewModel(
             }
         }
     }
+
+    /** Some library this profile sees has box sets on. */
+    private var boxSetsAvailable = false
 
     private var searchJob: Job? = null
     private var loadMoreJob: Job? = null
@@ -287,7 +309,15 @@ class TvSearchViewModel(
             else it.copy(isLoadingMore = true)
         }
         if (reset) searchPeople(generation, requestedQuery, requestedMediaType, state.showAudiobooks)
+        // Matching box sets lead the grid, ahead of the movies themselves.
+        // They land with the first page, so the grid never shifts under focus.
+        val boxSetsRequest = if (reset && boxSetsAvailable && requestedMediaType.includesBoxSets) {
+            viewModelScope.async { catalogRepository.searchBoxSets(requestedQuery) }
+        } else {
+            null
+        }
 
+        try {
         while (true) {
             val result = catalogRepository.browse(
                 source = "query",
@@ -330,9 +360,14 @@ class TvSearchViewModel(
                         continue
                     }
 
+                    // Box sets only add to the titles, so a slow answer never holds them
+                    // back for long: past the grace period this query shows none.
+                    val boxSetCards = withTimeoutOrNull(BOX_SET_SEARCH_GRACE_MILLIS) { boxSetsRequest?.await() }
+                        .orEmpty().map { it.toSearchCard() }
+                    if (generation != searchGeneration) return
                     continuation = cursor
                     _uiState.update {
-                        val accumulatedItems = if (reset) visibleItems else it.items + visibleItems
+                        val accumulatedItems = if (reset) boxSetCards + visibleItems else it.items + visibleItems
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
@@ -340,7 +375,7 @@ class TvSearchViewModel(
                             total = if (requestedMediaType == TvSearchMediaType.All) {
                                 accumulatedItems.size
                             } else {
-                                response.total
+                                response.total + accumulatedItems.count { item -> item.type == BOX_SET_TYPE }
                             },
                             totalExact = if (requestedMediaType == TvSearchMediaType.All) !response.hasMore else response.totalExact == true,
                             searchDiagnostics = response.searchDiagnostics,
@@ -356,7 +391,7 @@ class TvSearchViewModel(
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
-                            error = result.message.ifBlank { "Search failed" },
+                            error = result.errorText(CommonR.string.search_failed),
                         )
                     }
                     return
@@ -369,12 +404,15 @@ class TvSearchViewModel(
                             // Never the raw exception: it carries the full
                             // request URL and read like a stack trace on a
                             // ten-foot screen.
-                            error = result.errorMessage("Search failed"),
+                            error = result.errorText(CommonR.string.search_failed),
                         )
                     }
                     return
                 }
             }
+        }
+        } finally {
+            boxSetsRequest?.cancel()
         }
     }
 }

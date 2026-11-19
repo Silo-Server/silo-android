@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.reader.reflow
 import org.siloserver.silo.common.ebook.ReaderDisplaySettings
 import org.siloserver.silo.common.ebook.ReaderFontFamily
 import org.siloserver.silo.common.ebook.ReaderTheme
+import java.util.Locale
 
 enum class ReflowTheme(val color: String, val background: String) {
     Light("#1c1b1f", "#fffbfe"),
@@ -42,7 +43,8 @@ data class ReflowStyle(
     val fontStack: String = "Georgia,\"Times New Roman\",serif",
 ) {
     private fun formatLineHeight(): String {
-        val formatted = "%.2f".format(lineHeight)
+        // CSS needs a dot whatever the app language: "1,50" is not a number there.
+        val formatted = String.format(Locale.ROOT, "%.2f", lineHeight)
         // Trim trailing zeros after decimal, but keep at least one decimal digit
         return formatted.trimEnd('0').trimEnd('.')
             .let { if ('.' !in it) "$it.0" else it }

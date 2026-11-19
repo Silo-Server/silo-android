@@ -16,7 +16,10 @@ import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.playback.isClientMountableBitmapCodecFamily
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 
-/** Mounts only the selected artifact. Explicit embedded decisions mount none. */
+/**
+ * Mounts only the selected artifact. Explicit embedded decisions, including a
+ * track the HLS stream carries as a rendition, mount none.
+ */
 fun subtitlesForVideoMediaMount(
     subtitles: List<PlayerSubtitleInfo>,
     playbackPlan: PlaybackExecutionPlan?,
@@ -35,7 +38,8 @@ fun subtitlesForVideoMediaMount(
                     }
                 }
                 ?.takeUnless { row ->
-                    preferMuxedTracks && row.isMuxedInDirectPlayStream(playbackPlan)
+                    row.hlsRendition != null ||
+                        preferMuxedTracks && row.isMuxedInDirectPlayStream(playbackPlan)
                 }
         }
         is SubtitleIdentity.Downloaded -> subtitles.singleOrNull { subtitle ->

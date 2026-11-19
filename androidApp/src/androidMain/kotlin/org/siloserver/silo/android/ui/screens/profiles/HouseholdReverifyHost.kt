@@ -3,7 +3,10 @@ package org.siloserver.silo.android.ui.screens.profiles
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.res.stringResource
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.repository.ProfileRepository
 
 /**
@@ -19,11 +22,11 @@ fun HouseholdReverifyHost(profileRepository: ProfileRepository = koinInject()) {
         PINEntryOverlay(
             profile = it.profile,
             isVerifying = it.isVerifying,
-            error = it.error,
+            error = it.error?.text(),
             errorCount = it.errorCount,
             onPinComplete = session::submitPin,
             onDismiss = session::cancelReverify,
-            prompt = "Enter this PIN to manage profiles",
+            prompt = stringResource(CommonR.string.pin_prompt_manage),
         )
     }
 }

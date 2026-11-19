@@ -38,7 +38,14 @@ data class User(
     val email: String,
     val role: String,
     @SerialName("download_allowed") val downloadAllowed: Boolean = false,
-    val impersonation: ImpersonationInfo? = null
+    val impersonation: ImpersonationInfo? = null,
+    /**
+     * The account holds a temporary password an admin set. Read from the
+     * account, not the session: right after the change it is false while the
+     * access token still carries the restriction. Null from servers that
+     * predate it.
+     */
+    @SerialName("password_change_required") val passwordChangeRequired: Boolean? = null,
 )
 
 @Serializable

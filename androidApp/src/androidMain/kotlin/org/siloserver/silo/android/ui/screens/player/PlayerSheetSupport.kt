@@ -46,6 +46,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 /**
  * Shared behavior for the player's modal bottom sheets.
@@ -206,10 +207,9 @@ private fun KeepPlayerSheetImmersive() {
     }
 }
 
-internal fun formatPlaybackSpeed(speed: Double): String {
-    if (speed % 1.0 == 0.0) return speed.toInt().toString()
-    return String.format(Locale.US, "%.2f", speed).trimEnd('0').trimEnd('.')
-}
+/** 1.0 -> "1", 1.25 -> "1.25", in [locale]'s digits and decimal separator. */
+internal fun formatPlaybackSpeed(speed: Double, locale: Locale = LocaleFormat.locale()): String =
+    LocaleFormat.decimal(speed, maxFractionDigits = 2, locale = locale)
 
 internal val PlayerSheetFlingGuard = object : NestedScrollConnection {
     override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = available

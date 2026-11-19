@@ -4,6 +4,7 @@ import org.siloserver.silo.common.ebook.ReaderDisplaySettings
 import org.siloserver.silo.common.ebook.ReaderFontFamily
 import org.siloserver.silo.common.ebook.ReaderTheme
 import java.io.File
+import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -106,5 +107,17 @@ class ReflowStyleTest {
         val css = ReaderDisplaySettings(lineHeight = 1.9f)
             .toReflowStyle(systemDark = false).toCss()
         assertTrue(css.contains("line-height:1.9"))
+    }
+
+    @Test fun `line height stays a CSS number in a comma-decimal language`() {
+        val previous = Locale.getDefault()
+        Locale.setDefault(Locale.GERMANY)
+        try {
+            val css = ReaderDisplaySettings(lineHeight = 1.5f)
+                .toReflowStyle(systemDark = false).toCss()
+            assertTrue(css.contains("line-height:1.5;"), css)
+        } finally {
+            Locale.setDefault(previous)
+        }
     }
 }

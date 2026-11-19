@@ -7,7 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -31,15 +31,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
@@ -54,8 +57,11 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.LayoutDirection
@@ -64,16 +70,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.overlays.wideCardOverlayScale
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
+import org.siloserver.silo.model.catalog.EpisodeCardCaption
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
 import org.siloserver.silo.tv.ui.components.TvMediaCardContextMenu
+import org.siloserver.silo.tv.ui.components.bidiIsolated
 import org.siloserver.silo.tv.ui.components.tvEpisodeCardWidth
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
@@ -81,17 +90,26 @@ import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
-import org.siloserver.silo.tv.ui.theme.ProgressFill
-import org.siloserver.silo.tv.ui.theme.capsuleCaps
+import org.siloserver.silo.tv.ui.theme.InterFamily
+import org.siloserver.silo.tv.ui.theme.CardOutline
+import org.siloserver.silo.tv.ui.theme.cardFocusedScale
 import org.siloserver.silo.tv.ui.theme.cardScaled
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.localizedResources
+import androidx.compose.ui.platform.LocalConfiguration
+import java.util.Locale
+import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.common.ui.components.WatchProgressBar
+import org.siloserver.silo.common.ui.components.WatchProgressBarDefaults
 
-/** Includes the still, optional caption, and vertical rail padding from the first frame. */
+/** Includes the still, the two-line caption, and vertical rail padding from the first frame. */
 @Composable
 internal fun tvSeriesEpisodeRailHeight(): Dp {
-    val captionHeight = if (LocalCardPresentation.current.caption.showsTitle) {
-        7.dp + with(LocalDensity.current) { 14.sp.toDp() }
-    } else {
-        0.dp
+    val captionHeight = with(LocalDensity.current) {
+        SeriesStillToCaption + SeriesCaptionTitleStyle.lineHeight.toDp() +
+            SeriesCaptionLineGap + SeriesCaptionMetadataStyle.lineHeight.toDp()
     }
     return tvEpisodeCardWidth() * (9f / 16f) + captionHeight + 12.dp
 }
@@ -110,16 +128,21 @@ internal fun TvSeriesEpisodeRailSkeleton() {
         repeat(5) {
             Column(
                 modifier = Modifier.width(cardWidth),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(SeriesStillToCaption),
             ) {
                 Box(
                     Modifier.width(cardWidth).height(cardWidth * (9f / 16f))
                         .background(DarkSurfaceElevated, RoundedCornerShape(8.dp)),
                 )
-                if (LocalCardPresentation.current.caption.showsTitle) {
+                Column(verticalArrangement = Arrangement.spacedBy(SeriesCaptionLineGap)) {
                     Box(
                         Modifier.fillMaxWidth(0.65f)
-                            .height(with(LocalDensity.current) { 14.sp.toDp() })
+                            .height(with(LocalDensity.current) { SeriesCaptionTitleStyle.lineHeight.toDp() })
+                            .background(DarkSurfaceElevated, RoundedCornerShape(3.dp)),
+                    )
+                    Box(
+                        Modifier.fillMaxWidth(0.45f)
+                            .height(with(LocalDensity.current) { SeriesCaptionMetadataStyle.lineHeight.toDp() })
                             .background(DarkSurfaceElevated, RoundedCornerShape(3.dp)),
                     )
                 }
@@ -153,7 +176,6 @@ internal fun TvDetailEpisodeRail(
     currentContentId: String? = null,
     onEpisodeFocused: ((EpisodeListItem) -> Unit)? = null,
     onDirectionUp: (() -> Boolean)? = null,
-    hidesEpisodeTitle: Boolean = false,
     usesSeriesGeometry: Boolean = false,
     carouselJump: TvEpisodeCarouselJump? = null,
     hasPreviousEpisodes: Boolean = false,
@@ -186,7 +208,12 @@ internal fun TvDetailEpisodeRail(
     val defaultFocusRequester = remember { FocusRequester() }
     var observedFocusedContentId by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(carouselJump) {
+    // The jump can arrive before its season joins the continuous rail (the
+    // selected season publishes ahead of the carousel window). Key on whether
+    // the target is present so the jump still lands once that season arrives.
+    val jumpTargetPresent = carouselJump != null &&
+        episodes.any { it.contentId == carouselJump.contentId }
+    LaunchedEffect(carouselJump, jumpTargetPresent) {
         val jump = carouselJump ?: return@LaunchedEffect
         val index = episodes.indexOfFirst { it.contentId == jump.contentId }
         if (index < 0) return@LaunchedEffect
@@ -208,8 +235,17 @@ internal fun TvDetailEpisodeRail(
     // Left/Right step. Re-running this centering animation would race the
     // one-shot tvRailPinOnFocus glide and make Right visually travel backward
     // even though focus reached the correct episode.
-    LaunchedEffect(episodeSetKey) {
+    //
+    // The rail can mount before the suggested episode is in it: a Continue
+    // Watching entry into Season 2 may first show a cached or default Season 1,
+    // and Season 2 joins the continuous rail later. Wait for the target to
+    // appear instead of giving up, but center at most once, and never after the
+    // viewer has started browsing the rail.
+    var initialCenterDone by remember(episodeSetKey) { mutableStateOf(false) }
+    LaunchedEffect(episodeSetKey, currentIndex != null) {
+        if (initialCenterDone || rememberedFocusedContentId != null) return@LaunchedEffect
         val target = currentIndex ?: return@LaunchedEffect
+        initialCenterDone = true
         val itemIndex = target + if (hasPreviousEpisodes) 1 else 0
         listState.scrollToItem(itemIndex)
         val info = listState.layoutInfo
@@ -217,12 +253,56 @@ internal fun TvDetailEpisodeRail(
             ?: return@LaunchedEffect
         val viewportCenter = (info.viewportStartOffset + info.viewportEndOffset) / 2f
         val itemCenter = item.offset + item.size / 2f
-        listState.animateScrollBy(itemCenter - viewportCenter)
+        // Instant: the rail is only just appearing, so a slide reads as a jump.
+        listState.scrollBy(itemCenter - viewportCenter)
+    }
+
+    // When the previous season loads it replaces the "Loading episodes…"
+    // placeholder. LazyRow keeps its place by the first visible item's key, so
+    // if that was the placeholder it would fall back to index 0 and snap the
+    // rail to the series' first episode. Put the episode that replaces the
+    // placeholder in the placeholder's exact slot instead, so nothing moves.
+    val lastFirstEpisodeId = remember { arrayOfNulls<String>(1) }
+    SideEffect {
+        val newFirstId = episodes.first().contentId
+        val oldFirstId = lastFirstEpisodeId[0]
+        lastFirstEpisodeId[0] = newFirstId
+        if (oldFirstId == null || oldFirstId == newFirstId) return@SideEffect
+        if (listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key != PreviousSeasonPlaceholderKey) {
+            return@SideEffect
+        }
+        val oldFirstIndex = episodes.indexOfFirst { it.contentId == oldFirstId }
+        if (oldFirstIndex <= 0) return@SideEffect
+        listState.requestScrollToItem(
+            index = oldFirstIndex - 1 + if (hasPreviousEpisodes) 1 else 0,
+            scrollOffset = listState.firstVisibleItemScrollOffset,
+        )
+    }
+
+    // Series only, on first appearance: keep the skeleton up until the
+    // starting episode and the season before it are in the rail, so the rail
+    // appears already in place. Otherwise it shows a half-loaded row (a
+    // "Loading episodes…" card and a couple of episodes), then slides when the
+    // earlier season fills in. Capped so a slow season load can't hide it.
+    var revealed by remember(episodeSetKey) { mutableStateOf(!usesSeriesGeometry) }
+    val startSettled = (currentContentId == null || currentIndex != null) && !hasPreviousEpisodes
+    LaunchedEffect(revealed) {
+        if (revealed) return@LaunchedEffect
+        delay(InitialRevealTimeoutMillis)
+        revealed = true
+    }
+    LaunchedEffect(revealed, startSettled) {
+        if (revealed || !startSettled) return@LaunchedEffect
+        // Let the centering scroll above land before the rail shows.
+        repeat(2) { withFrameNanos { } }
+        revealed = true
     }
 
     TvRailScrollBehavior {
+    Box {
     LazyRow(
         modifier = modifier
+            .graphicsLayer { alpha = if (revealed) 1f else 0f }
             .fillMaxWidth()
             .then(if (usesSeriesGeometry) Modifier.height(tvSeriesEpisodeRailHeight()) else Modifier)
             .then(
@@ -238,7 +318,9 @@ internal fun TvDetailEpisodeRail(
                     Modifier
                 },
             )
-            .onFocusChanged { if (!it.hasFocus) onCarouselFocusLost() }
+            .onFocusChanged {
+                if (it.hasFocus) revealed = true else onCarouselFocusLost()
+            }
             .focusGroup()
             .then(
                 if (entryIndex != null) {
@@ -257,7 +339,7 @@ internal fun TvDetailEpisodeRail(
         horizontalArrangement = Arrangement.spacedBy(if (usesSeriesGeometry) 20.dp else 18.dp),
     ) {
         if (hasPreviousEpisodes) {
-            item(key = "previous-season-loading", contentType = "episode-loading") {
+            item(key = PreviousSeasonPlaceholderKey, contentType = "episode-loading") {
                 TvEpisodeBoundaryPlaceholder(carouselLoadError)
             }
         }
@@ -275,7 +357,6 @@ internal fun TvDetailEpisodeRail(
                 onClick = { onEpisodeSelected(episode) },
                 onSetWatched = { watched -> onSetWatched(episode.contentId, watched) },
                 onSetFavorite = { favorite -> onSetFavorite(episode.contentId, favorite) },
-                hidesEpisodeTitle = hidesEpisodeTitle,
                 usesSeriesGeometry = usesSeriesGeometry,
                 modifier = Modifier
                     .tvRailPinOnFocus(
@@ -322,8 +403,14 @@ internal fun TvDetailEpisodeRail(
             }
         }
     }
+    if (!revealed) TvSeriesEpisodeRailSkeleton()
+    }
     }
 }
+
+private const val InitialRevealTimeoutMillis = 1_000L
+
+private const val PreviousSeasonPlaceholderKey = "previous-season-loading"
 
 @Composable
 private fun TvEpisodeBoundaryPlaceholder(failed: Boolean) {
@@ -337,7 +424,9 @@ private fun TvEpisodeBoundaryPlaceholder(failed: Boolean) {
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = if (failed) "Press again to retry" else "Loading episodes…",
+                text = stringResource(
+                    if (failed) CommonR.string.detail_episodes_pressToRetry else CommonR.string.detail_episodes_loading,
+                ),
                 fontSize = 14.sp,
                 color = SiloSecondaryText,
             )
@@ -354,7 +443,6 @@ private fun TvDetailEpisodeCard(
     onClick: () -> Unit,
     onSetWatched: (Boolean) -> Unit,
     onSetFavorite: (Boolean) -> Unit,
-    hidesEpisodeTitle: Boolean,
     usesSeriesGeometry: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -367,9 +455,6 @@ private fun TvDetailEpisodeCard(
     val visibleOverview = episode.overview
         ?.takeIf { it.isNotBlank() && !spoilers.hidesOverview(unwatched) }
     val stillHeight = if (usesSeriesGeometry) cardWidth * (9f / 16f) else 130.dp.cardScaled()
-    val eyebrowFontSize = if (usesSeriesGeometry) 11.sp else 14.sp
-    val eyebrowLineHeight = if (usesSeriesGeometry) 14.sp else 17.sp
-    val caption = LocalCardPresentation.current.caption
     val cornerRadius = if (usesSeriesGeometry) 8.dp else 5.dp
     val shape = RoundedCornerShape(cornerRadius)
 
@@ -383,11 +468,12 @@ private fun TvDetailEpisodeCard(
         )
     }
 
-    // Scale + shadow only — no TV Material focus halo. The white ring on the
-    // still (driven by isFocused below) is the focus cue. Matches tvOS
-    // `EpisodeCardStyle`.
+    // Scale + shadow only — no TV Material focus halo. The white outline on
+    // the still (driven by isFocused below) is the focus cue, shared with the
+    // current episode and every other card, as on tvOS.
+    val focusedScale = cardFocusedScale()
     val scale by animateFloatAsState(
-        targetValue = if (isFocused) 1.04f else 1f,
+        targetValue = if (isFocused) focusedScale else 1f,
         animationSpec = tween(durationMillis = 180),
         label = "episodeCardScale",
     )
@@ -404,7 +490,7 @@ private fun TvDetailEpisodeCard(
                 onClick = onClick,
                 onLongClick = { menuExpanded = true },
             ),
-        verticalArrangement = Arrangement.spacedBy(if (usesSeriesGeometry) 7.dp else 9.dp),
+        verticalArrangement = Arrangement.spacedBy(if (usesSeriesGeometry) SeriesStillToCaption else 9.dp),
     ) {
         TvMediaCardContextMenu(
             expanded = menuExpanded,
@@ -422,7 +508,7 @@ private fun TvDetailEpisodeCard(
                 .height(stillHeight)
                 .then(if (usesSeriesGeometry) Modifier.scale(scale) else Modifier)
                 .shadow(
-                    elevation = if (isFocused && usesSeriesGeometry) 12.dp else if (isFocused) 18.dp else 8.dp,
+                    elevation = if (isFocused) CardOutline.shadowElevation else 8.dp,
                     shape = shape,
                     ambientColor = Color.Black,
                     spotColor = Color.Black,
@@ -430,10 +516,10 @@ private fun TvDetailEpisodeCard(
                 .clip(shape)
                 .background(DarkSurfaceElevated)
                 .then(
-                    when {
-                        isFocused -> Modifier.border(3.dp, Color.White.copy(alpha = 0.9f), shape)
-                        isCurrent -> Modifier.border(2.dp, Color.White.copy(alpha = 0.7f), shape)
-                        else -> Modifier
+                    if (isFocused || isCurrent) {
+                        Modifier.border(CardOutline.width, CardOutline.color, shape)
+                    } else {
+                        Modifier
                     },
                 ),
         ) {
@@ -448,6 +534,8 @@ private fun TvDetailEpisodeCard(
             )
 
             if (episode.userData?.played == true) {
+                // At the wide cards' overlay scale, like their badges.
+                val checkScale = wideCardOverlayScale()
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -455,8 +543,8 @@ private fun TvDetailEpisodeCard(
                 )
                 Box(
                     modifier = Modifier
-                        .padding(6.dp)
-                        .size(20.dp)
+                        .padding(6.dp * checkScale)
+                        .size(20.dp * checkScale)
                         .clip(CircleShape)
                         .background(Color.White)
                         .align(Alignment.TopEnd),
@@ -466,171 +554,129 @@ private fun TvDetailEpisodeCard(
                         imageVector = Icons.Default.Check,
                         contentDescription = null,
                         tint = Color.Black,
-                        modifier = Modifier.size(9.dp),
+                        modifier = Modifier.size(9.dp * checkScale),
                     )
                 }
             }
 
             episode.progressFraction()?.let { fraction ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(5.dp)
-                        .align(Alignment.BottomStart)
-                        .background(Color.Black.copy(alpha = 0.6f)),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(fraction)
-                            .height(5.dp)
-                            .background(ProgressFill),
-                    )
-                }
+                WatchProgressBar(fraction, height = WatchProgressBarDefaults.TvHeight)
             }
         }
 
-        // Series keeps the compact tvOS-style single caption line:
-        // "S1 · E1 · Episode name". Other episode rails retain their richer
-        // title/metadata/synopsis hierarchy.
-        if (caption.showsTitle) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+        // The caption shared with tvOS: "S01E02 · Title" over the air date and
+        // runtime. On the Series page the focused episode's description sits in
+        // the hero above the rail, so those cards leave it out. The current
+        // episode is marked by its still's border, as on tvOS. The card
+        // recomposes on every frame of its focus animation, so the text is built
+        // once per episode.
+        val resources = localizedResources()
+        val configuration = LocalConfiguration.current
+        val dateLocale = currentFormatLocale()
+        // A right-to-left interface isolates the title as a catalog placeholder (D28).
+        val rtl = isRightToLeftText()
+        val title = remember(episode, configuration) {
+            val episodeForCaption = if (rtl) episode else episode.copy(title = episode.title?.trim()?.let { bidiIsolated(it, false) })
+            EpisodeCardCaption.title(episodeForCaption).text(resources)
+        }
+        val metadata = remember(episode, configuration, dateLocale) {
+            EpisodeCardCaption.metadata(
+                airDate = abbreviatedEpisodeDate(episode.airDate, dateLocale),
+                runtimeMinutes = episode.runtime,
+            )?.text(resources)
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(if (usesSeriesGeometry) SeriesCaptionLineGap else 4.dp)) {
+            Text(
+                text = title,
+                style = if (usesSeriesGeometry) SeriesCaptionTitleStyle else CaptionTitleStyle,
+                color = if (isCurrent || isFocused) SiloOnSurface else SiloOnSurface.copy(alpha = 0.92f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // Drawn even when empty: other episode rails take their height from
+            // the cards on screen, so every card keeps both lines.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = metadata.orEmpty(),
+                    style = if (usesSeriesGeometry) SeriesCaptionMetadataStyle else CaptionMetadataStyle,
+                    color = SiloOnSurface.copy(alpha = 0.7f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                // Only these cards show the description, so only they mark a
+                // translated one.
+                if (!usesSeriesGeometry && visibleOverview != null &&
+                    hasMachineTranslatedOverview(episode.machineTranslatedFields)
                 ) {
-                    Text(
-                        text = if (usesSeriesGeometry) "S${episode.seasonNumber} · E${episode.episodeNumber}" else "EPISODE ${episode.episodeNumber}",
-                        fontSize = eyebrowFontSize,
-                        lineHeight = eyebrowLineHeight,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = if (usesSeriesGeometry) 0.55.sp else 0.75.sp,
-                        color = SiloOnSurface.copy(alpha = 0.7f),
-                        maxLines = 1,
-                    )
-                    if (hidesEpisodeTitle) {
-                        episode.title?.trim()?.takeIf { it.isNotEmpty() }?.let { inlineTitle ->
-                            Text(
-                                text = "·",
-                                fontSize = eyebrowFontSize,
-                                lineHeight = eyebrowLineHeight,
-                                fontWeight = FontWeight.Bold,
-                                color = SiloOnSurface.copy(alpha = 0.7f),
-                                maxLines = 1,
-                            )
-                            Text(
-                                text = inlineTitle,
-                                modifier = Modifier.weight(1f),
-                                fontSize = 11.5.sp,
-                                lineHeight = eyebrowLineHeight,
-                                fontWeight = FontWeight.SemiBold,
-                                color = SiloOnSurface.copy(alpha = 0.86f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    } else if (isCurrent) {
-                        NowViewingTag()
-                    }
-                    if (!hidesEpisodeTitle && caption.showsMetadata &&
-                        visibleOverview != null &&
-                        hasMachineTranslatedOverview(episode.machineTranslatedFields)
-                    ) {
-                        TvMachineTranslatedLabel(compact = true, iconSize = 12.dp)
-                    }
+                    TvMachineTranslatedLabel(compact = true, iconSize = 12.dp)
                 }
-
-                if (!hidesEpisodeTitle) {
-                    Text(
-                        text = episode.title?.trim()?.takeIf { it.isNotEmpty() }
-                            ?: "Episode ${episode.episodeNumber}",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = when {
-                            isCurrent -> SiloOnSurface
-                            isFocused -> SiloOnSurface
-                            else -> SiloOnSurface.copy(alpha = 0.92f)
-                        },
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-
-                if (!hidesEpisodeTitle && caption.showsMetadata) {
-                    episodeMetadataLine(episode)?.let { metadata ->
-                        Text(
-                            text = metadata,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = SiloOnSurface.copy(alpha = 0.75f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-
-                    // tvOS uses lineLimit(3, reservesSpace: true): always reserve
-                    // exactly 3 text lines (minLines/maxLines rather than a fixed dp
-                    // clamp so accessibility text scaling can't clip glyphs), and
-                    // render even when there is no overview so every card keeps
-                    // identical vertical metrics. Spoiler protection blanks it
-                    // the same way.
-                    Text(
-                        text = visibleOverview.orEmpty(),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = SiloSecondaryText,
-                        minLines = 3,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 20.sp,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
+            }
+            if (!usesSeriesGeometry) {
+                // Outside the Series page (a season or episode page kept when its
+                // series can't be loaded) the hero doesn't follow focus, so the
+                // card keeps the description. Three lines are kept even when
+                // spoiler protection empties them, so the cards stay one height.
+                Text(
+                    text = visibleOverview.orEmpty(),
+                    style = CaptionOverviewStyle,
+                    color = SiloSecondaryText,
+                    minLines = 3,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
 }
 
-@Composable
-private fun NowViewingTag() {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50.dp))
-            .background(Color.White)
-            .padding(horizontal = 7.dp, vertical = 2.dp),
-    ) {
-        Text(
-            text = "NOW VIEWING",
-            style = capsuleCaps.copy(
-                fontSize = 14.sp,
-                lineHeight = 17.sp,
-                letterSpacing = 0.55.sp,
-            ),
-            color = Color.Black,
-        )
-    }
-}
+// tvOS's Series caption (20pt title, 17pt date line) on the 960×540dp canvas.
+// tvSeriesEpisodeRailHeight and the skeleton are built from these values.
+private val SeriesStillToCaption = 7.dp
+private val SeriesCaptionLineGap = 3.dp
+private val SeriesCaptionTitleStyle = TextStyle(
+    fontFamily = InterFamily,
+    fontSize = 11.5.sp,
+    lineHeight = 14.sp,
+    fontWeight = FontWeight.SemiBold,
+    textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
+)
+private val SeriesCaptionMetadataStyle = TextStyle(
+    fontFamily = InterFamily,
+    fontSize = 10.5.sp,
+    lineHeight = 13.sp,
+    fontWeight = FontWeight.Medium,
+)
+private val CaptionTitleStyle = TextStyle(
+    fontFamily = InterFamily,
+    fontSize = 18.sp,
+    lineHeight = 22.sp,
+    fontWeight = FontWeight.SemiBold,
+    textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
+)
+private val CaptionMetadataStyle = TextStyle(
+    fontFamily = InterFamily,
+    fontSize = 14.sp,
+    lineHeight = 17.sp,
+    fontWeight = FontWeight.Medium,
+)
+private val CaptionOverviewStyle = TextStyle(
+    fontFamily = InterFamily,
+    fontSize = 16.sp,
+    lineHeight = 20.sp,
+    fontWeight = FontWeight.Normal,
+    textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
+)
 
-private fun episodeMetadataLine(episode: EpisodeListItem): String? {
-    val parts = buildList {
-        abbreviatedEpisodeDate(episode.airDate)?.let(::add)
-        episodeRuntime(episode.runtime)?.let(::add)
-    }
-    return parts.takeIf { it.isNotEmpty() }?.joinToString("  ·  ")
-}
-
-private fun episodeRuntime(runtimeMinutes: Int): String? {
-    if (runtimeMinutes <= 0) return null
-    return if (runtimeMinutes >= 60) {
-        "${runtimeMinutes / 60}h ${runtimeMinutes % 60}m"
-    } else {
-        "${runtimeMinutes}m"
-    }
-}
-
-// Shared UTC-instant → device-local formatting (tvOS parity) so the card
-// dates agree with the hero facts row.
-private fun abbreviatedEpisodeDate(raw: String?): String? =
-    TvDetailMetadata.abbreviatedDate(raw)
+// Shared with the hero facts row (tvOS parity), so the card dates agree with it.
+private fun abbreviatedEpisodeDate(raw: String?, locale: Locale): String? =
+    TvDetailMetadata.abbreviatedDate(raw, locale = locale)
 
 private fun EpisodeListItem.progressFraction(): Float? {
     val user = userData ?: return null

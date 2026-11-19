@@ -13,6 +13,8 @@ class ReaderBottomChromeLabelTest {
                 capabilities = ReaderCapabilities.forFormat(BookFormat.Unknown),
                 format = BookFormat.Unknown,
             ),
+            pageProgressLabel = "0% - Page 1",
+            externalReaderLabel = "External reader",
         )
 
         assertFalse(label.orEmpty().contains("Page"))

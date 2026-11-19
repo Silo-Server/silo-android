@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.settings
 
 import android.content.Context
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.SettingKeys
@@ -52,7 +53,7 @@ data class CardPresentationUiState(
 )
 
 /**
- * Cached card-presentation (poster size + caption) state for the signed-in
+ * Cached card-presentation (poster size) state for the signed-in
  * profile. Same shape as [OverlayPrefsStore]: lazy hydration, refresh on
  * foreground/reconnect via [ServerDrivenConfigRefresher], optimistic writes
  * with rollback, and [clear] at sign-out boundaries.
@@ -69,6 +70,14 @@ interface CardPresentationStore {
 
     /** Idempotent first-load. Safe to call from every provider mount. */
     suspend fun hydrateIfNeeded()
+
+    /**
+     * Applies this identity's last-known value from the local cache, without
+     * the network, if nothing has loaded yet. Idempotent and cheap after the
+     * first call, so work that runs before the UI (such as sizing the first
+     * Home read) can see the user's choice.
+     */
+    suspend fun seedFromCache() {}
 
     /** Re-probe capabilities + re-resolve the effective value. */
     suspend fun refresh()
@@ -97,6 +106,7 @@ class DefaultCardPresentationStore(
     private val getActiveProfileId: suspend () -> String?,
     private val getServerUrl: suspend () -> String?,
     private val getDeviceMetadata: suspend () -> SiloDeviceMetadata?,
+    private val getActiveAccountId: suspend () -> String? = { null },
 ) : CardPresentationStore {
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -111,6 +121,10 @@ class DefaultCardPresentationStore(
 
     @Volatile
     private var hasHydrated: Boolean = false
+
+    // Whether this session's cached value has been applied (or there was none).
+    @Volatile
+    private var hasSeeded: Boolean = false
 
     // The last state confirmed by a canonical read or write; the rollback
     // target for a failed optimistic edit.
@@ -146,19 +160,24 @@ class DefaultCardPresentationStore(
         // Seed from the last-known cache for this exact identity so cold start
         // renders at the right size without a resize jump once the network
         // answer lands.
-        currentIdentity()?.let { identity ->
-            readCachedState(identity)?.let { cached ->
-                synchronized(stateLock) {
-                    // Only paint the cache over untouched (pre-hydration,
-                    // pre-edit) state.
-                    if (!hasHydrated && _state.value == confirmedState) {
-                        confirmedState = cached
-                        _state.value = cached
-                    }
+        seedFromCache()
+        refresh()
+    }
+
+    override suspend fun seedFromCache() {
+        if (hasSeeded || hasHydrated) return
+        val identity = currentIdentity() ?: return
+        readCachedState(identity)?.let { cached ->
+            synchronized(stateLock) {
+                // Only paint the cache over untouched (pre-hydration,
+                // pre-edit) state.
+                if (!hasHydrated && _state.value == confirmedState) {
+                    confirmedState = cached
+                    _state.value = cached
                 }
             }
         }
-        refresh()
+        hasSeeded = true
     }
 
     /**
@@ -356,7 +375,7 @@ class DefaultCardPresentationStore(
     override suspend fun clearDeviceOverride() =
         // "Only this device" is off the moment the row is deleted, so demote
         // the source right away rather than leaving it at DeviceOverride until
-        // the refresh lands: the toggle would snap back, and a preset picked
+        // the refresh lands: the toggle would snap back, and a size picked
         // in between would be written at `profile_device` again — resurrecting
         // the override the user just removed.
         deleteScope(optimisticSource = CardPresentationSource.ClientFamily) {
@@ -441,6 +460,7 @@ class DefaultCardPresentationStore(
             _state.value = CardPresentationUiState()
             confirmedState = _state.value
             hasHydrated = false
+            hasSeeded = false
             // Let the next session's hydrateIfNeeded run instead of observing
             // the previous session's loading flag and returning early.
             _isLoading.value = false
@@ -455,19 +475,23 @@ class DefaultCardPresentationStore(
      */
     private data class Identity(
         val serverUrl: String,
+        val accountId: String?,
         val profileId: String,
         val clientFamily: String,
         val deviceId: String,
     ) {
-        val cacheKeyPrefix: String =
-            settingsCachePrefix("cp_", "$serverUrl|$profileId|$clientFamily|$deviceId")
+        val cacheKeyPrefix: String = settingsCachePrefix(
+            "cp_",
+            AccountScopedKeys.identity(serverUrl, accountId, profileId) + "|$clientFamily|$deviceId",
+        )
     }
 
-    private suspend fun currentIdentity(): Identity? {
-        val profileId = getActiveProfileId() ?: return null
+    private suspend fun currentIdentity(): Identity? = AccountScopedKeys.readStable(getActiveAccountId) { accountId ->
+        val profileId = getActiveProfileId() ?: return@readStable null
         val device = getDeviceMetadata()
-        return Identity(
+        Identity(
             serverUrl = getServerUrl().orEmpty(),
+            accountId = accountId,
             profileId = profileId,
             clientFamily = device?.clientFamily.orEmpty(),
             deviceId = device?.id.orEmpty(),

@@ -10,18 +10,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import org.siloserver.silo.common.player.SleepTimerChoice
-
-private data class SleepOption(val label: String, val choice: SleepTimerChoice)
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.pluralStringResource
 
 // Apple's set: Off / 15 / 30 / 60 minutes only — no end-of-chapter /
 // end-of-book boundary (SleepTimerChoice was trimmed to Off / Minutes). Matches
 // the phone AudiobookSleepTimerSheet.
 private val SLEEP_OPTIONS = listOf(
-    SleepOption("Off", SleepTimerChoice.Off),
-    SleepOption("15 minutes", SleepTimerChoice.Minutes(15)),
-    SleepOption("30 minutes", SleepTimerChoice.Minutes(30)),
-    SleepOption("60 minutes", SleepTimerChoice.Minutes(60)),
+    SleepTimerChoice.Off,
+    SleepTimerChoice.Minutes(15),
+    SleepTimerChoice.Minutes(30),
+    SleepTimerChoice.Minutes(60),
 )
+
+@Composable
+private fun SleepTimerChoice.label(): String = when (this) {
+    SleepTimerChoice.Off -> stringResource(CommonR.string.audiobook_sleepTimer_off)
+    is SleepTimerChoice.Minutes -> pluralStringResource(CommonR.plurals.player_sleepTimer_minutes, minutes, minutes)
+}
 
 /** Focusable sleep-timer overlay mapping rows to the shared VM's
  *  [SleepTimerChoice]. Replaces the phone SleepTimerSheet (spec §4.9). */
@@ -34,12 +41,12 @@ fun TvAudiobookSleepPanel(
 ) {
     val listState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
-    val focusIndex = SLEEP_OPTIONS.indexOfFirst { it.choice == currentChoice }.coerceAtLeast(0)
+    val focusIndex = SLEEP_OPTIONS.indexOfFirst { it == currentChoice }.coerceAtLeast(0)
     // Scroll only; the scaffold retries until focus is observed on the row.
     LaunchedEffect(Unit) { listState.scrollToItem(focusIndex) }
 
     TvAudiobookOverlayScaffold(
-        title = "Sleep timer",
+        title = stringResource(CommonR.string.player_sleepTimer_title),
         initialFocus = focusRequester,
         modifier = modifier,
         onAcquisitionFailed = onFocusAcquisitionFailed,
@@ -50,12 +57,12 @@ fun TvAudiobookSleepPanel(
                 .fillMaxWidth()
                 .weight(1f),
         ) {
-            itemsIndexed(SLEEP_OPTIONS) { i, option ->
+            itemsIndexed(SLEEP_OPTIONS) { i, choice ->
                 TvAudiobookOverlayRow(
-                    label = option.label,
-                    isCurrent = option.choice == currentChoice,
+                    label = choice.label(),
+                    isCurrent = choice == currentChoice,
                     focusRequester = if (i == focusIndex) focusRequester else null,
-                    onSelect = { onSelectSleep(option.choice) },
+                    onSelect = { onSelectSleep(choice) },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

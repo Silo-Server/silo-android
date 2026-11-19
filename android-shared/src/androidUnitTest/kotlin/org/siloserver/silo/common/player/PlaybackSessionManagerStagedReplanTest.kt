@@ -57,10 +57,13 @@ import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackStreamV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleArtifactV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleDecisionV3
+import org.siloserver.silo.model.playback.PlaybackSubtitleHlsRenditionV3
+import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryHlsRenditionV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
 import org.siloserver.silo.model.playback.PlaybackTerminalV3
 import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
+import org.siloserver.silo.model.playback.SUBTITLE_HLS_RENDITION_FAILED_CLASSIFICATION
 import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
 import org.siloserver.silo.model.playback.SubtitleFidelityPreference
 import org.siloserver.silo.network.ApiResult
@@ -758,6 +761,193 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
+    fun `a replan that keeps the playing stream is marked for adoption in place`() = runTest {
+        fun everyTrack(selected: Int?) = basePlan("s1").copy(
+            planId = "plan-r$selected",
+            planAttemptKey = "v3:test:r$selected",
+            selectedTracks = SelectedPlaybackTracksV3(
+                audio = audioTrack(fileId = 42),
+                subtitle = selected?.let { PlaybackTrackIdentityV3(subtitleTrackId(fileId = 42, index = it), it) },
+            ),
+            subtitle = PlaybackSubtitleDecisionV3(
+                mode = if (selected == null) PlaybackSubtitleModeV3.OFF else PlaybackSubtitleModeV3.RENDER,
+                trackId = selected?.let { subtitleTrackId(fileId = 42, index = it) },
+                hlsRendition = selected?.let {
+                    PlaybackSubtitleHlsRenditionV3("subs", "Track $it", "vtt", "text/vtt", index = it + 1)
+                },
+                inventory = subtitleInventory(fileId = 42, sessionId = "s1", maxIndex = 4).map {
+                    it.copy(
+                        hlsRendition = PlaybackSubtitleInventoryHlsRenditionV3(
+                            "subs",
+                            "Track ${it.combinedIndex}",
+                            it.combinedIndex + 1,
+                        ),
+                    )
+                },
+            ),
+        )
+        val harness = Harness(
+            startResponses = listOf(response(everyTrack(3))),
+            replanResponse = { index, _ ->
+                response(if (index == 0) everyTrack(4) else replanPlan("sidecar"))
+            },
+        )
+        harness.start()
+
+        val switch = harness.stageSidecar()
+        assertTrue(switch.candidate.inPlace, "another rendition of the same stream")
+        assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(harness.manager.commitStagedVideoReplan(switch))
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+        assertEquals(emptyList(), harness.stoppedSessions)
+
+        // A sidecar answer needs the player to mount it.
+        assertFalse(harness.stageSidecar().candidate.inPlace)
+    }
+
+    @Test
+    fun `only a subtitle pick is adopted in place`() = runTest {
+        val harness = Harness(replanResponse = { _, _ -> response(basePlan("s1").copy(planId = "plan-q", planAttemptKey = "v3:test:q")) })
+        harness.start()
+
+        // The server answered a quality change on the identical transport.
+        val quality = assertIs<ApiResult.Success<StagedVideoReplan>>(
+            harness.manager.stageActiveVideoSessionReplan(
+                classification = "quality_changed",
+                positionSeconds = 42.0,
+                audioTrackIndex = 0,
+                subtitleTrackIndex = null,
+                qualityPreference = "720p-medium",
+            ),
+        ).data
+        assertFalse(quality.candidate.inPlace)
+    }
+
+    @Test
+    fun `hls rendition candidate commits without sidecar artifact`() = runTest {
+        val harness = Harness(
+            replanResponse = { _, _ -> response(renditionPlan("s2")) },
+        )
+        harness.start()
+
+        val staged = harness.stageSidecar()
+        val committed = assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
+            harness.manager.commitStagedVideoReplan(staged),
+        ).data
+
+        val selected = committed.session.subtitleUrls!!.single { it.index == 4 }
+        assertEquals("subs", selected.hlsRendition?.groupId)
+        assertEquals("", selected.url)
+        assertEquals(emptyList(), harness.stoppedSessions)
+    }
+
+    @Test
+    fun `copy remux rendition candidate commits without sidecar artifact`() = runTest {
+        val harness = Harness(
+            replanResponse = { _, _ ->
+                response(renditionPlan("s2", delivery = PlaybackDelivery.SERVER_REMUX_HLS))
+            },
+        )
+        harness.start()
+
+        val staged = harness.stageSidecar()
+        val committed = assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
+            harness.manager.commitStagedVideoReplan(staged),
+        ).data
+
+        assertEquals(PlaybackDelivery.SERVER_REMUX_HLS, committed.plan.delivery)
+        val selected = committed.session.subtitleUrls!!.single { it.index == 4 }
+        assertEquals("subs", selected.hlsRendition?.groupId)
+        assertEquals("", selected.url)
+        assertEquals(emptyList(), harness.stoppedSessions)
+    }
+
+    @Test
+    fun `off candidate that still carries a rendition is rejected`() = runTest {
+        val harness = Harness(
+            replanResponse = { _, _ ->
+                response(
+                    renditionPlan("s2").let { plan ->
+                        plan.copy(
+                            selectedTracks = plan.selectedTracks.copy(subtitle = null),
+                            subtitle = plan.subtitle.copy(mode = PlaybackSubtitleModeV3.OFF, trackId = null),
+                        )
+                    },
+                )
+            },
+        )
+        harness.start()
+
+        val staged = harness.manager.stageActiveVideoSessionReplan(
+            classification = "subtitle_track_changed",
+            positionSeconds = 42.0,
+            audioTrackIndex = 0,
+            subtitleTrackIndex = null,
+        )
+
+        assertIs<ApiResult.Error>(staged)
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+    }
+
+    @Test
+    fun `rendition failure recovers through failure recovery for the sidecar plan`() = runTest {
+        val harness = Harness(
+            replanResponse = { index, _ -> response(if (index == 0) renditionPlan("s2") else replanPlan("s3")) },
+        )
+        harness.start()
+        assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
+            harness.manager.commitStagedVideoReplan(harness.stageSidecar()),
+        )
+
+        val recovered = assertIs<ApiResult.Success<VideoSessionStartV3>>(
+            harness.manager.replanActiveVideoSession(
+                classification = SUBTITLE_HLS_RENDITION_FAILED_CLASSIFICATION,
+                positionSeconds = 43.0,
+                audioTrackIndex = 0,
+                subtitleTrackIndex = 4,
+            ),
+        ).data
+
+        val ready = assertIs<VideoSessionStartV3.Ready>(recovered)
+        assertEquals(sidecarArtifact("s1", 4), ready.plan.subtitle.artifact)
+        val request = harness.replanBodies[1]
+        assertEquals("failure_recovery", request["operation"]!!.jsonPrimitive.content)
+        assertEquals(
+            SUBTITLE_HLS_RENDITION_FAILED_CLASSIFICATION,
+            request["failure"]!!.jsonObject["classification"]!!.jsonPrimitive.content,
+        )
+        assertTrue(
+            "v3:test:rendition-s2" in request["attempted_plan_keys"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertEquals(4, request["selected_tracks"]!!.jsonObject["subtitle"]!!.jsonObject["index"]!!.jsonPrimitive.int)
+        assertEquals(emptyList(), harness.stoppedSessions)
+    }
+
+    @Test
+    fun `rejected rendition recovery keeps the healthy session`() = runTest {
+        val harness = Harness(
+            replanResponse = { index, _ ->
+                if (index == 0) response(renditionPlan("s2")) else response(renditionPlan("s2"))
+            },
+        )
+        harness.start()
+        assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
+            harness.manager.commitStagedVideoReplan(harness.stageSidecar()),
+        )
+
+        // The server repeating the failed plan is a loop. A subtitle retry
+        // reports it as an error rather than a terminal that ends playback.
+        val result = harness.manager.replanActiveVideoSession(
+            classification = SUBTITLE_HLS_RENDITION_FAILED_CLASSIFICATION,
+            positionSeconds = 43.0,
+            audioTrackIndex = 0,
+            subtitleTrackIndex = 4,
+        )
+
+        assertIs<ApiResult.Error>(result)
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+    }
+
+    @Test
     fun `sidecar candidate without artifact is rejected`() = runTest {
         val harness = Harness(
             replanResponse = { _, _ ->
@@ -868,6 +1058,52 @@ class PlaybackSessionManagerStagedReplanTest {
         val candidate = assertIs<ApiResult.Success<StagedVideoReplan>>(staged).data.candidate
         assertEquals(84, candidate.plan.effectiveMediaFileId)
         assertEquals("file:84:subtitle:1", candidate.plan.selectedTracks.subtitle?.id)
+    }
+
+    @Test
+    fun `quality change may move to another edition that has no subtitles`() = runTest {
+        val noSubtitles = replanPlan(planId = "s2").copy(
+            requestedMediaFileId = 42,
+            effectiveMediaFileId = 84,
+            selectedTracks = SelectedPlaybackTracksV3(audio = audioTrack(fileId = 84)),
+            subtitle = PlaybackSubtitleDecisionV3(mode = PlaybackSubtitleModeV3.OFF),
+        )
+        val harness = Harness(replanResponse = { _, _ -> response(noSubtitles) })
+        harness.start()
+
+        val staged = harness.manager.stageActiveVideoSessionReplan(
+            classification = "quality_changed",
+            positionSeconds = 42.0,
+            audioTrackIndex = 0,
+            subtitleTrackIndex = 4,
+            qualityPreference = "720p-high",
+        )
+
+        val candidate = assertIs<ApiResult.Success<StagedVideoReplan>>(staged).data.candidate
+        assertEquals(84, candidate.plan.effectiveMediaFileId)
+        assertEquals(null, candidate.plan.selectedTracks.subtitle)
+    }
+
+    @Test
+    fun `subtitle pick is refused when another edition turns subtitles off`() = runTest {
+        val noSubtitles = replanPlan(planId = "s2").copy(
+            requestedMediaFileId = 42,
+            effectiveMediaFileId = 84,
+            selectedTracks = SelectedPlaybackTracksV3(audio = audioTrack(fileId = 84)),
+            subtitle = PlaybackSubtitleDecisionV3(mode = PlaybackSubtitleModeV3.OFF),
+        )
+        val harness = Harness(replanResponse = { _, _ -> response(noSubtitles) })
+        harness.start()
+
+        val staged = harness.manager.stageActiveVideoSessionReplan(
+            classification = "subtitle_track_changed",
+            positionSeconds = 42.0,
+            audioTrackIndex = 0,
+            subtitleTrackIndex = 4,
+        )
+
+        assertIs<ApiResult.Error>(staged)
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
     }
 
     @Test
@@ -1781,6 +2017,24 @@ class PlaybackSessionManagerStagedReplanTest {
         fun replanPlan(planId: String, sessionId: String = "s1") = sidecarPlan(sessionId).copy(
             planId = "plan-$planId", planAttemptKey = "v3:test:$planId",
         )
+
+        fun renditionPlan(
+            planId: String,
+            sessionId: String = "s1",
+            delivery: PlaybackDelivery = PlaybackDelivery.SERVER_TRANSCODE_HLS,
+        ) = replanPlan(planId, sessionId).let { plan ->
+            plan.copy(
+                planId = "plan-rendition-$planId",
+                planAttemptKey = "v3:test:rendition-$planId",
+                delivery = delivery,
+                stream = plan.stream.copy(url = "/api/v2/playback/transcode/$sessionId/master.m3u8"),
+                subtitle = plan.subtitle.copy(
+                    mode = PlaybackSubtitleModeV3.RENDER,
+                    artifact = null,
+                    hlsRendition = PlaybackSubtitleHlsRenditionV3("subs", "Subtitles", "vtt", "text/vtt"),
+                ),
+            )
+        }
 
         fun basePlan(
             sessionId: String = "s1",

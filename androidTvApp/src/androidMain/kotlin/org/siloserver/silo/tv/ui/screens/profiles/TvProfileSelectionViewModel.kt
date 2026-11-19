@@ -2,18 +2,26 @@ package org.siloserver.silo.tv.ui.screens.profiles
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.common.ui.marquee.SignInHandoff
+import org.siloserver.silo.model.auth.isPasswordChangeRequired
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.authorizedProfileToken
 import org.siloserver.silo.model.profile.householdPrimary
+import org.siloserver.silo.model.server.CachedProfile
 import org.siloserver.silo.model.server.ServerContract
+import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.repository.AccountProfilesRefresher
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileCommitResult
 import org.siloserver.silo.repository.ProfileRepository
@@ -24,7 +32,7 @@ data class TvProfileSelectionUiState(
     val profiles: List<Profile> = emptyList(),
     val canManageProfiles: Boolean = false,
     val isLoading: Boolean = true,
-    val error: String? = null,
+    val error: UiText? = null,
     val selectedProfileId: String? = null,
     // Manage mode: tapping a profile opens edit, plus a delete affordance shows.
     val isManageMode: Boolean = false,
@@ -33,7 +41,7 @@ data class TvProfileSelectionUiState(
     /** The open PIN prompt is the primary profile's, unlocking manage mode rather than selecting it. */
     val pinForManagement: Boolean = false,
     val isVerifyingPin: Boolean = false,
-    val pinError: String? = null,
+    val pinError: UiText? = null,
     // Profile pending delete confirmation (manage mode).
     val deleteCandidate: Profile? = null,
     val isDeleting: Boolean = false,
@@ -45,7 +53,46 @@ data class TvProfileSelectionUiState(
     val openingOnlyProfile: Boolean = false,
     /** The profile just picked on a new TV, while the TV asks whether to open it automatically. */
     val rememberOffer: Profile? = null,
+    val activeServerId: String? = null,
+    /** "Add" asked what to add: a profile, an account, or a server. */
+    val showAddChoice: Boolean = false,
+    /** Where the screen goes next; consumed by [TvProfileSelectionViewModel.onNavigationConsumed]. */
+    val navigation: TvPickerNavigation? = null,
 )
+
+/** Screens the picker hands off to. */
+sealed interface TvPickerNavigation {
+    /** Change Account; [addAccountOn] starts on that server's "Add an account" card. */
+    data class ChangeAccount(val addAccountOn: String? = null) : TvPickerNavigation
+
+    /** The existing server setup flow. */
+    data object AddServer : TvPickerNavigation
+
+    /**
+     * No account is open here (signed out, or waiting to sign in again): the
+     * picker has nothing to show, so the navigator picks the account root.
+     */
+    data object NoAccountOpen : TvPickerNavigation
+}
+
+/** The account's offline copy of a profile, in the shape the tiles and PIN prompt draw. */
+internal fun CachedProfile.asProfile(): Profile = Profile(
+    id = id,
+    name = name,
+    avatar = avatar,
+    avatarUrl = avatarUrl,
+    isPrimary = isPrimary,
+    hasPin = hasPin,
+    isChild = isChild,
+)
+
+/**
+ * The picker's refusal for an account holding a temporary password. The TV
+ * has no form for it: the password is changed on a phone or the web, which
+ * ends this TV's session, so Retry then leads to sign-in.
+ */
+internal val TV_PASSWORD_CHANGE_REQUIRED_MESSAGE: UiText =
+    UiText.Res(CommonR.string.profiles_error_passwordReset)
 
 /**
  * TV profile picker. PIN-protected profiles now work: selecting one opens a
@@ -58,6 +105,10 @@ class TvProfileSelectionViewModel(
     private val consumeSkipsSingleProfile: () -> Boolean = SignInHandoff::consumeSkipsSingleProfilePicker,
     private val profileVerificationRecovery: ProfileVerificationRecovery? = null,
     private val launchPreferences: ProfileLaunchPreferences? = null,
+    /** The open account; null keeps the one-account picker of old. */
+    private val serverRegistry: ServerRegistry? = null,
+    /** Records the open account's list, the copy shown when its server can't be reached. */
+    private val profilesRefresher: AccountProfilesRefresher? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvProfileSelectionUiState())
@@ -79,10 +130,21 @@ class TvProfileSelectionViewModel(
     private var addAfterUnlock = false
 
     init {
+        followActiveServer()
         loadProfiles()
         reloadWhenUpdateRequiredLifts()
         reloadWhenStaleProfileCleared()
         leaveManageModeWhenSessionEnds()
+    }
+
+    /** The active server, which "Add an account" opens Change Account on. */
+    private fun followActiveServer() {
+        val registry = serverRegistry ?: return
+        viewModelScope.launch {
+            registry.activeServerId.collect { server ->
+                _uiState.update { it.copy(activeServerId = server) }
+            }
+        }
     }
 
     /**
@@ -123,13 +185,13 @@ class TvProfileSelectionViewModel(
     }
 
     /**
-     * The admin lookup in [loadProfiles] is a gated v2 call. On launch the
-     * stored verdict can be a stale UPDATE_REQUIRED (server upgraded since),
-     * which the gate rejects without a request; when the launch probe outlasts
-     * its bound, routing proceeds on the stale verdict and the background
-     * refresh records V2 later. The grid must then be reloaded so the manage
-     * affordances match the real answer instead of staying hidden for the
-     * ViewModel's lifetime.
+     * The account and profile lookups in [loadProfiles] are gated v2 calls.
+     * On launch the stored verdict can be a stale UPDATE_REQUIRED (server
+     * upgraded since), which the gate rejects without a request; when the
+     * launch probe outlasts its bound, routing proceeds on the stale verdict
+     * and the background refresh records V2 later. The grid must then be
+     * reloaded so the manage affordances match the real answer instead of
+     * staying hidden for the ViewModel's lifetime.
      */
     private fun reloadWhenUpdateRequiredLifts() {
         val contracts = authRepository?.activeServerContractFlow ?: return
@@ -158,11 +220,33 @@ class TvProfileSelectionViewModel(
     fun loadProfiles() {
         val load = ++loadAttempt
         viewModelScope.launch {
+            // No account open here (signed out, or waiting to sign in again):
+            // nothing to fetch, and nothing for this picker to show.
+            val registry = serverRegistry
+            if (registry != null) {
+                val active = registry.activeAccount.value
+                if (registry.activeAccountId.value == null || active?.needsSignIn == true) {
+                    gridScope = null
+                    profileRepository.householdManagement.end()
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = null,
+                            profiles = emptyList(),
+                            canManageProfiles = false,
+                            isManageMode = false,
+                            deleteCandidate = null,
+                            navigation = TvPickerNavigation.NoAccountOpen,
+                        )
+                    }
+                    return@launch
+                }
+            }
             _uiState.update { it.copy(isLoading = true, error = null) }
+            val loadAccountId = serverRegistry?.activeAccountId?.value
             val scope = profileRepository.captureIdentityScope()
             val skipSingle = skipsSingleProfile ?: consumeSkipsSingleProfile().also { skipsSingleProfile = it }
             val user = (authRepository?.getCurrentUser() as? ApiResult.Success)?.data
-            val isAdmin = user?.role?.equals("admin", ignoreCase = true) == true
             val listed = profileRepository.listProfiles()
             // Two separate reasons to drop this response: a newer load
             // superseded it, or the identity it was fetched under is gone.
@@ -187,6 +271,45 @@ class TvProfileSelectionViewModel(
             }
             when (val result = listed) {
                 is ApiResult.Success -> {
+                    // The account's offline copy (and Change Account's profile count).
+                    try {
+                        profilesRefresher?.recordActive(loadAccountId, result.data)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // The cached tiles stay as they were.
+                    }
+                    // Recording suspended: a newer load or another account
+                    // may have taken over meanwhile, so this grid is stale.
+                    if (load != loadAttempt) return@launch
+                    val accountChanged = serverRegistry?.activeAccountId?.value != loadAccountId
+                    if (accountChanged || !profileRepository.identityScopeUnchanged(scope)) {
+                        // Drop the old grid, as the pre-record check does.
+                        // Nothing else reloads this picker on an account
+                        // change, so load the open account then (or reach
+                        // NoAccountOpen if it was removed). A PIN prompt or
+                        // check still in flight belongs to that grid too.
+                        gridScope = null
+                        pinAttempt++
+                        addAfterUnlock = false
+                        profileRepository.householdManagement.end()
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                profiles = emptyList(),
+                                canManageProfiles = false,
+                                isManageMode = false,
+                                deleteCandidate = null,
+                                pinProfile = null,
+                                pinForManagement = false,
+                                pinError = null,
+                                isVerifyingPin = false,
+                            )
+                        }
+                        dropStaleRememberOffer()
+                        if (accountChanged) loadProfiles()
+                        return@launch
+                    }
                     // The scope moves with the grid, and ONLY with it. See the
                     // phone ViewModel: assigning it before the result meant a
                     // failed reload under a NEW identity left the OLD grid
@@ -196,34 +319,49 @@ class TvProfileSelectionViewModel(
                     // picker after signing in: open it, once.
                     val only = result.data.singleOrNull()?.takeIf { skipSingle && !it.hasPin }
                     skipsSingleProfile = false
-                    if (!isAdmin) profileRepository.householdManagement.end()
+                    // The server lets the household's verified primary profile
+                    // manage it, whatever the account role, so any household
+                    // with a primary can.
+                    val canManage = result.data.householdPrimary() != null
+                    if (!canManage) profileRepository.householdManagement.end()
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             openingOnlyProfile = only != null,
                             accountName = user?.username ?: it.accountName,
                             profiles = result.data,
-                            canManageProfiles = isAdmin,
-                            isManageMode = if (isAdmin) it.isManageMode else false,
-                            deleteCandidate = if (isAdmin) it.deleteCandidate else null,
+                            canManageProfiles = canManage,
+                            isManageMode = if (canManage) it.isManageMode else false,
+                            deleteCandidate = if (canManage) it.deleteCandidate else null,
                         )
                     }
                     if (only != null) onProfileSelected(only)
                 }
-                is ApiResult.Error -> {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            error = result.message.ifBlank { "Failed to load profiles" },
-                        )
-                    }
+                is ApiResult.Error -> if (result.isPasswordChangeRequired()) {
+                    // The account can't use its profiles until the password is
+                    // replaced, so the cached grid is not offered either.
+                    _uiState.update { it.copy(isLoading = false, error = TV_PASSWORD_CHANGE_REQUIRED_MESSAGE) }
+                } else {
+                    showCachedProfiles(scope, result.errorText(CommonR.string.profiles_error_loadFailed))
                 }
-                is ApiResult.NetworkError -> {
-                    _uiState.update {
-                        it.copy(isLoading = false, error = "Network error. Please try again.")
-                    }
-                }
+                is ApiResult.NetworkError -> showCachedProfiles(scope, UiText.Res(CommonR.string.profiles_error_network))
             }
+        }
+    }
+
+    /**
+     * The server couldn't be reached: the account's last list stands in, with
+     * the error under it, so the picker still shows who is on this account.
+     */
+    private fun showCachedProfiles(scope: AuthScopeSnapshot?, error: UiText) {
+        val cached = serverRegistry?.activeAccount?.value?.cachedProfiles.orEmpty()
+        if (_uiState.value.profiles.isEmpty() && cached.isNotEmpty()) {
+            gridScope = scope
+            _uiState.update {
+                it.copy(isLoading = false, error = error, profiles = cached.map(CachedProfile::asProfile))
+            }
+        } else {
+            _uiState.update { it.copy(isLoading = false, error = error) }
         }
     }
 
@@ -264,7 +402,7 @@ class TvProfileSelectionViewModel(
     private fun enterManageMode(thenAdd: Boolean) {
         val primary = _uiState.value.profiles.householdPrimary()
         if (primary == null) {
-            _uiState.update { it.copy(error = "Couldn't find the primary profile needed to manage profiles.") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_noPrimary)) }
             return
         }
         pinAttempt++
@@ -329,6 +467,46 @@ class TvProfileSelectionViewModel(
         commitSelection(profile, expectedScope = gridScope)
     }
 
+    /** "Add": in manage mode a profile in this account; otherwise asks what to add. */
+    fun onAddSelected() {
+        if (_uiState.value.isManageMode) {
+            requestAddProfile()
+            return
+        }
+        _uiState.update { it.copy(showAddChoice = true) }
+    }
+
+    fun onAddChoiceDismissed() {
+        _uiState.update { it.copy(showAddChoice = false) }
+    }
+
+    /** "Add a profile": the household's add form, after the primary profile's step. */
+    fun onAddProfileChosen() {
+        _uiState.update { it.copy(showAddChoice = false) }
+        requestAddProfile()
+    }
+
+    /** "Add an account": Change Account, on the active server's "Add an account". */
+    fun onAddAccountChosen() {
+        _uiState.update {
+            it.copy(showAddChoice = false, navigation = TvPickerNavigation.ChangeAccount(addAccountOn = it.activeServerId))
+        }
+    }
+
+    /** "Add a server": the existing server setup. */
+    fun onAddServerChosen() {
+        _uiState.update { it.copy(showAddChoice = false, navigation = TvPickerNavigation.AddServer) }
+    }
+
+    /** The footer's "Change account". */
+    fun onChangeAccount() {
+        _uiState.update { it.copy(navigation = TvPickerNavigation.ChangeAccount()) }
+    }
+
+    fun onNavigationConsumed() {
+        _uiState.update { it.copy(navigation = null) }
+    }
+
     fun onPinDialogDismissed() {
         addAfterUnlock = false
         // Abandon any in-flight verification for the dismissed profile.
@@ -377,19 +555,19 @@ class TvProfileSelectionViewModel(
                         commitSelection(profile, token, scope)
                         _uiState.update { it.copy(pinProfile = null, isVerifyingPin = false) }
                     } else {
-                        _uiState.update { it.copy(isVerifyingPin = false, pinError = "Wrong PIN. Try again.") }
+                        _uiState.update { it.copy(isVerifyingPin = false, pinError = UiText.Res(CommonR.string.pin_wrong)) }
                     }
                 }
                 is ApiResult.Error -> _uiState.update {
                     it.copy(
                         isVerifyingPin = false,
-                        pinError = r.message.ifBlank { "Incorrect PIN" },
+                        pinError = r.errorText(CommonR.string.pin_error_incorrect),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
                     it.copy(
                         isVerifyingPin = false,
-                        pinError = "Network error. Please try again.",
+                        pinError = UiText.Res(CommonR.string.pin_error_network),
                     )
                 }
             }
@@ -484,14 +662,14 @@ class TvProfileSelectionViewModel(
                     it.copy(
                         isDeleting = false,
                         deleteCandidate = null,
-                        error = result.message.ifBlank { "Failed to delete profile" },
+                        error = result.errorText(CommonR.string.profiles_error_deleteFailed),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
                     it.copy(
                         isDeleting = false,
                         deleteCandidate = null,
-                        error = "Network error. Please try again.",
+                        error = UiText.Res(CommonR.string.profiles_error_network),
                     )
                 }
             }

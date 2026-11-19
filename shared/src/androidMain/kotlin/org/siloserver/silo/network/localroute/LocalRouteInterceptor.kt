@@ -6,6 +6,7 @@ import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLSocket
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.MediaType
 import okhttp3.OkHttpClient
@@ -29,11 +30,12 @@ import okio.buffer
  * connection was made: name lookup, connect, the TLS handshake or a refused
  * key) or when it is a GET or HEAD. API and artwork responses are read ahead up
  * to [PREFETCH_BYTES] before they are handed on, so a load that fails after its
- * headers but before its caller saw anything goes again too. A failure later in
- * a body drops the route; the caller sees that failure as any other. A
- * cancelled call, an interrupted thread (Media3 abandons a load that way on a
- * seek) or a slow answer on a working connection says nothing about the route
- * and leaves it alone.
+ * headers but before its caller saw anything goes again too. A response marked
+ * [LocalRouteHeaders.UNBUFFERED] is not read ahead: its caller times the body
+ * as it arrives. A failure later in a body drops the route; the caller sees
+ * that failure as any other. A cancelled call, an interrupted thread (Media3
+ * abandons a load that way on a seek) or a slow answer on a working
+ * connection says nothing about the route and leaves it alone.
  *
  * Never routed: sign-in and token refresh (`/api/v2/auth/`), WebSocket upgrades,
  * and requests marked with [LocalRouteHeaders.SAVED_ADDRESS]. With
@@ -62,7 +64,7 @@ class LocalRouteInterceptor(
         } catch (failure: IOException) {
             return fallBack(chain, request, route, failure, connected = attempt.connected, mayRepeat = repeatable || !attempt.connected)
         }
-        if (!media) {
+        if (!media && marked.header(LocalRouteHeaders.UNBUFFERED) == null) {
             try {
                 response.body?.source()?.request(PREFETCH_BYTES)
             } catch (failure: IOException) {
@@ -189,9 +191,25 @@ private fun LocalRoute.toSaved(url: HttpUrl): HttpUrl =
         url
     }
 
+/**
+ * [url] on [savedUrl]'s origin when it names a local address pinned for the
+ * active server, else unchanged. The server builds some URLs (the bandwidth
+ * probe's) from the origin a request reached it on, so over the route they
+ * name its LAN address. Moved back onto the saved address, they carry the
+ * saved server's credentials, and the route carries them while it is up.
+ */
+fun LocalRouteState.onSavedAddress(url: String, savedUrl: String): String {
+    val local = url.toHttpUrlOrNull() ?: return url
+    val saved = savedUrl.toHttpUrlOrNull() ?: return url
+    if (local.scheme != "https" || pinFor(local.host, local.port) == null) return url
+    return local.newBuilder().scheme(saved.scheme).host(saved.host).port(saved.port).build().toString()
+}
+
+private val MARKERS = listOf(LocalRouteHeaders.SAVED_ADDRESS, LocalRouteHeaders.MEDIA, LocalRouteHeaders.UNBUFFERED)
+
 private fun Request.withoutMarkers(): Request =
-    if (header(LocalRouteHeaders.SAVED_ADDRESS) == null && header(LocalRouteHeaders.MEDIA) == null) this
-    else newBuilder().removeHeader(LocalRouteHeaders.SAVED_ADDRESS).removeHeader(LocalRouteHeaders.MEDIA).build()
+    if (MARKERS.none { header(it) != null }) this
+    else newBuilder().apply { MARKERS.forEach(::removeHeader) }.build()
 
 private fun Response.relabeled(route: LocalRoute, onBodyFailure: (IOException) -> Unit): Response {
     val builder = newBuilder().request(request.newBuilder().url(route.toSaved(request.url)).build())

@@ -1,3 +1,7 @@
+import java.util.Properties
+import com.android.build.api.variant.HasHostTestsBuilder
+import com.android.build.api.variant.HostTestBuilder
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.multiplatform)
@@ -13,6 +17,14 @@ plugins {
 if (file("google-services.json").isFile) {
     apply(plugin = "com.google.gms.google-services")
 }
+
+// The languages this app ships: the ones the generated catalog has
+// translations for (scripts/sync-translations writes the list). Packaging only
+// those also keeps library translations (Media3, AppCompat) out of an app
+// whose own text is English, and keeps generateLocaleConfig to the same list.
+val siloLocaleFilters = Properties()
+    .apply { rootProject.file("android-shared/silo-locales.properties").reader().use(::load) }
+    .getProperty("phone").orEmpty().split(',').map(String::trim).filter(String::isNotEmpty)
 
 // How a build reaches a device: Google Play, an APK from a GitHub release, or a
 // local debug build. Validated so a typo can't reach the server as a header value.
@@ -175,6 +187,8 @@ kotlin {
             // runtime + ApplicationProvider aren't transitive — add them here.
             implementation(libs.androidx.room.runtime)
             implementation(libs.androidx.test.core)
+            // CatalogGridLoadMoreTest composes the grid under Robolectric.
+            implementation(libs.compose.ui.test.junit4)
         }
     }
 }
@@ -209,6 +223,12 @@ android {
         // flavor wiring.
         buildConfigField("boolean", "FFMPEG_AUDIO_ENABLED", "true")
     }
+    // Lists the shipped languages in the system per-app language screen
+    // (Settings → Apps → Silo → Language). Reads res/resources.properties.
+    androidResources {
+        generateLocaleConfig = true
+        localeFilters += siloLocaleFilters
+    }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -234,6 +254,8 @@ android {
     }
     buildTypes {
         debug {
+            // en-XA (accented, longer) and ar-XB (mirrored) for layout checks.
+            isPseudoLocalesEnabled = true
             buildConfigField("String", "RELEASE_CHANNEL", "\"dev\"")
         }
         release {
@@ -265,6 +287,12 @@ android {
     bundle {
         abi {
             enableSplit = true
+        }
+        // Every shipped language stays in the base split: the app applies a
+        // profile's language itself, and before Android 13 nothing would
+        // download a language split the device's own languages didn't need.
+        language {
+            enableSplit = false
         }
     }
     // Per-ABI APKs for sideload QA (one per arch + a universal). Matches
@@ -314,14 +342,33 @@ android {
         // Without this, none of android-shared is examined.
         checkDependencies = true
         baseline = file("lint-baseline.xml")
+        lintConfig = rootProject.file("lint.xml")
         abortOnError = true
         fatal += setOf("NewApi", "InlinedApi")
+        // Translations arrive per language and may lag English; a missing
+        // one falls back to English at runtime by design.
+        disable += "MissingTranslation"
         checkReleaseBuilds = true
+    }
+}
+
+// The Compose UI tests need the test ComponentActivity in the merged manifest,
+// and that dependency is debug-only so it never reaches the release APK. Those
+// tests cannot run against the release variant, and unit tests are not
+// minified, so release runs no different code: run unit tests on debug only,
+// as androidTvApp does.
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { variant ->
+        (variant as HasHostTestsBuilder)
+            .hostTests[HostTestBuilder.UNIT_TEST_TYPE]
+            ?.enable = false
     }
 }
 
 dependencies {
     coreLibraryDesugaring(libs.desugar.jdk.libs)
+    // Registers the host activity createComposeRule() launches in unit tests.
+    debugImplementation(libs.compose.ui.test.manifest)
     // The generated Baseline Profile artifact (see :baselineprofile).
     baselineProfile(project(":baselineprofile"))
 }

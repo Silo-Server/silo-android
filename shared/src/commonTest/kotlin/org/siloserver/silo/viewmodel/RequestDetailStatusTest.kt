@@ -1,5 +1,6 @@
 package org.siloserver.silo.viewmodel
 
+import org.siloserver.silo.common.i18n.english
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -34,7 +35,7 @@ class RequestDetailStatusTest {
             record = record(status = RequestStatus.Completed, state = RequestUserState.Processing),
         )
         assertEquals(RequestPrimaryAction.Status(RequestDisplayState.OnTheWay), state.primaryAction)
-        assertEquals("Adding to your library", state.primaryActionTitle)
+        assertEquals("Adding to your library", state.primaryActionTitle.english())
     }
 
     @Test
@@ -42,7 +43,7 @@ class RequestDetailStatusTest {
         val failed = record(status = RequestStatus.Downloading, outcome = RequestOutcome.Failed)
         val requester = RequestDetailUiState(detail = requestable, record = failed)
         assertEquals(RequestPrimaryAction.Request, requester.primaryAction)
-        assertEquals("Request Again", requester.primaryActionTitle)
+        assertEquals("Request Again", requester.primaryActionTitle.english())
         assertEquals(RequestDisplayState.NeedsAttention(RequestAttention.Failed, null), requester.progress?.display)
     }
 
@@ -66,7 +67,7 @@ class RequestDetailStatusTest {
         val someoneElses = RequestDetailUiState(detail = detail)
         assertEquals(false, someoneElses.canCancel)
         assertEquals(RequestPrimaryAction.Status(RequestDisplayState.Pending), someoneElses.primaryAction)
-        assertEquals("Requested", someoneElses.eyebrow)
+        assertEquals("Requested", someoneElses.eyebrow?.english())
     }
 
     @Test

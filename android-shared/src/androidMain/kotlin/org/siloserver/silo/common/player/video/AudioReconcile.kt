@@ -92,6 +92,7 @@ fun reconcileDesiredAudioAction(
     planAudioOrdinal: Int?,
     requiresMountedIdentity: Boolean = false,
     positionalCatalog: Boolean = false,
+    delivery: PlaybackDelivery? = null,
 ): AudioReconcileAction {
     if (desired == null) return AudioReconcileAction.None
     // An empty or partial snapshot is not evidence of anything. The intent must
@@ -124,7 +125,7 @@ fun reconcileDesiredAudioAction(
     // asks a different question: the matcher stops as soon as one candidate
     // remains, so a main mix and its commentary — same language, same codec —
     // would confirm each other.
-    val target = matchMountedAudioTrack(wanted, mounted)
+    val target = mountedAudioFor(catalog, desired.catalogOrdinal, mounted, delivery, planAudioOrdinal)
         ?: positionalOriginalMount(
             desired = desired,
             wanted = wanted,
@@ -149,6 +150,32 @@ fun reconcileDesiredAudioAction(
     } else {
         AudioReconcileAction.Apply(target.ordinal)
     }
+}
+
+/**
+ * The mounted track that plays catalog row [catalogOrdinal], or null when the
+ * stream lacks it.
+ *
+ * The server's remux and transcode map only the plan's audio row
+ * ([planAudioOrdinal]) into the stream, so the one track they mount is that
+ * row and stands for no other, however alike the two look. A commentary
+ * matches its main mix on language and codec: picking it on a remux was
+ * confirmed against the main mix, which kept playing, until the next replan
+ * switched the audio unasked.
+ */
+fun mountedAudioFor(
+    catalog: List<AudioTrack>,
+    catalogOrdinal: Int,
+    mounted: List<MountedAudioTrack>,
+    delivery: PlaybackDelivery?,
+    planAudioOrdinal: Int?,
+): MountedAudioTrack? {
+    val wanted = catalog.getOrNull(catalogOrdinal) ?: return null
+    val serverMapsOneTrack = delivery == PlaybackDelivery.SERVER_REMUX_PROGRESSIVE ||
+        delivery == PlaybackDelivery.SERVER_REMUX_HLS ||
+        delivery == PlaybackDelivery.SERVER_TRANSCODE_HLS
+    if (serverMapsOneTrack && planAudioOrdinal != null && catalogOrdinal != planAudioOrdinal) return null
+    return matchMountedAudioTrack(wanted, mounted)
 }
 
 /**

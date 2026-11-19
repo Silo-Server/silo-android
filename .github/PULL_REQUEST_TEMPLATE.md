@@ -9,11 +9,16 @@ another repository. Delete the line when the PR only partly addresses an issue. 
 Related issue: #NNN
 <!-- An epic, sub-issue, or partly addressed issue this work serves and that should
 stay open, or "N/A". An open issue is not required — the Problem section below must
-stand on its own. -->
+stand on its own — except for a feat PR from someone without triage or write access,
+which must link an issue in this repository labeled `accepted`. -->
 Validation tasks: #NNN C1
 <!-- Until 1.0 ships: v1.0 board tasks and cases this change unblocks or changes,
 e.g. "unblocks #1144 C3; changes #1200 C1". Write "none" when no validation task is
 affected. -->
+
+Other clients: Apple Silo-Server/silo-apple#NNN; Roku N/A (reason); Web Silo-Server/silo-server#NNN
+<!-- One entry each for Apple, Roku, and Web: a parity issue or pull request link,
+or "N/A" with the reason. See "Cross-client parity" in AGENTS.md. -->
 
 A short plain-language summary: what goes wrong, who it affects, and what this
 change does about it. Details come after.
@@ -42,14 +47,17 @@ Surface and build:
 <!-- Required when this change alters what a user sees: UI, or which items or what
 item details a screen shows, such as search results, home sections, recommendations,
 metadata, artwork, sorting, or filtering. See "Show visible changes" in
-CONTRIBUTING.md. Use before-and-after screenshots of the same screen and data for each
-affected surface, and a short recording when motion, timing, or focus matters. Crop or
+CONTRIBUTING.md. Use before-and-after screenshots of the same screen and data on each
+device the change can reach: Android phone, Android tablet, Android foldable (folded
+and open), and Android TV. Say why for any device you skip.
+Add a short recording when motion, timing, or focus matters. Crop or
 blur private details in anything attached here. To keep captures private instead,
 publish them to evidence.siloserver.org, where only you and Silo maintainers can open
 them, and replace the table with
 `Evidence: https://evidence.siloserver.org/r/silo-android/pr-<number>/`. When nothing
-visible changes, replace this section's content with "Evidence: none, no user-visible
-change". -->
+visible changes, replace the table with how you checked the change: the steps you ran,
+the build or commit, and trimmed test results. Every pull request needs evidence; a
+contributor's pull request still without it 24 hours after opening is closed. -->
 
 ## Risks
 
@@ -60,7 +68,7 @@ identified".
 
 - [ ] I read and can explain the complete diff.
 - [ ] This pull request addresses one concern.
-- [ ] The Evidence section shows every change a user can see, or says there is none.
+- [ ] The Evidence section shows every change a user can see, or how I checked a change nobody sees.
 
 ## AI Disclosure
 

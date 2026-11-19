@@ -26,11 +26,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
@@ -69,39 +71,48 @@ fun SubtitleStyleSheet(
 
     PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
         PlayerPanelHeader(
-            title = "Subtitle style",
+            title = stringResource(CommonR.string.player_subtitles_style_title),
             onClose = { controller.dismiss() },
             onBack = onBack?.let { back -> { controller.dismiss(then = back) } },
-            backDescription = "Back to settings",
+            backDescription = stringResource(CommonR.string.player_menu_backToSettings),
         )
         PlayerMenuScrollColumn(horizontalPadding = 18.dp) {
             val sizeIndex = FONT_SIZES.indexOfFirst { it.first == appearance.fontSize }
-            PlayerFieldLabel("Size", FONT_SIZES.getOrNull(sizeIndex)?.third)
+            PlayerFieldLabel(
+                stringResource(CommonR.string.player_subtitles_style_size),
+                FONT_SIZES.getOrNull(sizeIndex)?.let { stringResource(it.third) },
+            )
             PlayerChoiceSegments(
-                options = FONT_SIZES.map { it.second },
+                options = FONT_SIZES.map { stringResource(it.second) },
                 selectedIndex = sizeIndex,
                 onSelect = { index -> onUpdate { it.copy(fontSize = FONT_SIZES[index].first).sanitized() } },
             )
 
             val familyIndex = FONT_FAMILIES.indexOfFirst { it.first == appearance.fontFamily }
-            PlayerFieldLabel("Font", FONT_FAMILIES.getOrNull(familyIndex)?.second)
+            PlayerFieldLabel(
+                stringResource(CommonR.string.player_subtitles_style_font),
+                FONT_FAMILIES.getOrNull(familyIndex)?.let { stringResource(it.second) },
+            )
             PlayerChoiceSegments(
-                options = FONT_FAMILIES.map { it.second },
+                options = FONT_FAMILIES.map { stringResource(it.second) },
                 selectedIndex = familyIndex,
                 onSelect = { index -> onUpdate { it.copy(fontFamily = FONT_FAMILIES[index].first).sanitized() } },
             )
 
             val textColorIndex = TEXT_COLORS.indexOfFirst { colorsEqual(it.first, appearance.fontColor) }
-            PlayerFieldLabel("Text color", TEXT_COLORS.getOrNull(textColorIndex)?.second)
+            PlayerFieldLabel(
+                stringResource(CommonR.string.player_subtitles_style_textColor),
+                TEXT_COLORS.getOrNull(textColorIndex)?.let { stringResource(it.second) },
+            )
             PlayerSwatchRow(
-                colors = TEXT_COLORS.map { hexToComposeColor(it.first) to it.second },
+                colors = TEXT_COLORS.map { hexToComposeColor(it.first) to stringResource(it.second) },
                 selectedIndex = textColorIndex,
                 onSelect = { index -> onUpdate { it.copy(fontColor = TEXT_COLORS[index].first).sanitized() } },
             )
 
             if (showTextOpacity) {
                 PercentField(
-                    label = "Text opacity",
+                    label = stringResource(CommonR.string.player_subtitles_style_textOpacity),
                     value = appearance.textOpacity,
                     min = 1,
                     onChange = { value -> onUpdate { it.copy(textOpacity = value).sanitized() } },
@@ -109,9 +120,12 @@ fun SubtitleStyleSheet(
             }
 
             val backgroundIndex = BACKGROUND_STYLES.indexOfFirst { it.first == appearance.backgroundStyle }
-            PlayerFieldLabel("Background", BACKGROUND_STYLES.getOrNull(backgroundIndex)?.second)
+            PlayerFieldLabel(
+                stringResource(CommonR.string.player_subtitles_style_background),
+                BACKGROUND_STYLES.getOrNull(backgroundIndex)?.let { stringResource(it.second) },
+            )
             PlayerChoiceSegments(
-                options = BACKGROUND_STYLES.map { it.second },
+                options = BACKGROUND_STYLES.map { stringResource(it.second) },
                 selectedIndex = backgroundIndex,
                 onSelect = { index ->
                     onUpdate { it.copy(backgroundStyle = BACKGROUND_STYLES[index].first).sanitized() }
@@ -121,9 +135,12 @@ fun SubtitleStyleSheet(
             val backgroundColorIndex = BACKGROUND_COLORS.indexOfFirst {
                 colorsEqual(it.first, appearance.backgroundColor)
             }
-            PlayerFieldLabel("Background color", BACKGROUND_COLORS.getOrNull(backgroundColorIndex)?.second)
+            PlayerFieldLabel(
+                stringResource(CommonR.string.player_subtitles_style_backgroundColor),
+                BACKGROUND_COLORS.getOrNull(backgroundColorIndex)?.let { stringResource(it.second) },
+            )
             PlayerSwatchRow(
-                colors = BACKGROUND_COLORS.map { hexToComposeColor(it.first) to it.second },
+                colors = BACKGROUND_COLORS.map { hexToComposeColor(it.first) to stringResource(it.second) },
                 selectedIndex = backgroundColorIndex,
                 onSelect = { index ->
                     onUpdate { it.copy(backgroundColor = BACKGROUND_COLORS[index].first).sanitized() }
@@ -131,7 +148,7 @@ fun SubtitleStyleSheet(
             )
 
             PercentField(
-                label = "Background opacity",
+                label = stringResource(CommonR.string.player_subtitles_style_backgroundOpacity),
                 value = appearance.backgroundOpacity,
                 min = 0,
                 onChange = { value -> onUpdate { it.copy(backgroundOpacity = value).sanitized() } },
@@ -140,7 +157,7 @@ fun SubtitleStyleSheet(
             Spacer(Modifier.height(14.dp))
             PlayerGroup {
                 PlayerSwitchRow(
-                    label = "Text outline",
+                    label = stringResource(CommonR.string.player_subtitles_style_textOutline),
                     checked = appearance.textOutline,
                     onCheckedChange = { value -> onUpdate { it.copy(textOutline = value).sanitized() } },
                 )
@@ -149,9 +166,12 @@ fun SubtitleStyleSheet(
                 val outlineIndex = BACKGROUND_COLORS.indexOfFirst {
                     colorsEqual(it.first, appearance.textOutlineColor)
                 }
-                PlayerFieldLabel("Outline color", BACKGROUND_COLORS.getOrNull(outlineIndex)?.second)
+                PlayerFieldLabel(
+                    stringResource(CommonR.string.player_subtitles_style_outlineColor),
+                    BACKGROUND_COLORS.getOrNull(outlineIndex)?.let { stringResource(it.second) },
+                )
                 PlayerSwatchRow(
-                    colors = BACKGROUND_COLORS.map { hexToComposeColor(it.first) to it.second },
+                    colors = BACKGROUND_COLORS.map { hexToComposeColor(it.first) to stringResource(it.second) },
                     selectedIndex = outlineIndex,
                     onSelect = { index ->
                         onUpdate { it.copy(textOutlineColor = BACKGROUND_COLORS[index].first).sanitized() }
@@ -160,9 +180,12 @@ fun SubtitleStyleSheet(
             }
 
             val positionIndex = POSITIONS.indexOfFirst { it.first == appearance.position }
-            PlayerFieldLabel("Position", POSITIONS.getOrNull(positionIndex)?.second)
+            PlayerFieldLabel(
+                stringResource(CommonR.string.player_subtitles_style_position),
+                POSITIONS.getOrNull(positionIndex)?.let { stringResource(it.second) },
+            )
             PlayerChoiceSegments(
-                options = POSITIONS.map { it.second },
+                options = POSITIONS.map { stringResource(it.second) },
                 selectedIndex = positionIndex,
                 onSelect = { index -> onUpdate { it.copy(position = POSITIONS[index].first).sanitized() } },
             )
@@ -247,51 +270,52 @@ private fun PercentField(
     }
 }
 
+// Labels are string resource ids, resolved where the sheet draws them.
 private val FONT_SIZES = listOf(
-    Triple(SubtitleFontSizePreset.Small, "S", "Small"),
-    Triple(SubtitleFontSizePreset.Medium, "M", "Medium"),
-    Triple(SubtitleFontSizePreset.Large, "L", "Large"),
-    Triple(SubtitleFontSizePreset.XLarge, "XL", "Extra large"),
-    Triple(SubtitleFontSizePreset.XXLarge, "XXL", "Largest"),
+    Triple(SubtitleFontSizePreset.Small, CommonR.string.player_subtitles_sizeShort_small, CommonR.string.player_subtitles_size_small),
+    Triple(SubtitleFontSizePreset.Medium, CommonR.string.player_subtitles_sizeShort_medium, CommonR.string.player_subtitles_size_medium),
+    Triple(SubtitleFontSizePreset.Large, CommonR.string.player_subtitles_sizeShort_large, CommonR.string.player_subtitles_size_large),
+    Triple(SubtitleFontSizePreset.XLarge, CommonR.string.player_subtitles_sizeShort_extraLarge, CommonR.string.player_subtitles_size_extraLarge),
+    Triple(SubtitleFontSizePreset.XXLarge, CommonR.string.player_subtitles_sizeShort_largest, CommonR.string.player_subtitles_size_largest),
 )
 
 private val FONT_FAMILIES = listOf(
-    SubtitleAppearance.SANS_SERIF to "Sans",
-    SubtitleAppearance.SERIF to "Serif",
-    SubtitleAppearance.MONOSPACE to "Mono",
+    SubtitleAppearance.SANS_SERIF to CommonR.string.player_subtitles_font_sans,
+    SubtitleAppearance.SERIF to CommonR.string.player_subtitles_font_serif,
+    SubtitleAppearance.MONOSPACE to CommonR.string.player_subtitles_font_mono,
 )
 
 private val BACKGROUND_STYLES = listOf(
-    SubtitleBackgroundStylePreset.None to "None",
-    SubtitleBackgroundStylePreset.Shadow to "Shadow",
-    SubtitleBackgroundStylePreset.Box to "Box",
-    SubtitleBackgroundStylePreset.Outline to "Outline",
+    SubtitleBackgroundStylePreset.None to CommonR.string.player_subtitles_background_none,
+    SubtitleBackgroundStylePreset.Shadow to CommonR.string.player_subtitles_background_shadow,
+    SubtitleBackgroundStylePreset.Box to CommonR.string.player_subtitles_background_box,
+    SubtitleBackgroundStylePreset.Outline to CommonR.string.player_subtitles_background_outline,
 )
 
 private val POSITIONS = listOf(
-    SubtitlePositionPreset.Bottom to "Bottom",
-    SubtitlePositionPreset.LowerThird to "Lower third",
-    SubtitlePositionPreset.Top to "Top",
+    SubtitlePositionPreset.Bottom to CommonR.string.player_subtitles_position_bottom,
+    SubtitlePositionPreset.LowerThird to CommonR.string.player_subtitles_position_lowerThird,
+    SubtitlePositionPreset.Top to CommonR.string.player_subtitles_position_top,
 )
 
 private val TEXT_COLORS = listOf(
-    "#ffffff" to "White",
-    "#facc15" to "Yellow",
-    "#22c55e" to "Green",
-    "#06b6d4" to "Cyan",
-    "#d946ef" to "Magenta",
-    "#ef4444" to "Red",
-    "#3b82f6" to "Blue",
-    "#9ca3af" to "Gray",
-    "#000000" to "Black",
+    "#ffffff" to CommonR.string.player_subtitles_color_white,
+    "#facc15" to CommonR.string.player_subtitles_color_yellow,
+    "#22c55e" to CommonR.string.player_subtitles_color_green,
+    "#06b6d4" to CommonR.string.player_subtitles_color_cyan,
+    "#d946ef" to CommonR.string.player_subtitles_color_magenta,
+    "#ef4444" to CommonR.string.player_subtitles_color_red,
+    "#3b82f6" to CommonR.string.player_subtitles_color_blue,
+    "#9ca3af" to CommonR.string.player_subtitles_color_gray,
+    "#000000" to CommonR.string.player_subtitles_color_black,
 )
 
 private val BACKGROUND_COLORS = listOf(
-    "#000000" to "Black",
-    "#374151" to "Dark gray",
-    "#1e3a5f" to "Navy",
-    "#7f1d1d" to "Dark red",
-    "#14532d" to "Dark green",
+    "#000000" to CommonR.string.player_subtitles_color_black,
+    "#374151" to CommonR.string.player_subtitles_color_darkGray,
+    "#1e3a5f" to CommonR.string.player_subtitles_color_navy,
+    "#7f1d1d" to CommonR.string.player_subtitles_color_darkRed,
+    "#14532d" to CommonR.string.player_subtitles_color_darkGreen,
 )
 
 /** Compose `Color` from a `#rrggbb` string. Falls back to white on garbage input. */

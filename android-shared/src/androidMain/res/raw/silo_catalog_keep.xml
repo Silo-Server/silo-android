@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Catalog strings looked up by name at run time (ServerText): section
+     titles from the server's title_key and problem-detail messages. The
+     release resource shrinker can't see those uses, so keep them. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@string/home_section_*,@string/error_*" />

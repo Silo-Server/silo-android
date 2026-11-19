@@ -15,25 +15,26 @@ class RoomDownloadSubscriptionRepository(db: SiloDatabase) : DownloadSubscriptio
         dao.upsert(subscription.toEntity())
     }
 
-    override suspend fun active(serverId: String, profileId: String): List<DownloadSubscription> =
-        dao.getActive(serverId, profileId).map { it.toModel() }
+    override suspend fun active(serverId: String, accountId: String, profileId: String): List<DownloadSubscription> =
+        dao.getActive(serverId, accountId, profileId).map { it.toModel() }
 
-    override suspend fun all(serverId: String, profileId: String): List<DownloadSubscription> =
-        dao.getAll(serverId, profileId).map { it.toModel() }
+    override suspend fun all(serverId: String, accountId: String, profileId: String): List<DownloadSubscription> =
+        dao.getAll(serverId, accountId, profileId).map { it.toModel() }
 
-    override suspend fun disable(serverId: String, profileId: String, id: String, updatedAt: Long) {
-        dao.disable(serverId, profileId, id, updatedAt)
+    override suspend fun disable(serverId: String, accountId: String, profileId: String, id: String, updatedAt: Long) {
+        dao.disable(serverId, accountId, profileId, id, updatedAt)
     }
 
     override suspend fun updateEvaluation(
         serverId: String,
+        accountId: String,
         profileId: String,
         id: String,
         evaluatedAt: Long,
         error: String?,
         updatedAt: Long,
     ) {
-        dao.updateEvaluation(serverId, profileId, id, evaluatedAt, error, updatedAt)
+        dao.updateEvaluation(serverId, accountId, profileId, id, evaluatedAt, error, updatedAt)
     }
 
     override suspend fun deleteAllForServer(serverId: String) {
@@ -43,6 +44,7 @@ class RoomDownloadSubscriptionRepository(db: SiloDatabase) : DownloadSubscriptio
     private fun DownloadSubscription.toEntity() = DownloadSubscriptionEntity(
         id = id,
         serverId = serverId,
+        accountId = accountId,
         profileId = profileId,
         targetType = targetType.wire,
         targetId = targetId,
@@ -63,6 +65,7 @@ class RoomDownloadSubscriptionRepository(db: SiloDatabase) : DownloadSubscriptio
     private fun DownloadSubscriptionEntity.toModel() = DownloadSubscription(
         id = id,
         serverId = serverId,
+        accountId = accountId,
         profileId = profileId,
         targetType = DownloadSubscriptionTargetType.fromWire(targetType),
         targetId = targetId,

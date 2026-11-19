@@ -39,22 +39,23 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.overlays.OverlayData
-import org.siloserver.silo.tv.ui.theme.ProgressFill
-import org.siloserver.silo.tv.ui.theme.ProgressTrack
 import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.common.ui.components.WatchProgressBar
+import org.siloserver.silo.common.ui.components.WatchProgressBarDefaults
 
 /**
  * 16:9 thumbnail card for "Continue Watching", "Next Up", and episode list rows.
  *
- * Uses the same focus treatment as [TvMediaCard]: native `.card` button style
- * from Compose for TV handles scale/shadow lift; the caption bolds on focus.
+ * Uses the same focus treatment as [TvMediaCard]: [siloCardDefaults] lifts and
+ * outlines the still; the caption brightens on focus.
  * The play-button circle is an affordance rather than a hit target — the whole
  * card is clickable and the D-pad OK button triggers [onClick].
  */
@@ -81,17 +82,21 @@ fun TvEpisodeCard(
     userState: org.siloserver.silo.model.catalog.MediaItemUserState? = null,
     overlay: OverlayData? = null,
     actions: TvMediaCardActions = TvMediaCardActions(),
+    /**
+     * The item the card shows. A row can keep a card while its item changes;
+     * a new item closes the menu, whose actions belong to the old one.
+     */
+    contentKey: Any? = null,
     onLongClick: (() -> Unit)? = null,
 ) {
     val overlayState = LocalCardOverlayUiState.current
-    val caption = LocalCardPresentation.current.caption
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 
     val cardShape = TvEpisodeCardShape
-    val cardFocus = siloCardDefaults(shape = cardShape, focusedScale = 1.04f)
+    val cardFocus = siloCardDefaults(shape = cardShape)
 
-    var menuExpanded by remember { mutableStateOf(false) }
+    var menuExpanded by remember(contentKey) { mutableStateOf(false) }
 
     Column(
         modifier = modifier.width(width),
@@ -143,83 +148,66 @@ fun TvEpisodeCard(
 
                 // Card-overlay badge layer. Over the still + scrim, under the
                 // play affordance + progress bar. Never intercepts focus.
-                // The bottom inset matches the side inset plus the 3dp progress
-                // bar so the lower badges sit in the corner like the upper ones.
+                // The lower badges sit in the corner like the upper ones, and
+                // rise clear of the progress bar when the card draws one.
                 if (overlayState.enabled && overlay != null) {
                     CardOverlays(
                         data = overlay,
                         prefs = overlayState.prefs,
                         variant = CardOverlayVariant.Wide,
                         scale = TvCardOverlayScale,
-                        forceOpaqueBackground = false,
-                        bottomInset = TvEpisodeCardOverlayBottomInset,
+                        bottomInset = if (progress != null && progress > 0f) {
+                            TvEpisodeCardOverlayProgressBottomInset
+                        } else {
+                            TvEpisodeCardOverlayBottomInset
+                        },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
 
-                if (progress != null && progress > 0f) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(3.dp)
-                            .align(Alignment.BottomStart)
-                            .background(ProgressTrack),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(progress.coerceIn(0f, 1f))
-                                .height(3.dp)
-                                .background(ProgressFill),
-                        )
-                    }
-                }
+                if (progress != null) WatchProgressBar(progress, height = WatchProgressBarDefaults.TvHeight)
             }
         }
 
-        if (caption.showsTitle) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 7.dp),
-                horizontalAlignment = Alignment.Start,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 7.dp),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = seriesTitle ?: title,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontSize = 15.5.sp,
+                    lineHeight = 18.5.sp,
+                ),
+                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            val episodeTag = tvEpisodeTag(seasonNumber, episodeNumber)
+            // With the series on the line above, the episode number is what
+            // separates two same-named episodes in a rail, so it leads.
+            val secondaryLine = when {
+                seriesTitle != null -> tvEpisodeTitleLine(seasonNumber, episodeNumber, title)
+                episodeTag != null -> episodeTag
+                else -> year?.let { LocaleFormat.integer(it, currentNumberLocale()) }
+            }
+            if (secondaryLine != null) {
                 Text(
-                    text = seriesTitle ?: title,
-                    style = MaterialTheme.typography.titleSmall.copy(
-                        fontSize = 15.5.sp,
-                        lineHeight = 18.5.sp,
+                    text = secondaryLine,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp,
                     ),
-                    color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
+                    color = Color.White.copy(alpha = 0.75f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                val episodeTag = tvEpisodeTag(seasonNumber, episodeNumber)
-                // With the series on the line above, the episode number is what
-                // separates two same-named episodes in a rail, so it leads.
-                val secondaryLine = when {
-                    seriesTitle != null -> listOfNotNull(
-                        episodeTag,
-                        title.takeIf { it.isNotBlank() },
-                    ).joinToString(" \u2022 ").ifBlank { null }
-                    episodeTag != null -> episodeTag
-                    else -> year?.toString()
-                }
-                if (caption.showsMetadata && secondaryLine != null) {
-                    Text(
-                        text = secondaryLine,
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontSize = 14.sp,
-                            lineHeight = 18.sp,
-                        ),
-                        color = Color.White.copy(alpha = 0.75f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Start,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
             }
         }
 
@@ -239,5 +227,12 @@ fun tvEpisodeCardWidth(): Dp = TvEpisodeCardWidth.cardScaled()
 /** Hoisted so every card shares one instance instead of allocating a shape per composition. */
 private val TvEpisodeCardShape = RoundedCornerShape(8.dp)
 
-/** Unscaled: 8dp side inset + 3dp progress bar, scaled by [TvCardOverlayScale]. */
+/** Unscaled, scaled by [TvCardOverlayScale]: the badges' bottom inset on a card without progress. */
 private val TvEpisodeCardOverlayBottomInset = 12.dp
+
+/**
+ * Unscaled. Scaled by [TvCardOverlayScale] it puts the badges just above
+ * the progress bar.
+ */
+private val TvEpisodeCardOverlayProgressBottomInset =
+    WatchProgressBarDefaults.BadgeClearance / TvCardOverlayScale

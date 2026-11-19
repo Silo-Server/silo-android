@@ -69,6 +69,8 @@ import org.siloserver.silo.common.player.Playability
 import org.siloserver.silo.common.player.PlaybackAnalyticsListener
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
+import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
+import org.siloserver.silo.common.player.PlaybackNetworkSnapshot
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.SleepTimerController
@@ -80,6 +82,7 @@ import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlaybackStartResult
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.libass.LibassBridge
@@ -278,6 +281,60 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             viewModel.loadContent(contentId = "other", preferredFileId = 2)
             starter.awaitRequestCount(3)
             assertNull(starter.request(2).preferredQualityOverride)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun trackPicksHeldForANetworkMoveKeepTheirRouteIntent() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val sidecar = org.siloserver.silo.model.playback.PlayerSubtitleInfo(
+                index = 3,
+                language = "en",
+                url = "/api/v2/stream/s1/subtitles/3.vtt",
+            )
+            viewModel.mutableUiState().update {
+                it.copy(
+                    contentId = "movie",
+                    subtitleTracks = listOf(sidecar),
+                    audioTracks = listOf(AudioTrack(index = 0), AudioTrack(index = 1)),
+                )
+            }
+            val routeIntent = viewModel.privateField<MobilePlayerRouteIntentState>("routeIntentState")
+            routeIntent.beginLoad(
+                contentId = "movie",
+                fileId = null,
+                quality = null,
+                audioTrackIndex = null,
+                subtitleTrackIndex = null,
+                resumePositionSeconds = null,
+                preserveCurrent = false,
+            )
+            // An earlier pick has set up the track transaction for this title.
+            viewModel.onSelectAudio(0)
+            runCurrent()
+            assertFalse(routeIntent.current!!.subtitleTrackIsExplicit)
+
+            val move = kotlinx.coroutines.CompletableDeferred<Unit>()
+            viewModel.privateField<PicksDuringNetworkMove>("picksDuringNetworkMove")
+                .holdUntilDone(backgroundScope.async { move.await() })
+            viewModel.onSelectSubtitle(0)
+            viewModel.onSelectAudio(1)
+            // The move lands and publishes the tracks it committed, with no
+            // transaction in flight.
+            viewModel.landNetworkMove(org.siloserver.silo.model.playback.SubtitleIdentity.Off)
+            move.complete(Unit)
+            runCurrent()
+
+            val intent = routeIntent.current!!
+            assertTrue(intent.subtitleTrackIsExplicit, "the subtitle pick is the viewer's")
+            assertEquals(1, intent.audioTrackIndex)
+            assertTrue(intent.audioTrackIsExplicit, "the audio pick is the viewer's")
         } finally {
             store.clear()
         }
@@ -541,6 +598,56 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun outageEndReopenRemountsAndRecoversOnlyOnlineWithTheServerAnswering() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val network = MutableStateFlow(PlaybackNetworkSnapshot(connected = false))
+        val evidence = object : PlaybackNetworkEvidenceProvider {
+            override fun snapshot() = network.value
+            override val updates get() = network
+        }
+        val fixture = playerViewModel(starter, backgroundScope, serverReachable = true, network = evidence)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent("movie", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a").copy(playbackPlan = executionPlan()))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            var mount = viewModel.uiState.value.mediaMountGeneration
+            viewModel.onMediaMountApplied(mount)
+
+            // No attempt to record a transport reopen on, so the error is an
+            // outage at once: wait for the network and the server, then reopen.
+            viewModel.onPlayerError(connectionFailed())
+            viewModel.awaitState { it.mediaMountGeneration != mount }
+            val reopened = viewModel.uiState.value
+            // The screen's mount effect applies only an awaited generation.
+            assertTrue(viewModel.shouldApplyMediaMount(reopened.mediaMountGeneration))
+            assertEquals("client_retry=outage_end", reopened.playbackPlan?.decisionTrace?.last())
+            assertNull(reopened.error)
+
+            // The reopened route fails while the device is offline: still an
+            // outage, so it waits and reopens again rather than replanning.
+            mount = reopened.mediaMountGeneration
+            viewModel.onMediaMountApplied(mount)
+            viewModel.onPlayerError(connectionFailed())
+            viewModel.awaitState { it.mediaMountGeneration != mount }
+            assertNull(viewModel.uiState.value.error)
+
+            // Online, with the server answering, the failure is the route's:
+            // failure recovery runs (and fails against this fake server).
+            mount = viewModel.uiState.value.mediaMountGeneration
+            viewModel.onMediaMountApplied(mount)
+            network.value = PlaybackNetworkSnapshot(connected = true)
+            viewModel.onPlayerError(connectionFailed())
+            viewModel.awaitState { it.error != null }
+            assertEquals(mount, viewModel.uiState.value.mediaMountGeneration)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun roomStartStreamsTheRoomFilePausedAndEveryRestartKeepsTheRoom() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)
@@ -718,6 +825,23 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             it.get(this) as MutableStateFlow<PlayerViewModel.PlayerUiState>
         }
 
+    @Suppress("UNCHECKED_CAST")
+    private fun <T> PlayerViewModel.privateField(name: String): T =
+        PlayerViewModel::class.java.getDeclaredField(name).let {
+            it.isAccessible = true
+            it.get(this) as T
+        }
+
+    /** What a network move's adoption does: resets the track transaction to the tracks it committed. */
+    private fun PlayerViewModel.landNetworkMove(committedSubtitle: org.siloserver.silo.model.playback.SubtitleIdentity) {
+        val context = PlayerViewModel::class.java
+            .getDeclaredMethod("mobileSubtitleContext", PlayerViewModel.PlayerUiState::class.java)
+            .apply { isAccessible = true }
+            .invoke(this, uiState.value) as MobileSubtitlePlaybackContext
+        privateField<MobileSubtitleTransactionAdapter>("mobileSubtitleTransactions")
+            .resetContent(context, committedSubtitle)
+    }
+
     private fun PlayerViewModel.setPickedQuality(quality: String) {
         PlayerViewModel::class.java.getDeclaredField("sessionQualityOverride").let {
             it.isAccessible = true
@@ -738,6 +862,9 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         shufflesApi: org.siloserver.silo.network.apiv2.ShufflesV2Api? = null,
         shuffleStore: org.siloserver.silo.model.feature.ShuffleFeatureStore? =
             shufflesApi?.let { org.siloserver.silo.model.feature.ShuffleFeatureStore(it) },
+        network: PlaybackNetworkEvidenceProvider = PlaybackNetworkEvidenceProvider.None,
+        /** The reachability probe answers; otherwise it has no server to probe. */
+        serverReachable: Boolean = false,
     ): PlayerFixture {
         val client = noOpClient()
         val tokenManager = FakeTokenManager()
@@ -768,7 +895,11 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                     LegacyDownloadImporter(tmp.newFolder(), db),
                 ),
                 serverRegistry = FakeServerRegistry(),
-                serverReachabilityMonitor = ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, scope, { null }),
+                serverReachabilityMonitor = if (serverReachable) {
+                    reachableServerMonitor(scope)
+                } else {
+                    ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, scope, { null })
+                },
                 playerSettingsStore = FakePlayerSettingsStore(),
                 introAutoSkipController = IntroAutoSkipController(scope),
                 sessionLifecycle = lifecycle,
@@ -788,6 +919,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                     write = {},
                 ),
                 shuffleFeatureStore = shuffleStore,
+                networkEvidenceProvider = network,
             ),
             manager = manager,
             lifecycle = lifecycle,
@@ -797,6 +929,13 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     /** A shuffle server whose answers each test scripts; it records every request. */
     private class FakeShuffleServer(testDispatcher: CoroutineDispatcher? = null) {
         val requests: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
+
+        /**
+         * The requests so far. The engine records them on its own thread, so
+         * read a copy taken under the list's lock: iterating the live list
+         * while a request lands throws ConcurrentModificationException.
+         */
+        fun seen(): List<String> = synchronized(requests) { requests.toList() }
         var read: String = shuffle(current = EPISODE_A, next = MOVIE_B)
         var advance: String = shuffle(current = MOVIE_B, next = EPISODE_C)
         var skip: String = shuffle(current = EPISODE_A, next = EPISODE_C)
@@ -889,7 +1028,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             assertEquals(2, starter.startedRequestCount)
             assertEquals(
                 1,
-                server.requests.count { it == """POST /api/v2/shuffles/sh1/advance {"from_content_id":"episode-a"}""" },
+                server.seen().count { it == """POST /api/v2/shuffles/sh1/advance {"from_content_id":"episode-a"}""" },
             )
 
             starter.complete(1, ready(successor, "session-b"))
@@ -923,13 +1062,14 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             // Play Now while Pick Another is still waiting for the server.
             viewModel.playUpNextNow()
             runCurrent()
-            assertTrue(server.requests.none { it.contains("/advance") })
+            assertTrue(server.seen().none { it.contains("/advance") })
 
             requireNotNull(server.skipGate).complete(Unit)
             starter.awaitRequestCount(2)
             assertEquals("episode-c", starter.request(1).contentId)
-            val skip = server.requests.indexOfFirst { it.contains("/skip") }
-            val advance = server.requests.indexOfFirst { it.contains("/advance") }
+            val seen = server.seen()
+            val skip = seen.indexOfFirst { it.contains("/skip") }
+            val advance = seen.indexOfFirst { it.contains("/advance") }
             assertTrue(skip in 0 until advance)
         } finally {
             store.clear()
@@ -954,7 +1094,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             // The card's re-read fails like every read here.
             withContext(Dispatchers.Default) {
                 withTimeout(5_000) {
-                    while (server.requests.toList().none { it == "GET /api/v2/shuffles/sh1" }) delay(10)
+                    while (server.seen().none { it == "GET /api/v2/shuffles/sh1" }) delay(10)
                 }
             }
             runCurrent()
@@ -986,7 +1126,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             testScheduler.advanceTimeBy(30_000)
             runCurrent()
             assertEquals(1, starter.startedRequestCount)
-            assertTrue(server.requests.none { it.contains("/advance") })
+            assertTrue(server.seen().none { it.contains("/advance") })
         } finally {
             store.clear()
         }
@@ -1032,7 +1172,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             // Returning through Dispatchers.Default lets virtual time tick
             // between publication of the full countdown and this assertion.
             withTimeout(30_000) { viewModel.uiState.first { it.nextEpisode?.contentId == "episode-c" } }
-            assertTrue(server.requests.contains("""POST /api/v2/shuffles/sh1/skip {"next_content_id":"movie-b"}"""))
+            assertTrue(server.seen().contains("""POST /api/v2/shuffles/sh1/skip {"next_content_id":"movie-b"}"""))
             assertEquals(PlayerViewModel.UP_NEXT_COUNTDOWN_SECONDS, viewModel.uiState.value.upNextCountdownSeconds)
 
             viewModel.stopShuffling()
@@ -1103,6 +1243,34 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         startPositionSeconds = 0.0,
         sessionId = sessionId,
         mediaFileId = request.preferredFileId,
+    )
+
+    private fun executionPlan() = org.siloserver.silo.model.playback.PlaybackExecutionPlan(
+        planId = "plan-a",
+        delivery = PlaybackDelivery.ORIGINAL_HTTP,
+        routeFamily = org.siloserver.silo.model.playback.PlaybackRouteFamily.PLATFORM_NATIVE,
+    )
+
+    /** A reachability monitor whose probe always finds the server. */
+    private fun reachableServerMonitor(scope: CoroutineScope) = ServerReachabilityMonitor(
+        {
+            org.siloserver.silo.network.apiv2.ApiV2ProbeResult.V2(
+                org.siloserver.silo.network.apiv2.SystemInfo(
+                    "test",
+                    2,
+                    "digest",
+                    org.siloserver.silo.network.apiv2.SystemInfoLinks("/openapi", "/capabilities"),
+                ),
+            )
+        },
+        scope,
+        { org.siloserver.silo.common.network.ReachabilityTarget(SERVER_ID, "https://silo.test", 1) },
+    )
+
+    private fun connectionFailed() = androidx.media3.common.PlaybackException(
+        "connection failed",
+        null,
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
     )
 
     private data class PlayerFixture(
@@ -1322,7 +1490,12 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         var allocation: MobileVideoSessionAllocation? = null
 
         start(
-            effective = "",
+            // The series choice on the server is this same English track, so
+            // the per-file memory may restore it (see the next test for a
+            // choice the server no longer holds).
+            effective = """
+                "effective_subtitle_track_signature": {"source":"embedded","language":"en","codec":"subrip","label":"English"},
+            """.trimIndent(),
             profile = Profile(id = PROFILE_ID, name = "Profile"),
             versionFields = """
                 "audio_tracks": [
@@ -1341,6 +1514,43 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
 
         assertEquals(1, allocation?.audioTrackIndex)
         assertEquals(1, allocation?.subtitleTrackIndex)
+    }
+
+    @Test
+    fun perFileSubtitleMemoryRestoresWhenTheServerHoldsNoSeriesChoice() = runTest(dispatcher) {
+        // A per-file pick whose write never landed is still remembered here.
+        assertEquals(0, startWithPerFileEnglishSubtitle(effective = ""))
+    }
+
+    @Test
+    fun perFileSubtitleMemoryYieldsToSeriesOff() = runTest(dispatcher) {
+        assertEquals(null, startWithPerFileEnglishSubtitle(effective = "\"effective_subtitle_mode\": \"off\","))
+    }
+
+    private suspend fun TestScope.startWithPerFileEnglishSubtitle(effective: String): Int? {
+        val subtitleTracks = listOf(
+            SubtitleTrack(index = 12, codec = "subrip", language = "en", title = "English"),
+        )
+        val persisted = LocalTrackSelection(
+            audioFingerprint = null,
+            subtitleFingerprint = encodeCatalogSubtitlePreference(subtitleTracks, 0),
+        )
+        val localState = object : UserItemStatePort by NoOpUserItemStatePort {
+            override suspend fun localTrackSelection(contentId: String, fileId: Int) = persisted
+        }
+        var allocation: MobileVideoSessionAllocation? = null
+        start(
+            effective = effective,
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            versionFields = """
+                "subtitle_tracks": [
+                  {"index":12,"codec":"subrip","language":"en","title":"English","external":false}
+                ]
+            """.trimIndent(),
+            userItemStatePort = localState,
+            onAllocation = { allocation = it },
+        )
+        return allocation?.subtitleTrackIndex
     }
 
     @Test
@@ -1379,6 +1589,33 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         )
 
         assertEquals(1, selection.audioTrackIndex)
+    }
+
+    @Test
+    fun theServersSeriesAudioChoiceOutranksPerFileMemoryButNotAPick() {
+        val tracks = listOf(
+            AudioTrack(codec = "aac", language = "eng", title = "English"),
+            AudioTrack(codec = "aac", language = "eng", title = "Commentary"),
+            AudioTrack(codec = "aac", language = "jpn", title = "Japanese"),
+        )
+        // An older pick on this device; the series choice (Japanese) has
+        // since been made here or on another device.
+        val persisted = LocalTrackSelection(audioFingerprint = audioTrackFingerprint(tracks[1]), subtitleFingerprint = null)
+        fun select(explicit: Int?, server: Int?) = resolveMobileInitialTrackSelection(
+            explicitAudioTrackIndex = explicit,
+            explicitSubtitleTrackIndex = null,
+            audioTracks = tracks,
+            subtitleTracks = emptyList(),
+            persisted = persisted,
+            preferredAudioLanguage = "eng",
+            capabilities = ClientCodecCapabilities(codecsAudio = listOf("aac")),
+            serverAudioTrackIndex = server,
+        ).audioTrackIndex
+
+        assertEquals(2, select(explicit = null, server = 2))
+        assertEquals(0, select(explicit = 0, server = 2))
+        // No server answer: the per-file memory, as before.
+        assertEquals(1, select(explicit = null, server = null))
     }
 
     @Test
@@ -1437,6 +1674,98 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
     }
 
     @Test
+    fun mobileDataStartsAtTheCellularPair() = runTest(dispatcher) {
+        assertStartsAtTheCellularPair(
+            PlaybackNetworkSnapshot(connected = true, metered = true, transport = "cellular", cellular = true),
+        )
+    }
+
+    @Test
+    fun aVpnOverWifiStartsAtTheMainPair() = runTest(dispatcher) {
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            // Android marks most VPNs metered; Tailscale at home is still Wi-Fi.
+            network = PlaybackNetworkSnapshot(connected = true, metered = true, transport = "wifi", vpn = true),
+            onAllocation = { allocation = it },
+        )
+
+        assertEquals("auto", allocation?.qualityPreference)
+        assertNull(allocation?.maxBitrateKbps)
+    }
+
+    @Test
+    fun aRenewalCarriesNoQualityThatCameFromTheSettings() = runTest(dispatcher) {
+        // Settings for mobile data: 720p at 2 Mbps. A renewal reads them again
+        // for the connection it is on rather than pinning 720p.
+        var adopted: StartParams? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            network = PlaybackNetworkSnapshot(connected = true, metered = true, transport = "cellular", cellular = true),
+            onAdoption = { adopted = it },
+        )
+
+        assertNull(adopted?.qualityPreference)
+    }
+
+    @Test
+    fun aRenewalCarriesAQualityPickedInThePlayer() = runTest(dispatcher) {
+        var allocation: MobileVideoSessionAllocation? = null
+        var adopted: StartParams? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            preferredQualityOverride = "1080p",
+            onAllocation = { allocation = it },
+            onAdoption = { adopted = it },
+        )
+
+        assertEquals("1080p", allocation?.qualityPreference)
+        assertEquals("1080p", adopted?.qualityPreference)
+    }
+
+    @Test
+    fun aMeteredWifiNetworkStartsAtTheCellularPair() = runTest(dispatcher) {
+        // A phone hotspot, or Wi-Fi the user marked metered.
+        assertStartsAtTheCellularPair(PlaybackNetworkSnapshot(connected = true, metered = true, transport = "wifi"))
+    }
+
+    private suspend fun TestScope.assertStartsAtTheCellularPair(network: PlaybackNetworkSnapshot) {
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            network = network,
+            onAllocation = { allocation = it },
+        )
+
+        // The store's cellular defaults: the 720p preset.
+        assertEquals("720p", allocation?.qualityPreference)
+        assertEquals(2_000, allocation?.maxBitrateKbps)
+    }
+
+    @Test
+    fun unmeteredNetworksStartAtTheMainPair() = runTest(dispatcher) {
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            network = PlaybackNetworkSnapshot(connected = true, metered = false, transport = "wifi"),
+            onAllocation = { allocation = it },
+        )
+
+        assertEquals("auto", allocation?.qualityPreference)
+        assertNull(allocation?.maxBitrateKbps)
+    }
+
+    @Test
     fun unknownSourceDurationStaysUnknownAtTheStarterBoundary() = runTest(dispatcher) {
         val ready = start(
             effective = "",
@@ -1457,6 +1786,8 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         onAllocation: (MobileVideoSessionAllocation) -> Unit = {},
         readyStart: VideoSessionStartV3.Ready = allocatedReady("subtitle-session"),
         onAdoption: (StartParams) -> Unit = {},
+        network: PlaybackNetworkSnapshot = PlaybackNetworkSnapshot(),
+        preferredQualityOverride: String? = null,
     ): VideoPlaybackStartResult.Ready {
         val client = catalogClient(effective, versionFields)
         val tokenManager = FakeTokenManager()
@@ -1488,6 +1819,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 ApiResult.Success(readyStart)
             },
             sessionAdopter = { params, _ -> onAdoption(params) },
+            networkEvidenceProvider = { network },
         )
 
         val result = starter.start(
@@ -1498,6 +1830,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 resumePositionOverride = null,
                 audioTrackIndex = explicitAudioTrackIndex,
                 subtitleTrackIndex = explicitSubtitleTrackIndex,
+                preferredQualityOverride = preferredQualityOverride,
             ),
         )
         assertTrue(result is VideoPlaybackStartResult.Ready, "expected a ready start, got $result")
@@ -1677,8 +2010,11 @@ private class FakePlayerSettingsStore(
     private val audioLanguage: String = "",
 ) : PlayerSettingsStore {
     override val introSkipModeFlow: Flow<IntroSkipMode> = flowOf(IntroSkipMode.ASK)
+    override val bufferingQualityModeFlow: Flow<BufferingQualityMode> = flowOf(BufferingQualityMode.Default)
     override val autoSkipCreditsFlow: Flow<Boolean> = flowOf(false)
     override val autoPlayNextFlow: Flow<Boolean> = flowOf(true)
+    override val themeMusicEnabledFlow: Flow<Boolean> = flowOf(false)
+    override val themeMusicLoopFlow: Flow<Boolean> = flowOf(false)
     override val hdrEnabledFlow: Flow<Boolean> = flowOf(true)
     override val dvProfile7HDR10FallbackFlow: Flow<Boolean> = flowOf(true)
     override val dolbyVisionEnabledFlow: Flow<Boolean> = flowOf(true)
@@ -1710,8 +2046,11 @@ private class FakePlayerSettingsStore(
         flowOf(SubtitleAppearance.DEFAULT)
 
     override suspend fun setIntroSkipMode(value: IntroSkipMode) = Unit
+    override suspend fun setBufferingQualityMode(value: BufferingQualityMode) = Unit
     override suspend fun setAutoSkipCredits(value: Boolean) = Unit
     override suspend fun setAutoPlayNext(value: Boolean) = Unit
+    override suspend fun setThemeMusicEnabled(value: Boolean) = Unit
+    override suspend fun setThemeMusicLoop(value: Boolean) = Unit
     override suspend fun setHdrEnabled(value: Boolean) = Unit
     override suspend fun setDvProfile7HDR10Fallback(value: Boolean) = Unit
     override suspend fun setDolbyVisionEnabled(value: Boolean) = Unit
@@ -1729,7 +2068,6 @@ private class FakePlayerSettingsStore(
     override suspend fun setResumeRewindSeconds(value: Int) = Unit
     override suspend fun setPassOutThreshold(value: Int) = Unit
     override suspend fun setPreferredQuality(value: String) = Unit
-    override suspend fun setQuality(resolution: String, bitrateKbps: Int?) = Unit
     override suspend fun setAudioLanguage(value: String) = Unit
     override suspend fun setVideoGravity(value: String) = Unit
     override suspend fun setOrientationMode(value: String) = Unit

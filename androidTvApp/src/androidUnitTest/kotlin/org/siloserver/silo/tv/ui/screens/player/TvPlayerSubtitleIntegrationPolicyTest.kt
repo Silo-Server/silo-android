@@ -1,5 +1,10 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.CoroutineScope
@@ -17,8 +22,14 @@ import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 @OptIn(ExperimentalCoroutinesApi::class)
 class TvPlayerSubtitleIntegrationPolicyTest {
+    // The HUD builders read their words from the app's resources (English here).
+    private val resources
+        get() = ApplicationProvider.getApplicationContext<Application>().resources
+
     @Test
     fun `unresolved audio during subtitle persistence preserves the existing preference`() {
         val update = tvAudioTrackPersistenceUpdate(
@@ -329,11 +340,13 @@ class TvPlayerSubtitleIntegrationPolicyTest {
             options = buildTvSubtitleHudOptions(
                 subtitleUrls = listOf(row),
                 subtitleTracks = listOf(track),
+                resources = resources,
             ),
             committedIdentity = identity,
             pendingIdentity = null,
             hudOpen = true,
             focusedStableId = null,
+            resources = resources,
         )
         val checked = presentation.rows.single { it.checked }
         assertEquals(identity, checked.identity)

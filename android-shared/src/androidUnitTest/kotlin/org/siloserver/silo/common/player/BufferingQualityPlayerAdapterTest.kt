@@ -1,0 +1,532 @@
+package org.siloserver.silo.common.player
+
+import androidx.media3.common.Player
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import org.siloserver.silo.common.player.BufferingQualityPlayerAdapter.Companion.WAIT_CHECK_MS
+import org.siloserver.silo.domain.player.BufferingWaitCause
+import org.siloserver.silo.model.playback.PlaybackDelivery
+
+class BufferingQualityPlayerAdapterTest {
+    private class RecordingSink : BufferingPlaybackEventSink {
+        val events = mutableListOf<String>()
+        override fun onPlaying() { events += "playing" }
+        override fun onWaiting(cause: BufferingWaitCause) { events += "waiting:${cause.name.lowercase()}" }
+        override fun onPause() { events += "pause" }
+        override fun onSeek() { events += "seek" }
+        override fun onTransportErrorStart() { events += "transport_start" }
+        override fun onTransportErrorEnd() { events += "transport_end" }
+    }
+
+    private var now = 0L
+    private var lastByteAt: Long? = null
+    private var loadingReplacement = false
+    private val sink = RecordingSink()
+
+    /** Drain checks the adapter scheduled, run by the test. */
+    private val scheduled = mutableListOf<() -> Unit>()
+    private val adapter = BufferingQualityPlayerAdapter(
+        sink,
+        clock = { now },
+        schedule = { _, action -> scheduled += action; { scheduled -= action } },
+        lastMediaByteAtMs = { lastByteAt },
+        loadingReplacement = { loadingReplacement },
+    )
+
+    private fun runScheduled() {
+        val due = scheduled.toList()
+        scheduled.clear()
+        due.forEach { it() }
+    }
+
+    /** The callbacks Media3 sends as a stall begins on a playing player. */
+    private fun starve() {
+        adapter.onPlaybackStateChanged(Player.STATE_BUFFERING)
+        adapter.onIsPlayingChanged(false)
+    }
+
+    /** The callbacks Media3 sends as a starved player resumes. */
+    private fun resume() {
+        adapter.onPlaybackStateChanged(Player.STATE_READY)
+        adapter.onIsPlayingChanged(true)
+    }
+
+    private fun playing() {
+        adapter.seed(playWhenReady = true, playbackState = Player.STATE_READY, isPlaying = true)
+        sink.events.clear()
+    }
+
+    private fun stalled(classification: String = "transport_stall") =
+        Playability.StartupStalled(bufferedAheadMs = 0, stalledForMs = 20_000, classification = classification)
+
+    @Test
+    fun aNewPlansFirstWaitAndALaterStarvationAreNetworkWaits() {
+        adapter.onPlayWhenReadyChanged(true, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+        adapter.onPlaybackStateChanged(Player.STATE_BUFFERING)
+        resume()
+        starve()
+        resume()
+        // READY arrives before isPlaying: a resume is never read as a pause.
+        assertEquals(listOf("waiting:network", "playing", "waiting:network", "playing"), sink.events)
+    }
+
+    @Test
+    fun aWaitWithMediaBufferedAheadIsARendererWaitUntilItDrains() {
+        var aheadMs = 3_600L
+        adapter.seed(playWhenReady = true, playbackState = Player.STATE_READY, isPlaying = true) { aheadMs }
+        sink.events.clear()
+
+        // Media3 dropping to a keyframe: buffering with seconds still buffered.
+        starve()
+        resume()
+        // The same kind of wait, but the buffer drains before playback resumes.
+        starve()
+        aheadMs = 400L
+        adapter.sampleBuffer(nowMs = 1_000L, bufferedPositionMs = 10_000L)
+        adapter.sampleBuffer(nowMs = 2_000L, bufferedPositionMs = 10_000L)
+        resume()
+        // Out of data from the start.
+        starve()
+
+        assertEquals(
+            listOf(
+                "waiting:renderer", "playing",
+                "waiting:renderer", "waiting:network", "playing",
+                "waiting:network",
+            ),
+            sink.events,
+        )
+    }
+
+    @Test
+    fun aRendererWaitBecomesANetworkWaitWhenItsBufferDrainsBetweenSamples() {
+        var aheadMs = 3_600L
+        adapter.seed(playWhenReady = true, playbackState = Player.STATE_READY, isPlaying = true) { aheadMs }
+        sink.events.clear()
+
+        starve()
+        runScheduled()
+        aheadMs = 400L
+        runScheduled()
+        runScheduled()
+        resume()
+
+        assertEquals(listOf("waiting:renderer", "waiting:network", "playing"), sink.events)
+        assertTrue(scheduled.isEmpty())
+    }
+
+    @Test
+    fun aRendererWaitStillShortOfTheResumeAmountAfterThreeSecondsIsAStall() {
+        var aheadMs = 2_000L
+        adapter.seed(playWhenReady = true, playbackState = Player.STATE_READY, isPlaying = true) { aheadMs }
+        sink.events.clear()
+
+        starve()
+        now = 2_999L
+        runScheduled()
+        now = 3_000L
+        runScheduled()
+        resume()
+        // Enough to resume buffered, yet still waiting: the renderer's own wait.
+        aheadMs = 5_000L
+        starve()
+        now = 10_000L
+        runScheduled()
+
+        assertEquals(listOf("waiting:renderer", "waiting:network", "playing", "waiting:renderer"), sink.events)
+    }
+
+    @Test
+    fun aWaitWithMoreThanTwiceTheResumeAmountBufferedIsTheRenderersUntilPlaybackRuns() {
+        for (tunneled in listOf(false, true)) {
+            val sink = RecordingSink()
+            val scheduled = mutableListOf<() -> Unit>()
+            val adapter = BufferingQualityPlayerAdapter(
+                sink,
+                clock = { now },
+                schedule = { _, action -> scheduled += action; { scheduled -= action } },
+            )
+            fun check() = scheduled.toList().also { scheduled.clear() }.forEach { it() }
+            var aheadMs = 0L
+            adapter.seed(
+                playWhenReady = true,
+                playbackState = Player.STATE_READY,
+                isPlaying = true,
+                tunneling = { tunneled },
+            ) { aheadMs }
+
+            adapter.onPlaybackStateChanged(Player.STATE_BUFFERING)
+            adapter.onIsPlayingChanged(false)
+            aheadMs = 10_000L
+            check()
+            aheadMs = 10_001L
+            check()
+            // It stays the renderer's even if the buffer then falls.
+            aheadMs = 400L
+            now += 10_000L
+            check()
+            adapter.onPlaybackStateChanged(Player.STATE_READY)
+            adapter.onIsPlayingChanged(true)
+            // A tunneled codec's held samples count as buffered: only the ample
+            // threshold makes its wait the renderer's from the start.
+            aheadMs = 3_600L
+            adapter.onPlaybackStateChanged(Player.STATE_BUFFERING)
+            adapter.onIsPlayingChanged(false)
+            adapter.onPlaybackStateChanged(Player.STATE_READY)
+            adapter.onIsPlayingChanged(true)
+            aheadMs = 10_001L
+            adapter.onPlaybackStateChanged(Player.STATE_BUFFERING)
+            adapter.onIsPlayingChanged(false)
+
+            val begins = if (tunneled) "waiting:network" else "waiting:renderer"
+            assertEquals(
+                listOf(
+                    "playing", "waiting:network", "waiting:renderer", "playing",
+                    begins, "playing", "waiting:renderer",
+                ),
+                sink.events,
+                "tunneled=$tunneled",
+            )
+        }
+    }
+
+    @Test
+    fun aWaitWithNoMediaBytesForFourSecondsIsAnOutage() {
+        playing()
+        adapter.noteLoading(true)
+        // A slow link: bytes keep arriving, so the wait stays a stall.
+        lastByteAt = 900L
+        now = 1_000L
+        starve()
+        now = 4_800L
+        lastByteAt = 4_500L
+        runScheduled()
+        now = 8_499L
+        runScheduled()
+        assertFalse(adapter.transportTroubleActive)
+        // Four seconds since the last byte.
+        now = 8_500L
+        runScheduled()
+        assertTrue(adapter.transportTroubleActive)
+        // The plan's data arriving again ends it.
+        adapter.sampleBuffer(nowMs = 9_000L, bufferedPositionMs = 10_000L)
+        adapter.sampleBuffer(nowMs = 10_000L, bufferedPositionMs = 11_000L)
+        assertFalse(adapter.transportTroubleActive)
+        resume()
+
+        // A wait that begins on a link already silent is an outage at once.
+        now = 20_000L
+        starve()
+        assertTrue(adapter.transportTroubleActive)
+        resume()
+
+        // A new request, such as a seek's, starts its silence when it is sent.
+        now = 30_000L
+        adapter.onMediaRequestStarted()
+        adapter.onDiscontinuity(Player.DISCONTINUITY_REASON_SEEK)
+        starve()
+        now = 33_999L
+        runScheduled()
+        assertFalse(adapter.transportTroubleActive)
+        resume()
+
+        // A player that is not loading has no request to go silent.
+        adapter.noteLoading(false)
+        now = 60_000L
+        starve()
+        runScheduled()
+        assertFalse(adapter.transportTroubleActive)
+
+        assertEquals(
+            listOf(
+                "waiting:network", "transport_start", "transport_end", "playing",
+                "waiting:network", "transport_start", "transport_end", "playing",
+                "seek", "waiting:seek", "playing",
+                "waiting:network",
+            ),
+            sink.events,
+        )
+    }
+
+    @Test
+    fun aSegmentedPlanWaitsLongerInSilenceBeforeAnOutage() {
+        // The server holds a segment request silent while it produces the
+        // segment (up to 12 s for a transcode): that silence is a stall.
+        data class Row(val delivery: PlaybackDelivery, val silentMs: Long, val outage: Boolean)
+        val rows = listOf(
+            Row(PlaybackDelivery.SERVER_TRANSCODE_HLS, silentMs = 8_000L, outage = false),
+            Row(PlaybackDelivery.SERVER_TRANSCODE_HLS, silentMs = 16_000L, outage = true),
+            Row(PlaybackDelivery.SERVER_REMUX_HLS, silentMs = 16_000L, outage = true),
+            Row(PlaybackDelivery.ORIGINAL_HTTP, silentMs = 5_000L, outage = true),
+            Row(PlaybackDelivery.SERVER_REMUX_PROGRESSIVE, silentMs = 5_000L, outage = true),
+        )
+        playing()
+        adapter.noteLoading(true)
+        for (row in rows) {
+            adapter.reset(row.delivery)
+            lastByteAt = now
+            sink.events.clear()
+            starve()
+            now += row.silentMs
+            runScheduled()
+
+            assertEquals(row.outage, adapter.transportTroubleActive, "$row")
+            val expected = listOf("waiting:network") + if (row.outage) listOf("transport_start") else emptyList()
+            assertEquals(expected, sink.events, "$row")
+            resume()
+        }
+    }
+
+    @Test
+    fun aTrickleOfMediaBytesEndsAnOutageAndTheWaitCountsAgain() {
+        // No load completes and the buffer has not moved yet: a slow request's
+        // bytes are the plan's data arriving all the same.
+        data class Row(val delivery: PlaybackDelivery, val outageAfterMs: Long, val byLoadError: Boolean)
+        val rows = listOf(
+            Row(PlaybackDelivery.ORIGINAL_HTTP, outageAfterMs = 4_000L, byLoadError = false),
+            Row(PlaybackDelivery.SERVER_TRANSCODE_HLS, outageAfterMs = 15_000L, byLoadError = false),
+            Row(PlaybackDelivery.ORIGINAL_HTTP, outageAfterMs = 4_000L, byLoadError = true),
+        )
+        playing()
+        adapter.noteLoading(true)
+        for (row in rows) {
+            adapter.reset(row.delivery)
+            lastByteAt = now
+            sink.events.clear()
+            starve()
+            if (row.byLoadError) {
+                adapter.onLoadFailed(wasCanceled = false)
+            } else {
+                now += row.outageAfterMs + 1_000L
+                runScheduled()
+            }
+            // Still nothing since it began.
+            now += 1_000L
+            runScheduled()
+            assertTrue(adapter.transportTroubleActive, "$row")
+
+            val trickleAt = now
+            lastByteAt = trickleAt
+            now += WAIT_CHECK_MS
+            runScheduled()
+            assertFalse(adapter.transportTroubleActive, "$row")
+            // The trickle stops: a new silence is timed from its last byte.
+            now = trickleAt + row.outageAfterMs
+            runScheduled()
+
+            assertEquals(
+                listOf("waiting:network", "transport_start", "transport_end", "transport_start"),
+                sink.events,
+                "$row",
+            )
+            resume()
+        }
+    }
+
+    @Test
+    fun aSeekMakesTheNextWaitASeekWaitUntilPlaybackRuns() {
+        playing()
+        adapter.onDiscontinuity(Player.DISCONTINUITY_REASON_SEEK)
+        starve()
+        resume()
+        starve()
+        assertEquals(listOf("seek", "waiting:seek", "playing", "waiting:network"), sink.events)
+
+        // A seek during a stall re-announces the wait with its new cause.
+        sink.events.clear()
+        adapter.onDiscontinuity(Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT)
+        assertEquals(listOf("seek", "waiting:seek"), sink.events)
+
+        sink.events.clear()
+        adapter.onDiscontinuity(Player.DISCONTINUITY_REASON_AUTO_TRANSITION)
+        assertEquals(emptyList(), sink.events)
+    }
+
+    @Test
+    fun aMarkedReloadMakesTheRemountsWaitAReloadWait() {
+        playing()
+        adapter.markReload()
+        adapter.onPlaybackStateChanged(Player.STATE_IDLE)
+        adapter.onIsPlayingChanged(false)
+        adapter.onPlaybackStateChanged(Player.STATE_BUFFERING)
+        resume()
+        starve()
+        assertEquals(listOf("pause", "waiting:reload", "playing", "waiting:network"), sink.events)
+
+        sink.events.clear()
+        adapter.markReload()
+        assertEquals(listOf("waiting:reload"), sink.events)
+    }
+
+    @Test
+    fun pausingEndingAndIdlingAreInterruptions() {
+        playing()
+        adapter.onPlayWhenReadyChanged(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+        adapter.onIsPlayingChanged(false)
+        adapter.onPlayWhenReadyChanged(true, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+        adapter.onIsPlayingChanged(true)
+        adapter.onPlaybackStateChanged(Player.STATE_ENDED)
+        adapter.onIsPlayingChanged(false)
+        assertEquals(listOf("pause", "playing", "pause"), sink.events)
+
+        // A pause during a stall is an interruption too.
+        sink.events.clear()
+        adapter.onPlaybackStateChanged(Player.STATE_BUFFERING)
+        adapter.onPlayWhenReadyChanged(false, Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS)
+        assertEquals(listOf("waiting:network", "pause"), sink.events)
+    }
+
+    @Test
+    fun aDetachedPlayersWaitIsNoLongerWatchedAndANewOneIsAnnounced() {
+        playing()
+        starve()
+        adapter.onDetached()
+        assertTrue(scheduled.isEmpty())
+
+        adapter.seed(playWhenReady = true, playbackState = Player.STATE_BUFFERING, isPlaying = false)
+        assertEquals(listOf("waiting:network", "waiting:network"), sink.events)
+    }
+
+    @Test
+    fun aLoadErrorStartsTroubleAndBufferProgressEndsIt() {
+        playing()
+        adapter.onLoadFailed(wasCanceled = true)
+        adapter.onLoadFailed(wasCanceled = false, subtitle = true)
+        assertFalse(adapter.transportTroubleActive)
+
+        adapter.sampleBuffer(nowMs = 0, bufferedPositionMs = 10_000)
+        adapter.onLoadFailed(wasCanceled = false)
+        adapter.onLoadFailed(wasCanceled = false)
+        assertTrue(adapter.transportTroubleActive)
+        adapter.sampleBuffer(nowMs = 1_000, bufferedPositionMs = 10_000)
+        assertTrue(adapter.transportTroubleActive)
+        adapter.sampleBuffer(nowMs = 2_000, bufferedPositionMs = 12_000)
+        assertFalse(adapter.transportTroubleActive)
+        assertEquals(listOf("transport_start", "transport_end"), sink.events)
+    }
+
+    @Test
+    fun playbackRunningEndsLoadTroubleBeforeItPlays() {
+        playing()
+        starve()
+        adapter.onLoadFailed(wasCanceled = false)
+        resume()
+        assertEquals(listOf("waiting:network", "transport_start", "transport_end", "playing"), sink.events)
+    }
+
+    @Test
+    fun offlineAndLoadErrorsEndOnlyWhenBothClear() {
+        playing()
+        adapter.onLoadFailed(wasCanceled = false)
+        adapter.onNetworkAvailable(connected = false)
+        adapter.onLoadFinished(bytesLoaded = 4_096)
+        assertTrue(adapter.transportTroubleActive)
+        // Playing from the buffer is no evidence the device is back online.
+        starve()
+        resume()
+        assertTrue(adapter.transportTroubleActive)
+        // Back online is not data arriving either; the media's next bytes are.
+        adapter.onNetworkAvailable(connected = true)
+        assertTrue(adapter.transportTroubleActive)
+        adapter.onLoadFinished(bytesLoaded = 4_096)
+        assertFalse(adapter.transportTroubleActive)
+        assertEquals(listOf("transport_start", "waiting:network", "playing", "transport_end"), sink.events)
+
+        sink.events.clear()
+        adapter.onNetworkAvailable(connected = false)
+        adapter.onLoadFailed(wasCanceled = false)
+        adapter.onNetworkAvailable(connected = true)
+        // An empty load or a playlist refresh that succeeds ends nothing.
+        adapter.onLoadFinished(bytesLoaded = 0)
+        adapter.onLoadFinished(bytesLoaded = 2_048, carriesMedia = false)
+        assertTrue(adapter.transportTroubleActive)
+        adapter.sampleBuffer(nowMs = 0, bufferedPositionMs = 10_000)
+        adapter.sampleBuffer(nowMs = 1_000, bufferedPositionMs = 12_000)
+        assertFalse(adapter.transportTroubleActive)
+        assertEquals(listOf("transport_start", "transport_end"), sink.events)
+    }
+
+    @Test
+    fun aPlaybackSuppressionStopsLikeAPauseUntilPlaybackRuns() {
+        playing()
+        // A transient audio-focus loss: Media3 keeps playWhenReady and READY.
+        adapter.onPlaybackSuppressionReasonChanged(Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS)
+        adapter.onIsPlayingChanged(false)
+        // Focus regained: nothing until playback actually runs.
+        adapter.onPlaybackSuppressionReasonChanged(Player.PLAYBACK_SUPPRESSION_REASON_NONE)
+        adapter.onIsPlayingChanged(true)
+        // During a stall, the suppression stops it; a regain that finds the buffer empty is a wait again.
+        starve()
+        adapter.onPlaybackSuppressionReasonChanged(Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS)
+        adapter.onPlaybackSuppressionReasonChanged(Player.PLAYBACK_SUPPRESSION_REASON_NONE)
+
+        assertEquals(
+            listOf("pause", "playing", "waiting:network", "pause", "waiting:network"),
+            sink.events,
+        )
+    }
+
+    @Test
+    fun aNewPlanStartsWithNoTransportTrouble() {
+        playing()
+        adapter.onLoadFailed(wasCanceled = false)
+        adapter.onNetworkAvailable(connected = false)
+        assertTrue(adapter.transportTroubleActive)
+
+        adapter.reset(PlaybackDelivery.ORIGINAL_HTTP)
+
+        assertFalse(adapter.transportTroubleActive)
+        assertEquals(listOf("transport_start", "transport_end", "playing"), sink.events)
+    }
+
+    @Test
+    fun aSlowLinkStillReceivingDataOrAnOutageOwnsItsTransportStall() {
+        adapter.sampleBuffer(nowMs = 0, bufferedPositionMs = 1_000)
+        assertFalse(adapter.ownsStartupStall(stalled(), nowMs = 1_000, controllerEnabled = true))
+        adapter.sampleBuffer(nowMs = 2_000, bufferedPositionMs = 3_000)
+        assertTrue(adapter.ownsStartupStall(stalled(), nowMs = 7_000, controllerEnabled = true))
+
+        // No data in the last five seconds.
+        assertFalse(adapter.ownsStartupStall(stalled(), nowMs = 7_001, controllerEnabled = true))
+
+        // A completed media load with bytes is data too, timed by the adapter's clock;
+        // a playlist refresh is not.
+        now = 10_000
+        adapter.onLoadFinished(bytesLoaded = 2_048, carriesMedia = false)
+        assertFalse(adapter.ownsStartupStall(stalled(), nowMs = 10_000, controllerEnabled = true))
+        adapter.onLoadFinished(bytesLoaded = 65_536)
+        assertTrue(adapter.ownsStartupStall(stalled(), nowMs = 12_000, controllerEnabled = true))
+        // A replacement still loading is not timed by the controller: its deadline is the fallback's.
+        loadingReplacement = true
+        assertFalse(adapter.ownsStartupStall(stalled(), nowMs = 12_000, controllerEnabled = true))
+        loadingReplacement = false
+
+        // Not for another classification, another reason, or a controller that is off.
+        assertFalse(adapter.ownsStartupStall(stalled("decoder_no_output"), nowMs = 12_000, controllerEnabled = true))
+        assertFalse(adapter.ownsStartupStall(Playability.Supported, nowMs = 12_000, controllerEnabled = true))
+        assertFalse(adapter.ownsStartupStall(stalled(), nowMs = 12_000, controllerEnabled = false))
+
+        // An outage owns it whether or not data arrived lately: no reopen, no failure replan.
+        adapter.onLoadFailed(wasCanceled = false)
+        assertTrue(adapter.ownsStartupStall(stalled(), nowMs = 60_000, controllerEnabled = true))
+        adapter.onLoadFinished(bytesLoaded = 65_536)
+        adapter.onNetworkAvailable(connected = false)
+        assertTrue(adapter.ownsStartupStall(stalled(), nowMs = 60_000, controllerEnabled = true))
+        assertFalse(adapter.ownsStartupStall(stalled("decoder_no_output"), nowMs = 60_000, controllerEnabled = true))
+    }
+
+    @Test
+    fun aSeekJumpIsNotDataArrivingAndResetForgetsHistory() {
+        adapter.sampleBuffer(nowMs = 0, bufferedPositionMs = 10_000)
+        adapter.onDiscontinuity(Player.DISCONTINUITY_REASON_SEEK)
+        adapter.sampleBuffer(nowMs = 1_000, bufferedPositionMs = 500_000)
+        assertFalse(adapter.isReceivingData(1_000))
+
+        adapter.sampleBuffer(nowMs = 2_000, bufferedPositionMs = 502_000)
+        assertTrue(adapter.isReceivingData(2_000))
+        adapter.reset(PlaybackDelivery.ORIGINAL_HTTP)
+        assertFalse(adapter.isReceivingData(2_000))
+    }
+}

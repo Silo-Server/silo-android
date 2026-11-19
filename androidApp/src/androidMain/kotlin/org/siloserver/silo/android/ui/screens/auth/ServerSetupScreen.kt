@@ -19,13 +19,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -43,11 +46,13 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -55,6 +60,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleStartEffect
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.marquee.MarqueeButton
@@ -67,6 +73,12 @@ import org.siloserver.silo.android.ui.components.marquee.MarqueeStage
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTextField
 import org.siloserver.silo.android.ui.components.marquee.MarqueeWordmark
 import org.siloserver.silo.android.ui.components.marquee.marqueePressHaptic
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.network.ServerSetupScheme
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.common.discovery.DiscoveredServer
+import org.siloserver.silo.common.discovery.LanServerDiscovery
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
 import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
@@ -96,8 +108,15 @@ fun ServerSetupScreen(
     viewModel: ServerSetupViewModel = koinViewModel(),
     serverRegistry: ServerRegistry = koinInject(),
     brandingCache: ServerBrandingCache = koinInject(),
+    discovery: LanServerDiscovery = koinInject(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    // Browse only while the screen is on: it stops in the background.
+    LifecycleStartEffect(discovery) {
+        discovery.start()
+        onStopOrDispose { discovery.stop() }
+    }
+    val found by discovery.servers.collectAsState()
     val entries by serverRegistry.entries.collectAsState()
     val recents = remember(entries) { entries.sortedByDescending { it.lastUsedAtEpochMs }.take(3) }
     var fieldFocused by remember { mutableStateOf(false) }
@@ -129,15 +148,15 @@ fun ServerSetupScreen(
         }
     }
     MarqueeErrorHaptic(state.error)
+    MarqueeErrorHaptic(state.discoveryError)
 
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
 
     state.pendingCleartextUrl?.let { origin ->
         SiloConfirmDialog(
-            title = "Connect without encryption?",
-            body = "Your password and what you watch will be sent unencrypted to " +
-                "${ServerBranding.hostLabel(origin)}. Only do this on a network you trust.",
-            confirmLabel = "Connect",
+            title = stringResource(CommonR.string.setup_cleartext_title),
+            body = stringResourceWithNames(CommonR.string.setup_cleartext_body, ServerBranding.hostLabel(origin)),
+            confirmLabel = stringResource(CommonR.string.setup_cleartext_connect),
             destructive = false,
             confirmEnabled = !state.isLoading,
             onConfirm = viewModel::confirmCleartextConnection,
@@ -150,13 +169,13 @@ fun ServerSetupScreen(
         frostStart = 0.30f,
         topBar = { MarqueeWordmark() },
     ) {
-        MarqueeHeadline(title = "Connect to\nyour server", lead = "Type the address you use for Silo.")
+        MarqueeHeadline(title = stringResource(CommonR.string.setup_connectHeadline), lead = stringResource(CommonR.string.setup_body))
 
         MarqueeTextField(
             value = state.serverUrl,
             onValueChange = viewModel::onServerUrlChanged,
             icon = Icons.Outlined.Language,
-            placeholder = "media.example.com",
+            placeholder = stringResource(CommonR.string.setup_placeholder),
             keyboardType = KeyboardType.Uri,
             imeAction = ImeAction.Go,
             onImeAction = viewModel::onConnectClick,
@@ -168,11 +187,11 @@ fun ServerSetupScreen(
         )
 
         state.error?.let { error ->
-            MarqueeErrorText(error, Modifier.padding(top = 10.dp, start = 4.dp))
+            MarqueeErrorText(error.text(), Modifier.padding(top = 10.dp, start = 4.dp))
         }
         if (state.usesCleartext && state.error == null) {
             Text(
-                "This address uses unencrypted HTTP. Fine on a trusted home network; avoid it on public Wi-Fi.",
+                stringResource(CommonR.string.setup_cleartext_warning),
                 color = MarqueeColors.Warning,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(top = 10.dp, start = 4.dp),
@@ -190,11 +209,34 @@ fun ServerSetupScreen(
             modifier = Modifier.padding(top = 12.dp),
         )
 
-        // Recents are for picking before typing; while the address field has
-        // the keyboard, the field and Continue need the room.
+        // Found servers and recents are for picking before typing; while the
+        // address field has the keyboard, the field and Continue need the room.
+        // The found list renders nothing until something is confirmed, so a
+        // network without servers (or without multicast) looks unchanged.
+        if (!fieldFocused) {
+            if (found.isNotEmpty()) {
+                Text(
+                    stringResource(CommonR.string.setup_foundNearby),
+                    color = MarqueeColors.InkSecondary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 22.dp, start = 2.dp, bottom = 10.dp),
+                )
+                FoundServers(
+                    servers = found.take(4),
+                    connectingUrl = state.connectingServerUrl.takeIf { state.isLoading },
+                    enabled = !state.isLoading,
+                    onPick = viewModel::connectTo,
+                )
+            }
+            state.discoveryError?.let { error ->
+                MarqueeErrorText(error.text(), Modifier.padding(top = 10.dp, start = 4.dp))
+            }
+        }
+
         if (recents.isNotEmpty() && !fieldFocused) {
             Text(
-                "Recent",
+                stringResource(CommonR.string.setup_recent),
                 color = MarqueeColors.InkSecondary,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -212,7 +254,7 @@ fun ServerSetupScreen(
         }
 
         MarqueeButton(
-            text = if (state.isLoading) "Connecting…" else "Continue",
+            text = stringResource(if (state.isLoading) CommonR.string.setup_connecting else CommonR.string.setup_continue),
             onClick = viewModel::onConnectClick,
             isLoading = state.isLoading,
             enabled = !state.isLoading,
@@ -235,19 +277,20 @@ private fun AdvancedOptions(
     Column(modifier.fillMaxWidth().animateContentSize()) {
         val chevron by animateFloatAsState(if (expanded) 180f else 0f, label = "advancedChevron")
         val interaction = remember { MutableInteractionSource() }
+        val toggleState = stringResource(if (expanded) CommonR.string.setup_advanced_expanded else CommonR.string.setup_advanced_collapsed)
         Row(
             modifier = Modifier
                 .heightIn(min = 32.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = onToggle)
                 .marqueePressHaptic(interaction)
-                .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
+                .semantics { stateDescription = toggleState }
                 .padding(start = 4.dp, end = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(Icons.Outlined.Settings, contentDescription = null, tint = MarqueeColors.InkSecondary, modifier = Modifier.size(16.dp))
-            Text("Advanced options", color = MarqueeColors.InkSecondary, fontSize = 14.sp)
+            Text(stringResource(CommonR.string.setup_advanced_show), color = MarqueeColors.InkSecondary, fontSize = 14.sp)
             Icon(
                 Icons.Filled.KeyboardArrowDown,
                 contentDescription = null,
@@ -269,11 +312,11 @@ private fun AdvancedOptions(
                         Modifier.fillMaxWidth().height(MarqueeMetrics.FieldHeight).padding(horizontal = 16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Protocol", color = MarqueeColors.Ink, fontSize = MarqueeMetrics.FieldFont, modifier = Modifier.weight(1f))
+                        Text(stringResource(CommonR.string.setup_protocol_field), color = MarqueeColors.Ink, fontSize = MarqueeMetrics.FieldFont, modifier = Modifier.weight(1f))
                         SegmentedPicker(
                             options = ServerSetupScheme.entries,
                             selected = scheme,
-                            label = { it.label },
+                            label = { schemeLabel(it) },
                             onSelect = onSchemeSelected,
                         )
                     }
@@ -282,10 +325,11 @@ private fun AdvancedOptions(
                         Modifier.fillMaxWidth().height(MarqueeMetrics.FieldHeight).padding(horizontal = 16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Port", color = MarqueeColors.Ink, fontSize = MarqueeMetrics.FieldFont, modifier = Modifier.weight(1f))
+                        val portLabel = stringResource(CommonR.string.setup_port_field)
+                        Text(portLabel, color = MarqueeColors.Ink, fontSize = MarqueeMetrics.FieldFont, modifier = Modifier.weight(1f))
                         Box(Modifier.width(120.dp), contentAlignment = Alignment.CenterEnd) {
                             if (port.isEmpty()) {
-                                Text("Auto", color = MarqueeColors.InkTertiary, fontSize = MarqueeMetrics.FieldFont)
+                                Text(stringResource(CommonR.string.setup_port_auto), color = MarqueeColors.InkTertiary, fontSize = MarqueeMetrics.FieldFont)
                             }
                             BasicTextField(
                                 value = port,
@@ -294,13 +338,13 @@ private fun AdvancedOptions(
                                 textStyle = TextStyle(color = MarqueeColors.Ink, fontSize = MarqueeMetrics.FieldFont, textAlign = TextAlign.End),
                                 cursorBrush = SolidColor(Color(0xFF0A84FF)),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-                                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Port" },
+                                modifier = Modifier.fillMaxWidth().semantics { contentDescription = portLabel },
                             )
                         }
                     }
                 }
                 Text(
-                    "Auto tries HTTPS first, then HTTP, then Silo's port 8090.",
+                    stringResource(CommonR.string.setup_advanced_hint),
                     color = MarqueeColors.InkTertiary,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(start = 4.dp),
@@ -310,9 +354,19 @@ private fun AdvancedOptions(
     }
 }
 
+/** The protocol picker's label for [scheme]. */
+@Composable
+private fun schemeLabel(scheme: ServerSetupScheme): String = stringResource(
+    when (scheme) {
+        ServerSetupScheme.Auto -> CommonR.string.setup_scheme_auto
+        ServerSetupScheme.Https -> CommonR.string.setup_scheme_https
+        ServerSetupScheme.Http -> CommonR.string.setup_scheme_http
+    },
+)
+
 /** A small iOS-style segmented control. */
 @Composable
-private fun <T> SegmentedPicker(options: List<T>, selected: T, label: (T) -> String, onSelect: (T) -> Unit) {
+private fun <T> SegmentedPicker(options: List<T>, selected: T, label: @Composable (T) -> String, onSelect: (T) -> Unit) {
     Row(
         Modifier
             .width(190.dp)
@@ -332,12 +386,19 @@ private fun <T> SegmentedPicker(options: List<T>, selected: T, label: (T) -> Str
                     .clickable(role = Role.RadioButton) { onSelect(option) },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
+                // Steps down from 13sp when a translated label is wider than its
+                // segment ("Automático"), instead of being cut.
+                BasicText(
                     label(option),
-                    color = MarqueeColors.Ink,
-                    fontSize = 13.sp,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                    style = LocalTextStyle.current.merge(
+                        TextStyle(
+                            color = MarqueeColors.Ink,
+                            fontSize = 13.sp,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                        ),
+                    ),
                     maxLines = 1,
+                    autoSize = TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = 13.sp, stepSize = 0.5.sp),
                 )
             }
         }
@@ -351,6 +412,48 @@ private fun RecentServers(
     enabled: Boolean,
     onPick: (ServerEntry) -> Unit,
 ) {
+    ServerPickerList {
+        servers.forEachIndexed { index, server ->
+            if (index > 0) MarqueeSeparator()
+            ServerPickerRow(
+                name = server.displayName,
+                markName = server.fetchedName,
+                markUrl = brandingCache.branding(server.url)?.markUrl,
+                detail = ServerBranding.hostLabel(server.url),
+                enabled = enabled,
+                onClick = { onPick(server) },
+            )
+        }
+    }
+}
+
+/** Servers [LanServerDiscovery] found, in the Recent list's rows. */
+@Composable
+private fun FoundServers(
+    servers: List<DiscoveredServer>,
+    connectingUrl: String?,
+    enabled: Boolean,
+    onPick: (DiscoveredServer) -> Unit,
+) {
+    ServerPickerList {
+        servers.forEachIndexed { index, server ->
+            if (index > 0) MarqueeSeparator()
+            ServerPickerRow(
+                name = server.name,
+                markName = server.name,
+                markUrl = null,
+                detail = server.detail,
+                enabled = enabled,
+                isConnecting = server.url == connectingUrl,
+                onClick = { onPick(server) },
+            )
+        }
+    }
+}
+
+/** The rounded card of server rows used by Recent and the found servers. */
+@Composable
+private fun ServerPickerList(content: @Composable () -> Unit) {
     val shape = RoundedCornerShape(16.dp)
     Column(
         Modifier
@@ -359,43 +462,57 @@ private fun RecentServers(
             .background(Color.White.copy(alpha = 0.07f))
             .border(1.dp, Color.White.copy(alpha = 0.12f), shape),
     ) {
-        servers.forEachIndexed { index, server ->
-            if (index > 0) MarqueeSeparator()
-            val host = ServerBranding.hostLabel(server.url)
-            val interaction = remember { MutableInteractionSource() }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null) { onPick(server) }
-                    .marqueePressHaptic(interaction)
-                    .semantics { contentDescription = "${server.displayName}, $host" }
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                MarqueeServerMark(
-                    name = server.fetchedName,
-                    imageUrl = brandingCache.branding(server.url)?.markUrl,
-                    size = 40.dp,
-                )
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        server.displayName,
-                        color = MarqueeColors.Ink,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(host, color = MarqueeColors.InkTertiary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = MarqueeColors.InkTertiary,
-                    modifier = Modifier.size(18.dp),
-                )
+        content()
+    }
+}
+
+/** One server in a [ServerPickerList]: its mark, name and address. */
+@Composable
+private fun ServerPickerRow(
+    name: String,
+    markName: String?,
+    markUrl: String?,
+    detail: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    isConnecting: Boolean = false,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val connecting = stringResource(CommonR.string.setup_connectingState)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = onClick)
+            .marqueePressHaptic(interaction)
+            .semantics {
+                contentDescription = "$name, $detail"
+                if (isConnecting) stateDescription = connecting
             }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MarqueeServerMark(name = markName, imageUrl = markUrl, size = 40.dp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                name,
+                color = MarqueeColors.Ink,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(detail, color = MarqueeColors.InkTertiary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (isConnecting) {
+            CircularProgressIndicator(color = MarqueeColors.Ink, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+        } else {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MarqueeColors.InkTertiary,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }

@@ -65,6 +65,24 @@ interface DeviceLoginApi {
         deviceCode: String,
     ): ApiResult<DeviceLoginPollResponse> = unsupportedScopedDeviceLoginOperation()
 
+    /**
+     * [startDeviceLoginAt] with a session [binding] (null: none). Only call
+     * with a binding when the server's capability reports `session_binding`.
+     */
+    suspend fun startDeviceLoginAt(
+        serverUrl: String,
+        deviceName: String?,
+        devicePlatform: String?,
+        binding: String?,
+    ): ApiResult<DeviceLoginStartResponse> = startDeviceLoginAt(serverUrl, deviceName, devicePlatform)
+
+    /** [pollDeviceLoginAt] carrying the session's [bindingSecret] (null: none). */
+    suspend fun pollDeviceLoginAt(
+        serverUrl: String,
+        deviceCode: String,
+        bindingSecret: String?,
+    ): ApiResult<DeviceLoginPollResponse> = pollDeviceLoginAt(serverUrl, deviceCode)
+
     suspend fun remotePlaybackCapabilityAt(
         serverUrl: String,
     ): ApiResult<DeviceLoginCapabilityResponse> = ApiResult.Error(
@@ -174,24 +192,37 @@ class DefaultDeviceLoginApi(private val client: HttpClient, private val gate: Ap
         serverUrl: String,
         deviceName: String?,
         devicePlatform: String?,
+    ): ApiResult<DeviceLoginStartResponse> = startDeviceLoginAt(serverUrl, deviceName, devicePlatform, binding = null)
+
+    override suspend fun startDeviceLoginAt(
+        serverUrl: String,
+        deviceName: String?,
+        devicePlatform: String?,
+        binding: String?,
     ): ApiResult<DeviceLoginStartResponse> = safeApiV2Call(ApiV2Gate.Unrestricted) {
         client.post("${serverUrl.trimEnd('/')}/api/v2/auth/device/start") {
             skipSiloAuth()
             singleAttempt()
             contentType(ContentType.Application.Json)
-            setBody(DeviceLoginStartRequest(deviceName, devicePlatform))
+            setBody(DeviceLoginStartRequest(deviceName, devicePlatform, binding = binding))
         }.requireAuthStatus(201)
     }
 
     override suspend fun pollDeviceLoginAt(
         serverUrl: String,
         deviceCode: String,
+    ): ApiResult<DeviceLoginPollResponse> = pollDeviceLoginAt(serverUrl, deviceCode, bindingSecret = null)
+
+    override suspend fun pollDeviceLoginAt(
+        serverUrl: String,
+        deviceCode: String,
+        bindingSecret: String?,
     ): ApiResult<DeviceLoginPollResponse> = safeApiV2Call<DevicePollV2>(ApiV2Gate.Unrestricted) {
         client.post("${serverUrl.trimEnd('/')}/api/v2/auth/device/poll") {
             skipSiloAuth()
             singleAttempt()
             contentType(ContentType.Application.Json)
-            setBody(DeviceLoginPollRequest(deviceCode))
+            setBody(DeviceLoginPollRequest(deviceCode, bindingSecret))
         }.requireAuthStatus(200)
     }.map { it.domain() }
 

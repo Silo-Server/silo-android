@@ -1,7 +1,10 @@
 package org.siloserver.silo.android.ui.screens.auth
 
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -30,6 +33,7 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
+import org.siloserver.silo.common.discovery.DiscoveredServer
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupStatusResponse
@@ -38,12 +42,23 @@ import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.repository.AuthRepository
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import org.siloserver.silo.common.i18n.text
 
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 @OptIn(ExperimentalCoroutinesApi::class)
 class ServerSetupPersistenceTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
+    /** The sign-in screen's text in English (the screen also isolates names in right-to-left). */
+    private fun UiText.inEnglish(): String = text(resources)
+
     private val dispatcher = StandardTestDispatcher()
 
     @BeforeTest
@@ -200,7 +215,7 @@ class ServerSetupPersistenceTest {
 
         assertEquals(emptyList(), tokenManager.serverUrlWrites)
         assertNull(viewModel.uiState.value.navigateTo)
-        assertEquals("Could not safely identify this HTTP server.", viewModel.uiState.value.error)
+        assertEquals("Could not safely identify this HTTP server.", viewModel.uiState.value.error?.inEnglish())
     }
 
     @Test
@@ -233,6 +248,43 @@ class ServerSetupPersistenceTest {
 
         assertEquals(listOf("https://secure.silo"), registry.switchedTo)
         assertEquals(ServerContract.V2, registry.activeEntry.value?.contract)
+    }
+
+    @Test
+    fun foundHttpServerAsksForConsentBeforeSavingLikeATypedAddress() = runTest(dispatcher) {
+        val tokenManager = RecordingTokenManager()
+        val viewModel = viewModelFor(tokenManager)
+
+        viewModel.connectTo(DiscoveredServer(serverId = "srv", name = "Den", url = "http://192.168.1.5:8090"))
+        awaitSettled(viewModel)
+
+        assertEquals("http://192.168.1.5:8090", viewModel.uiState.value.pendingCleartextUrl)
+        assertEquals(emptyList(), tokenManager.serverUrlWrites)
+        assertNull(viewModel.uiState.value.navigateTo)
+
+        viewModel.confirmCleartextConnection()
+        awaitSettled(viewModel)
+
+        assertEquals(listOf("http://192.168.1.5:8090"), tokenManager.serverUrlWrites)
+        assertEquals(ServerSetupDestination.Login(signupEnabled = true), viewModel.uiState.value.navigateTo)
+    }
+
+    @Test
+    fun foundServerFailureStaysOffTheAddressField() = runTest(dispatcher) {
+        val tokenManager = RecordingTokenManager()
+        val viewModel = ServerSetupViewModel(
+            authRepository = repositoryFor(tokenManager),
+            cleartextConsentStore = FakeCleartextConsentStore(),
+            getSetupStatus = { ApiResult.NetworkError(IOException("gone")) },
+            getSignupStatus = { ApiResult.Success(SignupStatusResponse(enabled = true)) },
+        )
+
+        viewModel.connectTo(DiscoveredServer(serverId = "srv", name = "Den", url = "http://192.168.1.5:8090"))
+        awaitSettled(viewModel)
+
+        assertNull(viewModel.uiState.value.error)
+        assertEquals("Could not reach a Silo server at that address.", viewModel.uiState.value.discoveryError?.inEnglish())
+        assertEquals(emptyList(), tokenManager.serverUrlWrites)
     }
 
     private fun viewModelFor(

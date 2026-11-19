@@ -2,16 +2,22 @@ package org.siloserver.silo.android.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.uiText
 import org.siloserver.silo.common.network.CleartextConsentStore
+import org.siloserver.silo.common.network.cleartextOrigin
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.model.auth.InvitationLookupResponse
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.network.CleartextOriginNotApprovedException
 import org.siloserver.silo.network.requiresApproval
 import org.siloserver.silo.repository.AuthRepository
 
@@ -25,14 +31,15 @@ data class InviteClaimUiState(
     val acceptanceUnavailable: Boolean = false,
     /**
      * The invite points at a cleartext HTTP server the user hasn't approved.
-     * The claim POST carries credentials, so it needs the same explicit
-     * consent the manual server-setup flow collects.
+     * The claim POST, and the lookup POST on a server that takes the token in
+     * the body, carry credentials, so they need the same explicit consent the
+     * manual server-setup flow collects.
      */
     val pendingCleartextOrigin: String? = null,
     val password: String = "",
     val confirmPassword: String = "",
     val isSubmitting: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val claimSuccess: Boolean = false,
     val signInRequiredUsername: String? = null,
     val acceptanceUncertain: Boolean = false,
@@ -81,33 +88,43 @@ class InviteClaimViewModel(
         lookupGeneration.value += 1
         val generation = lookupGeneration.value
         _uiState.update { InviteClaimUiState() }
-        viewModelScope.launch {
-            val result = authRepository.lookupInvitation(serverUrl, token)
-            if (generation != lookupGeneration.value) return@launch
-            when (result) {
-                is ApiResult.Success -> _uiState.update {
-                    it.copy(isLoadingInvitation = false, invitation = result.data)
-                }
-                is ApiResult.Error -> {
-                    // Only statuses that speak about the token itself are
-                    // terminal. A 429/5xx says nothing about the invite, and
-                    // showing "expired" for it sends the user off to have a
-                    // valid link revoked and reissued.
-                    if (result.error == "capability_unavailable") {
-                        _uiState.update { it.copy(isLoadingInvitation = false, acceptanceUnavailable = true) }
-                    } else if (result.code in TERMINAL_LOOKUP_CODES) {
-                        _uiState.update {
-                            it.copy(isLoadingInvitation = false, invitationInvalid = true)
-                        }
-                    } else {
-                        _uiState.update {
-                            it.copy(isLoadingInvitation = false, lookupFailed = true)
-                        }
+        viewModelScope.launch { lookup(generation, serverUrl, token) }
+    }
+
+    private suspend fun lookup(generation: Long, serverUrl: String, token: String) {
+        val result = authRepository.lookupInvitation(serverUrl, token)
+        if (generation != lookupGeneration.value) return
+        when (result) {
+            is ApiResult.Success -> _uiState.update {
+                it.copy(isLoadingInvitation = false, invitation = result.data)
+            }
+            is ApiResult.Error -> {
+                // Only statuses that speak about the token itself are
+                // terminal. A 429/5xx says nothing about the invite, and
+                // showing "expired" for it sends the user off to have a
+                // valid link revoked and reissued.
+                if (result.error == "capability_unavailable") {
+                    _uiState.update { it.copy(isLoadingInvitation = false, acceptanceUnavailable = true) }
+                } else if (result.code in TERMINAL_LOOKUP_CODES) {
+                    _uiState.update {
+                        it.copy(isLoadingInvitation = false, invitationInvalid = true)
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(isLoadingInvitation = false, lookupFailed = true)
                     }
                 }
-                // A failure to reach the server says nothing about the invite
-                // either.
-                is ApiResult.NetworkError -> _uiState.update {
+            }
+            is ApiResult.NetworkError -> _uiState.update {
+                // A server that takes the token in the body gets the lookup as
+                // a POST, which a cleartext origin only receives after consent:
+                // ask, and run the lookup again once approved. An origin that
+                // can't be approved fails like an unreachable server.
+                if (result.exception is CleartextOriginNotApprovedException && cleartextOrigin(serverUrl) != null) {
+                    it.copy(pendingCleartextOrigin = serverUrl)
+                } else {
+                    // A failure to reach the server says nothing about the
+                    // invite either.
                     it.copy(isLoadingInvitation = false, lookupFailed = true)
                 }
             }
@@ -136,9 +153,9 @@ class InviteClaimViewModel(
             current.signInRequiredUsername != null || current.acceptanceUncertain ||
             current.invitation?.acceptanceAvailable != true) return
         val validationError = when {
-            current.password.codePointCount(0, current.password.length) < 8 -> "Password must be at least 8 characters"
-            current.password.toByteArray(Charsets.UTF_8).size > 72 -> "Password must be at most 72 UTF-8 bytes"
-            current.password != current.confirmPassword -> "Passwords do not match"
+            current.password.codePointCount(0, current.password.length) < 8 -> uiText(CommonR.string.account_create_error_passwordShort)
+            current.password.toByteArray(Charsets.UTF_8).size > 72 -> uiText(CommonR.string.account_create_error_passwordLong)
+            current.password != current.confirmPassword -> uiText(CommonR.string.account_create_error_passwordMismatch)
             else -> null
         }
         if (validationError != null) {
@@ -166,6 +183,27 @@ class InviteClaimViewModel(
         if (current.isSubmitting) return
         val generation = lookupGeneration.value
         val claimToken = token
+        // Consent asked before the lookup: approve it, then run the lookup.
+        if (current.invitation == null) {
+            _uiState.update { it.copy(pendingCleartextOrigin = null) }
+            viewModelScope.launch {
+                try {
+                    cleartextConsentStore.approve(origin)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Consent wasn't saved, so the lookup would be refused
+                    // again: offer the retry, which asks again.
+                    if (generation == lookupGeneration.value) {
+                        _uiState.update { it.copy(isLoadingInvitation = false, lookupFailed = true) }
+                    }
+                    return@launch
+                }
+                if (generation != lookupGeneration.value) return@launch
+                lookup(generation, origin, claimToken)
+            }
+            return
+        }
         _uiState.update { it.copy(isSubmitting = true, pendingCleartextOrigin = null) }
         claimJob = viewModelScope.launch {
             cleartextConsentStore.approve(origin)
@@ -175,11 +213,20 @@ class InviteClaimViewModel(
     }
 
     fun onCancelCleartext() {
-        _uiState.update { it.copy(pendingCleartextOrigin = null) }
+        // Declined before the lookup: nothing can load, so offer the retry,
+        // which asks again.
+        _uiState.update {
+            if (it.invitation == null) {
+                it.copy(pendingCleartextOrigin = null, isLoadingInvitation = false, lookupFailed = true)
+            } else {
+                it.copy(pendingCleartextOrigin = null)
+            }
+        }
     }
 
     private suspend fun submitClaim(generation: Long, origin: String, claimToken: String, password: String) {
-        val result = authRepository.acceptInvitation(origin, claimToken, password) {
+        val tokenInBody = _uiState.value.invitation?.tokenInBody == true
+        val result = authRepository.acceptInvitation(origin, claimToken, password, tokenInBody) {
             generation == lookupGeneration.value
         }
         if (generation != lookupGeneration.value) return
@@ -191,17 +238,17 @@ class InviteClaimViewModel(
             }
             is ApiResult.Error -> {
                 val invalid = result.code == 404
-                val uncertain = result.code !in setOf(400, 404)
+                val uncertain = !result.isUnspentRefusal()
                 _uiState.update {
                     it.copy(isSubmitting = false, invitationInvalid = invalid,
                         acceptanceUncertain = uncertain,
-                        error = if (uncertain) "Account creation could not be confirmed. Check sign-in before trying another invitation."
-                            else result.errorMessage("Could not accept this invitation"))
+                        error = if (uncertain) uiText(CommonR.string.account_invite_error_unconfirmed)
+                            else result.errorText(CommonR.string.account_invite_error_failed))
                 }
             }
             is ApiResult.NetworkError -> _uiState.update {
                 it.copy(isSubmitting = false, acceptanceUncertain = true,
-                    error = "Account creation could not be confirmed. Check sign-in before trying another invitation.")
+                    error = uiText(CommonR.string.account_invite_error_unconfirmed))
             }
         }
     }
@@ -215,5 +262,16 @@ class InviteClaimViewModel(
     private companion object {
         /** Statuses that mean the token itself is gone, used, or malformed. */
         private val TERMINAL_LOOKUP_CODES = setOf(404)
+
+        /**
+         * Accept answers the server gives before it commits anything (silo-server
+         * docs/invitations-api.md): the user can fix the cause or try again. Any
+         * other error, such as a 5xx or one the app raises after the server
+         * answered, may follow a created account and stays uncertain.
+         */
+        private val UNSPENT_REFUSAL_CODES = setOf(400, 403, 404, 409, 422, 429)
+
+        private fun ApiResult.Error.isUnspentRefusal() =
+            code in UNSPENT_REFUSAL_CODES || (code == 501 && error == "capability_unsupported")
     }
 }

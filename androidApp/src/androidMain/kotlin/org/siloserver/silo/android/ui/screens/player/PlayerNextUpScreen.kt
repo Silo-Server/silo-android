@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -36,12 +35,12 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -52,10 +51,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.displayUppercase
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.player.videoViewportBounds
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.SpoilerImage
+import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.common.ui.components.WatchProgressBar
 
 /** Episode details and controls beside the mounted player's preview pane. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -73,6 +78,8 @@ fun PlayerNextUpScreen(
     onPlayOnDeckItem: (String) -> Unit,
     onBack: () -> Unit,
     onVideoBoundsChanged: (Rect) -> Unit,
+    // The video playing in the frame is loading; the spinner sits on it.
+    spinnerVisible: Boolean = false,
     compactTabletop: Boolean = false,
     // Set while a shuffle plays: the next item is a random pick, and the
     // viewer can pick another or stop shuffling.
@@ -106,7 +113,7 @@ fun PlayerNextUpScreen(
                             modifier = Modifier.size(14.dp),
                         )
                         Text(
-                            text = "Shuffling $scope",
+                            text = stringResourceWithNames(CommonR.string.upNext_shuffling, scope),
                             color = Color.White.copy(alpha = 0.75f),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -116,12 +123,15 @@ fun PlayerNextUpScreen(
                     }
                 }
                 Text(
-                    text = when {
-                        nextEpisode == null -> "FINISHED"
-                        shuffle != null -> "UP NEXT AT RANDOM"
-                        videoEnded -> "PLAYING NEXT"
-                        else -> "UP NEXT"
-                    },
+                    // The heading is shown in capitals, as before.
+                    text = stringResource(
+                        when {
+                            nextEpisode == null -> CommonR.string.upNext_headingFinished
+                            shuffle != null -> CommonR.string.upNext_headingShuffle
+                            videoEnded -> CommonR.string.upNext_headingEnded
+                            else -> CommonR.string.upNext_heading
+                        },
+                    ).displayUppercase(),
                     color = Color.White.copy(alpha = 0.52f),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -143,7 +153,7 @@ fun PlayerNextUpScreen(
                     }
                     if (nextEpisode.isEpisode) {
                         Text(
-                            text = nextEpisode.label,
+                            text = nextEpisodeLabel(nextEpisode),
                             color = Color.White,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -153,7 +163,7 @@ fun PlayerNextUpScreen(
                     }
                     if (nextEpisode.runtimeMinutes > 0) {
                         Text(
-                            text = "${nextEpisode.runtimeMinutes} min",
+                            text = stringResource(CommonR.string.catalog_runtimeMinutes, LocaleFormat.integer(nextEpisode.runtimeMinutes)),
                             color = Color.White.copy(alpha = 0.62f),
                             fontSize = 13.sp,
                         )
@@ -171,7 +181,7 @@ fun PlayerNextUpScreen(
                         )
                     }
                 } else {
-                    Text("End of playback", color = Color.White, fontSize = 17.sp)
+                    Text(stringResource(CommonR.string.upNext_endOfPlayback), color = Color.White, fontSize = 17.sp)
                 }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, panelAlignment),
@@ -194,11 +204,11 @@ fun PlayerNextUpScreen(
                     }
                 }
                 shuffle?.message?.let { message ->
-                    Text(message, color = Color(0xFFFFB4AB), fontSize = 13.sp)
+                    Text(stringResource(message), color = Color(0xFFFFB4AB), fontSize = 13.sp)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Auto-play is ${if (autoPlayEnabled) "On" else "Off"}",
+                        text = stringResource(if (autoPlayEnabled) CommonR.string.upNext_autoPlayOn else CommonR.string.upNext_autoPlayOff),
                         color = Color.White.copy(alpha = 0.54f),
                         fontSize = 12.sp,
                         modifier = Modifier.clip(CircleShape).clickable(onClick = onToggleAutoPlay)
@@ -207,7 +217,7 @@ fun PlayerNextUpScreen(
                     if (shuffle != null) {
                         Text("·", color = Color.White.copy(alpha = 0.54f), fontSize = 12.sp)
                         Text(
-                            text = "Stop shuffling",
+                            text = stringResource(CommonR.string.upNext_stopShuffling),
                             color = Color.White.copy(alpha = 0.54f),
                             fontSize = 12.sp,
                             modifier = Modifier.clip(CircleShape).clickable(onClick = onStopShuffling)
@@ -216,7 +226,7 @@ fun PlayerNextUpScreen(
                     }
                 }
                 if (!compactTabletop && onDeckItems.isNotEmpty()) {
-                    Text("On Deck", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(CommonR.string.upNext_onDeck), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     val onDeckState = rememberLazyListState()
                     DeferImagePresentationWhileScrolling(onDeckState) {
                         LazyRow(state = onDeckState, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -236,7 +246,7 @@ fun PlayerNextUpScreen(
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    NextUpVideoPane(onVideoBoundsChanged, Modifier.weight(0.45f))
+                    NextUpVideoPane(onVideoBoundsChanged, spinnerVisible, Modifier.weight(0.45f))
                     panel(Modifier.weight(0.55f).verticalScroll(scrollState))
                 }
             } else {
@@ -247,7 +257,11 @@ fun PlayerNextUpScreen(
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
                     if (!compactTabletop) {
-                        NextUpVideoPane(onVideoBoundsChanged, Modifier.widthIn(max = 620.dp).fillMaxWidth())
+                        NextUpVideoPane(
+                            onVideoBoundsChanged,
+                            spinnerVisible,
+                            Modifier.widthIn(max = 620.dp).fillMaxWidth(),
+                        )
                     }
                     panel(Modifier)
                 }
@@ -257,12 +271,15 @@ fun PlayerNextUpScreen(
 }
 
 @Composable
-private fun NextUpVideoPane(onBoundsChanged: (Rect) -> Unit, modifier: Modifier) {
+private fun NextUpVideoPane(onBoundsChanged: (Rect) -> Unit, spinnerVisible: Boolean, modifier: Modifier) {
     Box(
         modifier = modifier.aspectRatio(16f / 9f)
             .onGloballyPositioned { onBoundsChanged(it.videoViewportBounds()) }
             .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(8.dp)),
-    )
+        contentAlignment = Alignment.Center,
+    ) {
+        if (spinnerVisible) PlayerLoadingSpinner()
+    }
 }
 
 private class PickAnotherAction(val enabled: Boolean, val onClick: () -> Unit)
@@ -292,7 +309,7 @@ private fun NextUpActionButtons(
                 modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Play Now")
+            Text(stringResource(CommonR.string.upNext_playNow))
         }
     }
     if (pickAnother != null) {
@@ -308,7 +325,7 @@ private fun NextUpActionButtons(
                 modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Pick Another", color = Color.White)
+            Text(stringResource(CommonR.string.upNext_pickAnother), color = Color.White)
         }
     }
     if (!videoEnded) {
@@ -316,7 +333,7 @@ private fun NextUpActionButtons(
             onClick = onKeepWatching,
             modifier = modifier,
         ) {
-            Text("Keep Watching", color = Color.White)
+            Text(stringResource(CommonR.string.upNext_keepWatching), color = Color.White)
         }
     }
     OutlinedButton(
@@ -329,7 +346,7 @@ private fun NextUpActionButtons(
             tint = Color.White,
             modifier = Modifier.size(18.dp),
         )
-        Text("Back", color = Color.White)
+        Text(stringResource(CommonR.string.common_back), color = Color.White)
     }
 }
 
@@ -358,22 +375,7 @@ private fun OnDeckCard(
                 contentDescription = item.title,
                 modifier = Modifier.fillMaxSize(),
             )
-            item.progressFraction?.takeIf { it > 0f }?.let { fraction ->
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .background(Color.White.copy(alpha = 0.25f)),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(fraction)
-                            .fillMaxHeight()
-                            .background(MaterialTheme.colorScheme.primary),
-                    )
-                }
-            }
+            item.progressFraction?.let { WatchProgressBar(it) }
         }
         Text(
             text = item.title,
@@ -383,7 +385,7 @@ private fun OnDeckCard(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        item.subtitle?.let { subtitle ->
+        (item.episodeLine?.let { onDeckEpisodeText(it) } ?: item.year?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: item.subtitle)?.let { subtitle ->
             Text(
                 text = subtitle,
                 color = Color.White.copy(alpha = 0.8f),
@@ -431,10 +433,24 @@ private fun CountdownRing(
             )
         }
         Text(
-            text = seconds.toString(),
+            text = LocaleFormat.integer(seconds, currentNumberLocale()),
             color = Color.White,
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
         )
     }
+}
+
+/** "S2·E4 — Title" under an On Deck card's title. */
+@Composable
+private fun onDeckEpisodeText(line: PlayerViewModel.OnDeckEpisodeLine): String {
+    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.codeNumber(line.season), LocaleFormat.codeNumber(line.episode))
+    return code + (line.title?.let { " — $it" } ?: "")
+}
+
+/** "S2·E4 — Title", the next episode's line on the card. */
+@Composable
+private fun nextEpisodeLabel(episode: PlayerViewModel.NextEpisodeInfo): String {
+    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.codeNumber(episode.seasonNumber), LocaleFormat.codeNumber(episode.episodeNumber))
+    return code + (episode.title?.let { " — $it" } ?: "")
 }
