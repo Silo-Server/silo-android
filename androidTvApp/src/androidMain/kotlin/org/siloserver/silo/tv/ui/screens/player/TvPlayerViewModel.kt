@@ -3904,7 +3904,9 @@ class TvPlayerViewModel(
         }
         // Playing into the closing credits counts as finishing the episode for
         // the series page, though Up Next waits for the prompt point.
-        if (!seekWasActive && roomId == null) {
+        // Not once Play Now has started the handoff: the outgoing item no longer
+        // decides where the series page returns.
+        if (!seekWasActive && roomId == null && !nextUpTransitionGate.isActive) {
             _uiState.value.markerTimeline.finalCreditsStart()?.let { creditsStart ->
                 if (previousPosition < creditsStart && positionSec >= creditsStart) reachedCreditsOrEnd = true
             }
@@ -5436,6 +5438,9 @@ class TvPlayerViewModel(
             }
             return
         }
+        // An overlay the viewer opened by hand stays theirs to choose from: the
+        // before-end point doesn't start a countdown on it. The end still does.
+        if (!videoEnded && _uiState.value.showNextUp) return
 
         val next = _uiState.value.nextEpisode
         if (next == null) {
