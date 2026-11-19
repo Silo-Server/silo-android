@@ -39,7 +39,8 @@ import org.siloserver.silo.viewmodel.ItemCollectionsRow
 internal fun TvItemCollectionsRowSection(
     row: ItemCollectionsRow,
     previewItems: List<SectionItem>,
-    onCollectionClick: (SectionCollectionCard) -> Unit,
+    /** Opens a collection; the return key names the card that did, for [onCardFocused]. */
+    onCollectionClick: (SectionCollectionCard, returnKey: String) -> Unit,
     onItemClick: (contentId: String, collection: SectionCollectionCard) -> Unit,
     onReturnToHero: (() -> Boolean)?,
     restoreFocusIndex: Int,
@@ -71,10 +72,10 @@ internal fun TvItemCollectionsRowSection(
                     rowTopPadding = 0.dp,
                     onDirectionUp = onReturnToHero,
                     restoreFocusIndex = restoreFocusIndex,
-                    restoreFocusRequester = restoreFocusRequester.takeIf { restoreFocusIndex >= 0 },
+                    restoreFocusRequester = restoreFocusRequester,
                     restoreFocusRequest = restoreFocusRequest,
                     onItemFocused = { item -> onCardFocused(item.contentId) },
-                    onExploreAllClick = { onCollectionClick(row.collection) },
+                    onExploreAllClick = { onCollectionClick(row.collection, TvCollectionsExploreAllReturnKey) },
                     onExploreAllFocused = { onCardFocused(TvCollectionsExploreAllReturnKey) },
                 )
             }
@@ -88,7 +89,7 @@ internal fun TvItemCollectionsRowSection(
                     title = title,
                     showHeader = false,
                     collections = row.cards,
-                    onCollectionClick = { card, _ -> onCollectionClick(card) },
+                    onCollectionClick = { card, _ -> onCollectionClick(card, card.rowKey) },
                     onCollectionFocused = { card, _ -> onCardFocused(card.rowKey) },
                     startPadding = TvDetailHorizontalInset,
                     endPadding = TvDetailHorizontalInset,
@@ -98,7 +99,7 @@ internal fun TvItemCollectionsRowSection(
                     posterWidth = cardWidth,
                     owners = rememberTvCollectionOwners(),
                     restoreFocusIndex = restoreFocusIndex,
-                    restoreFocusRequester = restoreFocusRequester.takeIf { restoreFocusIndex >= 0 },
+                    restoreFocusRequester = restoreFocusRequester,
                     restoreFocusRequest = restoreFocusRequest,
                     // The row is one line of cards, so Up from any of them leaves it.
                     modifier = if (onReturnToHero != null) {
