@@ -100,7 +100,12 @@ implement it; start with a post in Ideas. Open an
 [issue](https://github.com/Silo-Server/silo-android/issues) before implementing
 a navigation or behavior change, large refactor, or work that changes the shared
 server contract. Documentation, narrow fixes, and well-scoped parity
-corrections can go straight to a pull request.
+corrections can go straight to a pull request. That
+covers documentation in this repository. For the docs on
+[siloserver.org](https://siloserver.org/docs), open a docs issue in
+[`siloserver.org`](https://github.com/Silo-Server/siloserver.org) instead of a
+pull request: select **Suggest a change** at the bottom of the page, or use the
+[Suggest a docs change](https://github.com/Silo-Server/siloserver.org/issues/new?template=docs.yml) form.
 
 This repository owns the Android phone and Android TV clients. Server/API work
 belongs in [`silo-server`](https://github.com/Silo-Server/silo-server), and
