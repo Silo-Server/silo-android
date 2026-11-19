@@ -173,13 +173,14 @@ class RoomCatchupTest {
         // A seek that took 1.5 s left the member 1.5 s behind.
         var step = RoomCatchup.fallbackAfterSeek(leadSeconds = 0.0, intervalMs = 1_000, driftSeconds = 1.5)
         assertEquals(RoomCatchup.FallbackStep(1.5, 2_000), step)
-        // Still 1.2 s short: the lead grows by it and the interval doubles again.
+        // Still 1.2 s short: the lead grows by it, but no further than the host
+        // band, so a host never lands far enough ahead to move the room; the
+        // interval doubles again.
         step = RoomCatchup.fallbackAfterSeek(step.leadSeconds, step.intervalMs, driftSeconds = 1.2)
-        assertEquals(2.7, step.leadSeconds, 1e-9)
-        assertEquals(4_000L, step.intervalMs)
-        // The lead is capped and the interval tops out at 16 s.
+        assertEquals(RoomCatchup.FallbackStep(RoomCatchup.HOST_COMMAND_SEEK_SECONDS, 4_000), step)
+        // The lead stays capped and the interval tops out at 16 s.
         step = RoomCatchup.fallbackAfterSeek(step.leadSeconds, 16_000, driftSeconds = 2.0)
-        assertEquals(RoomCatchup.FallbackStep(3.0, 16_000), step)
+        assertEquals(RoomCatchup.FallbackStep(2.0, 16_000), step)
         // Overshooting shrinks the lead, never below zero; converging resets the interval.
         step = RoomCatchup.fallbackAfterSeek(leadSeconds = 0.5, intervalMs = 8_000, driftSeconds = -0.8)
         assertEquals(RoomCatchup.FallbackStep(0.0, 1_000), step)

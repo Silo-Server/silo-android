@@ -74,6 +74,7 @@ class ApiV2NoFallbackTest {
 
         assertEquals(ApiV2Gate.UPDATE_REQUIRED_ERROR, error.error)
         assertEquals(ServerContract.UPDATE_REQUIRED_MESSAGE, error.message)
+        assertEquals(ServerContract.UPDATE_REQUIRED_TEXT, error.text)
         assertEquals(emptyList(), recorded)
     }
 

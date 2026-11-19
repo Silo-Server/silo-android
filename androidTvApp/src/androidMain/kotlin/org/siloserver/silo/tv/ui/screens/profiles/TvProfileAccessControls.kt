@@ -35,6 +35,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -47,8 +48,10 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.model.personal.UserLibrary
-import org.siloserver.silo.model.profile.ANY_RATING_LABEL
+import org.siloserver.silo.model.profile.ANY_RATING_TEXT
 import org.siloserver.silo.model.profile.AssignableLibraries
 import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.contentRatingOptions
@@ -133,9 +136,9 @@ internal fun TvProfileAccessControls(
             .border(1.dp, Color.White.copy(alpha = 0.10f), PanelShape)
             .padding(horizontal = 18.dp, vertical = 16.dp),
     ) {
-        TvPanelLabel("Maximum rating")
+        TvPanelLabel(stringResource(CommonR.string.profiles_access_maxRating))
         TvRatingLadder(access = access, focus = focus, onSelected = callbacks.onContentRatingSelected)
-        TvPanelHint(ratingCeilingCaption(access.maxContentRating), Modifier.padding(top = 10.dp))
+        TvPanelHint(ratingCeilingCaption(access.maxContentRating).text(), Modifier.padding(top = 10.dp))
 
         Box(
             modifier = Modifier
@@ -145,7 +148,7 @@ internal fun TvProfileAccessControls(
                 .background(Color.White.copy(alpha = 0.10f)),
         )
 
-        TvPanelLabel("Libraries")
+        TvPanelLabel(stringResource(CommonR.string.profiles_access_libraries))
         TvLibraryModeSwitch(
             restricted = access.libraryRestrictionsEnabled,
             focus = focus,
@@ -154,17 +157,17 @@ internal fun TvProfileAccessControls(
 
         if (!access.libraryRestrictionsEnabled) return@Column
         when (libraries) {
-            AssignableLibraries.Loading -> TvPanelHint("Loading libraries…", Modifier.padding(top = 14.dp))
+            AssignableLibraries.Loading -> TvPanelHint(stringResource(CommonR.string.newProfile_librariesLoading), Modifier.padding(top = 14.dp))
 
             is AssignableLibraries.Failed -> Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Column(modifier = Modifier.weight(1f)) { TvPanelHint(libraries.text) }
+                Column(modifier = Modifier.weight(1f)) { TvPanelHint(libraries.text.text()) }
                 // Stays mounted and enabled while retrying, so focus doesn't jump.
                 TvHeroActionPill(
-                    label = if (libraries.retrying) "Loading…" else "Try Again",
+                    label = stringResource(if (libraries.retrying) CommonR.string.profiles_access_retrying else CommonR.string.profiles_access_retry),
                     icon = Icons.Filled.Refresh,
                     variant = TvPillVariant.Hollow,
                     heightOverride = 32.dp,
@@ -187,7 +190,7 @@ internal fun TvProfileAccessControls(
             is AssignableLibraries.Loaded -> {
                 val shown = libraries.shownOnTv()
                 if (shown.isEmpty()) {
-                    TvPanelHint("No libraries are available to assign.", Modifier.padding(top = 14.dp))
+                    TvPanelHint(stringResource(CommonR.string.newProfile_librariesEmpty), Modifier.padding(top = 14.dp))
                 } else {
                     Column(
                         modifier = Modifier.padding(top = 10.dp),
@@ -234,7 +237,7 @@ private fun TvRatingLadder(
             // Entering the row lands on the selected step.
             val isCeiling = rating == access.maxContentRating
             TvSegment(
-                label = rating ?: ANY_RATING_LABEL,
+                label = rating ?: ANY_RATING_TEXT.text(),
                 emphasis = when {
                     isCeiling -> SegmentEmphasis.Selected
                     rating != null && ratingIsUnderCeiling(rating, access.maxContentRating, TV_CONTENT_RATINGS) ->
@@ -266,7 +269,10 @@ private fun TvLibraryModeSwitch(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        listOf(false to "All libraries", true to "Choose libraries").forEachIndexed { index, (option, label) ->
+        listOf(
+            false to stringResource(CommonR.string.profiles_access_allLibraries),
+            true to stringResource(CommonR.string.profiles_access_chooseLibraries),
+        ).forEachIndexed { index, (option, label) ->
             val selected = option == restricted
             TvSegment(
                 label = label,
@@ -413,7 +419,7 @@ private fun TvLibraryCheckRow(
             )
             Icon(
                 imageVector = if (allowed) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
-                contentDescription = if (allowed) "Allowed" else "Not allowed",
+                contentDescription = stringResource(if (allowed) CommonR.string.profiles_access_allowed else CommonR.string.profiles_access_notAllowed),
                 tint = if (allowed) Color.White else Color.White.copy(alpha = 0.35f),
                 modifier = Modifier.size(28.dp),
             )

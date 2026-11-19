@@ -133,9 +133,15 @@ Confirmed fields overlay older cards independently. A failed favorite cannot
 roll back another field or replace a newer home snapshot. Personal-list removals
 retain their row, total and continuation until acknowledged or reconciled.
 
-The recovery banner restores a bounded set of current-authority commands and
-provides explicit GET status checks. A mismatch pauses the command; the user can
-review the item and make a new explicit choice. Legacy quarantine receives a
-separate generic notice directing the user to current Favorites. Dismissing that
-notice hides only the notice, never its retained rows. Neither recovery surface
-requests TV focus or replaces the existing list content.
+The root notice host restores a bounded set of current-authority commands and
+keeps collecting Room invalidations. It opens a dialog (phone `SiloDialog`, TV
+`TvDialog`) only when one of the viewer's own attempts — a toggle, Try Again or
+Check Status, including one whose caller was cancelled — finishes unconfirmed
+(`MembershipActions.unconfirmedAttempts`). Restored commands and NOT_CLAIMED
+results never open one; the dialog waits while a player route is showing. It names
+the list and the change, offers an explicit GET status check (or Try Again before a
+command exists), and closes with OK or Back without touching the command. A
+mismatch pauses the command; the user can review the item and make a new explicit
+choice. Legacy quarantine keeps its separate non-modal notice directing the user to
+current Favorites; it never requests TV focus, and dismissing it hides only the
+notice, never its retained rows.

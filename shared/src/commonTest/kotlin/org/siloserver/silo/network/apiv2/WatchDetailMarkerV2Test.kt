@@ -2,6 +2,7 @@ package org.siloserver.silo.network.apiv2
 
 import kotlinx.serialization.json.jsonObject
 import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -33,5 +34,20 @@ class WatchDetailMarkerV2Test {
         assertNull(selected.recap)
         assertNull(selected.credits)
         assertNull(selected.preview)
+    }
+
+    @Test fun eachVersionKeepsEveryMarkerOccurrence() {
+        val body = SiloJson.parseToJsonElement("""{"content_id":"e1","type":"episode","title":"Episode",
+            "credits":{"start_seconds":2975.5,"end_seconds":3167.4},
+            "versions":[{"file_id":"2","duration_seconds":3300,"credits":{"start_seconds":2975.5,"end_seconds":3167.4},
+                "marker_segments":[{"kind":"credits","start_seconds":2975.5,"end_seconds":3167.4},
+                    {"kind":"credits","start_seconds":3189,"end_seconds":3300}]},
+                {"file_id":"3","duration_seconds":3300}]}""").jsonObject
+        val detail = decodeWatchDetail(body, "e1")
+        assertEquals(
+            listOf(MarkerSegment("credits", 2975.5, 3167.4), MarkerSegment("credits", 3189.0, 3300.0)),
+            detail.versions.first().markerSegments,
+        )
+        assertNull(detail.versions.last().markerSegments)
     }
 }

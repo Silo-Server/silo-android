@@ -3,6 +3,8 @@ package org.siloserver.silo.model.playback
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.SharedString
 
 class PlaybackQualityMenuTest {
     // The source entry is how servers before the Original removal list it.
@@ -119,9 +121,9 @@ class PlaybackQualityMenuTest {
 
         assertNull(activePlaybackQualityId(menu, "2160p", delivered, source))
         assertNull(activePlaybackQualityId(menu, "1080p", delivered, source))
-        assertEquals("1080p", playbackQualityValueLabel(menu, null, "1080p"))
-        assertEquals("4K", playbackQualityValueLabel(menu, null, "2160p"))
-        assertEquals("1080p Medium", playbackQualityValueLabel(menu, "1080p-medium", "1080p"))
+        assertEquals(UiText.Key(SharedString.Quality1080p), playbackQualityValueLabel(menu, null, "1080p"))
+        assertEquals(UiText.Key(SharedString.Quality4K), playbackQualityValueLabel(menu, null, "2160p"))
+        assertEquals(UiText.Raw("1080p Medium"), playbackQualityValueLabel(menu, "1080p-medium", "1080p"))
         // Only an auto preference lights Auto.
         assertEquals("auto", activePlaybackQualityId(menu, "auto", delivered, source))
         assertEquals("720p-medium", activePlaybackQualityId(menu, "720p", source = source))
@@ -187,5 +189,61 @@ class PlaybackQualityMenuTest {
                 PlaybackSourceDescriptorV3(width = 1920, height = 1080),
             ),
         )
+    }
+
+    @Test
+    fun aReportedEntryLightsItsRowWhereverTheCapLandedIt() {
+        val menu = playbackQualityMenu(
+            listOf(
+                PlaybackAvailableQualityV3("1080p-medium", 1080, 6_000),
+                PlaybackAvailableQualityV3("1080p-low", 1080, 3_000),
+                PlaybackAvailableQualityV3("720p-medium", 720, 3_000),
+            ),
+        )
+        val capped = PlaybackEffectiveRecipeV3(width = 1920, height = 1080, bitrateKbps = 3_000)
+        val source = PlaybackSourceDescriptorV3(width = 1920, height = 1080, bitrateKbps = 20_000)
+
+        // Inference would guess the class's Medium rung; the server says Low.
+        assertEquals("1080p-medium", activePlaybackQualityId(menu, "1080p", capped, source))
+        assertEquals(
+            "1080p-low",
+            activePlaybackQualityId(menu, "1080p", capped, source, ReportedPlaybackQuality("1080p-low")),
+        )
+        // The same cap on another server build encodes 720p-medium.
+        assertEquals(
+            "720p-medium",
+            activePlaybackQualityId(menu, "1080p", capped, source, ReportedPlaybackQuality("720p-medium")),
+        )
+    }
+
+    @Test
+    fun aReportedPlanWithNoEntryLightsNoRow() {
+        val menu = playbackQualityMenu(
+            listOf(
+                PlaybackAvailableQualityV3("1080p", 1080, 12_000),
+                PlaybackAvailableQualityV3("1080p-medium", 1080, 6_000),
+            ),
+        )
+        val capped = PlaybackEffectiveRecipeV3(width = 1920, height = 1080, bitrateKbps = 4_500)
+        val source = PlaybackSourceDescriptorV3(width = 1920, height = 1080, bitrateKbps = 20_000)
+        val none = ReportedPlaybackQuality(null)
+
+        // An encode between two rungs, even for a preference that names a row.
+        assertNull(activePlaybackQualityId(menu, "1080p", capped, source, none))
+        // An entry the menu does not show (the dropped source entry).
+        assertNull(activePlaybackQualityId(menu, "1080p", capped, source, ReportedPlaybackQuality("original")))
+    }
+
+    @Test
+    fun autoLightsForAnAutoPreferenceWhateverTheServerReports() {
+        val menu = playbackQualityMenu(listOf(PlaybackAvailableQualityV3("720p-medium", 720, 4_000)))
+        val reported = ReportedPlaybackQuality("720p-medium")
+
+        for (preference in listOf(null, "auto", "original")) {
+            assertEquals("auto", activePlaybackQualityId(menu, preference, reported = reported))
+            assertEquals("auto", activePlaybackQualityId(menu, preference, reported = ReportedPlaybackQuality(null)))
+        }
+        // And only then: a non-auto preference never lights Auto.
+        assertNull(activePlaybackQualityId(menu, "1080p", reported = ReportedPlaybackQuality("auto")))
     }
 }

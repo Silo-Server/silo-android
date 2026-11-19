@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.settings.reconcileStart
+import org.siloserver.silo.common.settings.audioResetToAutoPending
 import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
@@ -24,6 +27,7 @@ import org.siloserver.silo.common.player.video.resolveEpisodeAudioIntent
 import org.siloserver.silo.common.player.video.resolveEpisodeSubtitleIntent
 import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
 import org.siloserver.silo.common.player.video.serverTerminalUserMessage
+import org.siloserver.silo.common.player.video.terminalUserMessageRes
 import org.siloserver.silo.common.player.video.shouldReachServerForPlayback
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
@@ -39,7 +43,6 @@ import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.model.playback.videoQualityPreference
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
-import org.siloserver.silo.playback.resolveAudioTrackOrdinal
 import org.siloserver.silo.playback.selectPlaybackVersion
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.ProfileRepository
@@ -62,6 +65,8 @@ class TvVideoPlaybackStarter(
     private val sessionLifecycle: PlaybackSessionLifecycle,
     private val reachabilityMonitor: ServerReachabilityMonitor,
     private val userItemStatePort: UserItemStatePort,
+    /** Lays a series subtitle choice that has not landed yet over the server's answer. */
+    private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
 ) : VideoPlaybackStarter {
 
     override suspend fun start(request: VideoPlaybackStartRequest): VideoPlaybackStartResult {
@@ -72,7 +77,7 @@ class TvVideoPlaybackStarter(
             return VideoPlaybackStartResult.ServerUnreachable(request.contentId)
         }
         val expectedMetadataOwner = catalogRepository.captureWatchAuthority()
-            ?: return failure(request.contentId, "Playback metadata needs an authenticated profile.", diagnosticsCode = PlaybackDiagnosticsCode.NOT_AUTHENTICATED)
+            ?: return failure(request.contentId, TvPlayerErrors.METADATA_NEEDS_PROFILE, diagnosticsCode = PlaybackDiagnosticsCode.NOT_AUTHENTICATED)
         suspend fun ownerCurrent(): Boolean {
             val valid = catalogRepository.isWatchAuthorityCurrent(expectedMetadataOwner)
             currentCoroutineContext().ensureActive()
@@ -82,16 +87,29 @@ class TvVideoPlaybackStarter(
         var unpublishedSessionId: String? = null
         var lifecycleAdopted = false
         return try {
+            var audioResetToAuto = false
+            val landedBefore = seriesTrackChoiceWriter?.landedWrites ?: 0L
             val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner, request.libraryId)) {
-                is ApiResult.Success -> r.data
+                is ApiResult.Success -> {
+                    // An Auto set here and not landed: checked before and after
+                    // the flush, which can land it after its overlay is taken.
+                    val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(r.data.seriesId, r.data.contentId)
+                    suspend fun resetPending() = key?.let { seriesTrackChoiceWriter?.audioResetToAutoPending(it) } == true
+                    audioResetToAuto = resetPending()
+                    val reconciled = seriesTrackChoiceWriter?.reconcileStart(landedBefore, r.data) {
+                        (catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner, request.libraryId) as? ApiResult.Success)?.data
+                    } ?: r.data
+                    audioResetToAuto = audioResetToAuto || resetPending()
+                    reconciled
+                }
                 is ApiResult.Error -> return failure(
                     request.contentId,
-                    "Failed to load content: ${r.message}",
+                    TvPlayerErrors.LOAD_FAILED_PREFIX + r.message,
                     diagnosticsCode = PlaybackDiagnosticsCode.CATALOG,
                 )
                 is ApiResult.NetworkError -> return failure(
                     request.contentId,
-                    "Network error: ${r.exception.message}",
+                    TvPlayerErrors.NETWORK_PREFIX + r.exception.message,
                     r.exception,
                     PlaybackDiagnosticsCode.NETWORK,
                 )
@@ -99,7 +117,7 @@ class TvVideoPlaybackStarter(
             if (watchDetail.versions.isEmpty()) {
                 return failure(
                     request.contentId,
-                    "No playable versions available",
+                    TvPlayerErrors.NO_VERSIONS,
                     diagnosticsCode = PlaybackDiagnosticsCode.NO_VERSIONS,
                 )
             }
@@ -118,17 +136,11 @@ class TvVideoPlaybackStarter(
             if (room != null && watchDetail.versions.none { it.fileId == room.fileId }) {
                 return failure(
                     request.contentId,
-                    "The Watch Party's version of this title isn't available to this profile.",
+                    TvPlayerErrors.WATCH_PARTY_VERSION_UNAVAILABLE,
                     diagnosticsCode = PlaybackDiagnosticsCode.NO_VERSIONS,
                 )
             }
-            // Room starts keep the file through every replan; renewals keep
-            // whatever the original start chose.
-            val allowAlternateVersions = if (room != null) {
-                false
-            } else {
-                request.recoveryStartParams?.allowAlternateVersions
-            }
+            val allowAlternateVersions = request.allowAlternateVersions()
             val resolvedEpisodeSelection = resolveTvPlaybackStartSelection(
                 // A room plays exactly its file; never a preferred or remembered one.
                 preferredFileId = room?.fileId ?: request.preferredFileId,
@@ -150,7 +162,7 @@ class TvVideoPlaybackStarter(
             val profileId = activeProfile?.id ?: profileRepository.getActiveProfileId()
                 ?: return failure(
                     request.contentId,
-                    "No active profile selected",
+                    TvPlayerErrors.NO_PROFILE,
                     diagnosticsCode = PlaybackDiagnosticsCode.NO_ACTIVE_PROFILE,
                 )
             val configuredAudioLanguage = playerSettingsStore.audioLanguageFlow
@@ -174,7 +186,7 @@ class TvVideoPlaybackStarter(
             val accessToken = playbackSessionManager.getAccessToken()
                 ?: return failure(
                     request.contentId,
-                    "Not authenticated",
+                    TvPlayerErrors.NOT_AUTHENTICATED,
                     diagnosticsCode = PlaybackDiagnosticsCode.NOT_AUTHENTICATED,
                 )
 
@@ -193,7 +205,8 @@ class TvVideoPlaybackStarter(
                 settingsLanguage = preferredAudioLanguage,
                 profileLanguage = activeProfile?.language,
             )
-            // Explicit, carried, and durable choices win. Otherwise resolve the
+            // Explicit and carried choices win, then the server's effective
+            // track (the profile's series choice). Otherwise resolve the
             // automatic language + quality policy against the detected device
             // capabilities before asking the server for a plan.
             val startAudioTrackIndex = resolveTvInitialAudioTrackIndex(
@@ -204,6 +217,8 @@ class TvVideoPlaybackStarter(
                 durableAudioFingerprint = durableAudioFingerprint,
                 preferredAudioLanguage = effectivePreferredAudioLanguage,
                 capabilities = capabilities,
+                serverAudioTrackIndex = version.effectiveAudioTrackIndex,
+                audioResetToAuto = audioResetToAuto,
             )
             // Skip-back-on-resume — see MobileVideoPlaybackStarter for the rationale.
             // Suppressed for Start Over / retry (request flag) and Watch Together
@@ -231,7 +246,7 @@ class TvVideoPlaybackStarter(
 
             val maxBitrateKbps = playerSettingsStore.maxBitrateKbpsFlow.first()
             if (!ownerCurrent() || profileId != expectedMetadataOwner.profileId || serverUrl != expectedMetadataOwner.serverUrl) {
-                return failure(request.contentId, "The metadata viewer changed before playback admission.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+                return failure(request.contentId, TvPlayerErrors.VIEWER_CHANGED_BEFORE_ADMISSION, diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
             }
             val v3Start = when (
                 val r = playbackSessionManager.startVideoSessionV3(
@@ -263,12 +278,12 @@ class TvVideoPlaybackStarter(
                 is ApiResult.Success -> r.data
                 is ApiResult.Error -> return failure(
                     request.contentId,
-                    "Failed to start playback: ${r.message}",
+                    TvPlayerErrors.START_FAILED_PREFIX + r.message,
                     diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST,
                 )
                 is ApiResult.NetworkError -> return failure(
                     request.contentId,
-                    "Network error: ${r.exception.message}",
+                    TvPlayerErrors.NETWORK_PREFIX + r.exception.message,
                     r.exception,
                     PlaybackDiagnosticsCode.NETWORK,
                 )
@@ -280,10 +295,11 @@ class TvVideoPlaybackStarter(
                     serverTerminalUserMessage(v3Start.message),
                     diagnosticsCode = PlaybackDiagnosticsCode.serverTerminal(v3Start.reason),
                     terminalReason = v3Start.reason,
+                    messageRes = terminalUserMessageRes(v3Start),
                 )
                 VideoSessionStartV3.ServerUpgradeRequired -> return failure(
                     request.contentId,
-                    "This Silo server must be updated to support the Media3 playback protocol.",
+                    TvPlayerErrors.SERVER_UPGRADE_MEDIA3,
                     diagnosticsCode = PlaybackDiagnosticsCode.SERVER_UPGRADE_REQUIRED,
                 )
             }
@@ -292,7 +308,7 @@ class TvVideoPlaybackStarter(
             if (!ownerCurrent()) {
                 discardUnpublishedSession(unpublishedSessionId, lifecycleAdopted)
                 unpublishedSessionId = null
-                return failure(request.contentId, "The metadata viewer changed after playback admission.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+                return failure(request.contentId, TvPlayerErrors.VIEWER_CHANGED_AFTER_ADMISSION, diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
             }
             val effectiveFileId = resolved.mediaFileId.takeIf { it > 0 }
                 ?: readyV3.plan.effectiveMediaFileId
@@ -302,7 +318,7 @@ class TvVideoPlaybackStarter(
                 unpublishedSessionId = null
                 return failure(
                     request.contentId,
-                    "The server offered a different version than the Watch Party's.",
+                    TvPlayerErrors.WATCH_PARTY_VERSION_MISMATCH,
                     diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST,
                 )
             }
@@ -367,7 +383,7 @@ class TvVideoPlaybackStarter(
                 unpublishedSessionId = null
                 return failure(
                     request.contentId,
-                    "Playback start was superseded.",
+                    TvPlayerErrors.SUPERSEDED,
                     diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST,
                 )
             }
@@ -376,7 +392,7 @@ class TvVideoPlaybackStarter(
             if (!ownerCurrent()) {
                 discardUnpublishedSession(unpublishedSessionId, lifecycleAdopted)
                 unpublishedSessionId = null
-                return failure(request.contentId, "The metadata viewer changed during playback adoption.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+                return failure(request.contentId, TvPlayerErrors.VIEWER_CHANGED_DURING_ADOPTION, diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
             }
             val result = VideoPlaybackStartResult.Ready(
                 contentId = request.contentId,
@@ -421,10 +437,12 @@ class TvVideoPlaybackStarter(
                 showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
                     ?: activeProfile?.showForcedSubtitles
                     ?: true,
+                preferredSubtitleTrackSignature = watchDetail.effectiveSubtitleTrackSignature,
                 intro = effectiveVersion?.intro,
                 credits = effectiveVersion?.credits,
                 recap = effectiveVersion?.recap,
                 preview = effectiveVersion?.preview,
+                markerSegments = effectiveVersion?.markerSegments,
                 chapters = effectiveVersion?.chapters.orEmpty(),
                 seriesId = watchDetail.seriesId,
                 seriesTitle = watchDetail.seriesTitle,
@@ -442,7 +460,7 @@ class TvVideoPlaybackStarter(
         } catch (e: Exception) {
             discardUnpublishedSession(unpublishedSessionId, lifecycleAdopted)
             Log.e(TAG, "Error loading content", e)
-            failure(request.contentId, "Unexpected error: ${e.message}", e, PlaybackDiagnosticsCode.UNEXPECTED)
+            failure(request.contentId, TvPlayerErrors.UNEXPECTED_PREFIX + e.message, e, PlaybackDiagnosticsCode.UNEXPECTED)
         }
     }
 
@@ -471,6 +489,7 @@ class TvVideoPlaybackStarter(
         cause: Throwable? = null,
         diagnosticsCode: PlaybackDiagnosticsCode? = null,
         terminalReason: String? = null,
+        @StringRes messageRes: Int? = null,
     ): VideoPlaybackStartResult.Error {
         // Log the throwable here instead of stashing it on the (unread) result —
         // the message already carries the human-facing detail.
@@ -480,6 +499,7 @@ class TvVideoPlaybackStarter(
             message = message,
             diagnosticsCode = diagnosticsCode,
             terminalReason = terminalReason,
+            messageRes = messageRes,
         )
     }
 
@@ -497,16 +517,23 @@ internal fun resolveTvInitialAudioTrackIndex(
     durableAudioFingerprint: String?,
     preferredAudioLanguage: String?,
     capabilities: ClientCodecCapabilities,
+    serverAudioTrackIndex: Int? = null,
+    audioResetToAuto: Boolean = false,
 ): Int? {
-    requestedAudioIndex?.let { return it }
-    carriedAudioIndex?.let { return it }
-    if (unresolvedCarriedChoice) return null
-    return resolveAudioTrackOrdinal(tracks, durableAudioFingerprint)
-        ?: TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
+    if (requestedAudioIndex == null && carriedAudioIndex == null && unresolvedCarriedChoice) return null
+    return org.siloserver.silo.common.player.resolveStartAudioTrackOrdinal(
+        explicitOrdinal = requestedAudioIndex ?: carriedAudioIndex,
+        tracks = tracks,
+        serverOrdinal = serverAudioTrackIndex,
+        localFingerprint = durableAudioFingerprint,
+        resetToAuto = audioResetToAuto,
+    ) {
+        TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
             tracks = tracks,
             preferredAudioLanguage = preferredAudioLanguage,
             capabilities = capabilities,
         )
+    }
 }
 
 internal fun resolveTvSourceStartPosition(

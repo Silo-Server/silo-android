@@ -81,10 +81,11 @@ fun Modifier.skeleton(
 fun MediaRowSkeleton(
     progress: Float,
     modifier: Modifier = Modifier,
-    // Scaled like MediaCard's default so the placeholder boxes match the
-    // real cards that replace them (height follows the 2:3 aspect).
+    // Scaled and shaped like MediaCard so the placeholder boxes match the
+    // real cards that replace them: a 2:3.3 poster, or square for audiobooks.
     posterWidth: Dp = 120.dp * LocalCardPresentation.current.posterSize.posterScale,
-    posterHeight: Dp = posterWidth * 1.5f,
+    posterAspect: Float = PosterArtworkAspectRatio,
+    posterHeight: Dp = posterWidth / posterAspect,
     count: Int = 5,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -128,7 +129,8 @@ fun PosterGridSkeleton(
     modifier: Modifier = Modifier,
     minCellWidth: Dp = MediaGridDefaults.scaledPosterGridMinWidth,
     rows: Int = 4,
-    posterAspect: Float = 2f / 3.3f,
+    /** The cards' shape: [PosterArtworkAspectRatio], or 1 for audiobooks. */
+    posterAspect: Float = PosterArtworkAspectRatio,
 ) {
     val spacing = MediaGridDefaults.PosterGridHorizontalSpacing
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -164,6 +166,7 @@ private val GridSkeletonInset = 16.dp
 fun MediaRowsSkeleton(
     modifier: Modifier = Modifier,
     rowCount: Int = 4,
+    posterAspect: Float = PosterArtworkAspectRatio,
 ) {
     val shimmer = rememberShimmerProgress()
     Column(
@@ -171,7 +174,7 @@ fun MediaRowsSkeleton(
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
         repeat(rowCount) {
-            MediaRowSkeleton(progress = shimmer)
+            MediaRowSkeleton(progress = shimmer, posterAspect = posterAspect)
         }
     }
 }

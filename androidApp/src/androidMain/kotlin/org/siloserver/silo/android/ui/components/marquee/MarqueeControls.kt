@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components.marquee
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -240,10 +242,11 @@ fun MarqueeHeadline(
 /** Inline error under a control. Errors never become banners. */
 @Composable
 fun MarqueeErrorText(text: String, modifier: Modifier = Modifier) {
+    val spokenError = stringResource(CommonR.string.shell_marquee_errorSpoken, text)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clearAndSetSemantics { contentDescription = "Error: $text" },
+            .clearAndSetSemantics { contentDescription = spokenError },
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Icon(

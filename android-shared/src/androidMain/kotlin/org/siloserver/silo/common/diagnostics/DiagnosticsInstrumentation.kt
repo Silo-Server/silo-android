@@ -318,6 +318,8 @@ data class DiagnosticsPlayerErrorDetail(
 data class DiagnosticsLoadErrorDetail(
     val dataType: String,
     val trackType: String,
+    /** Media3 error code name from the first `DataSourceException` in the chain. */
+    val errorCodeName: String? = null,
     val httpStatus: Int? = null,
     val errorClass: String,
     val rootCauseClass: String? = null,
@@ -325,6 +327,7 @@ data class DiagnosticsLoadErrorDetail(
 ) {
     internal fun messageCodes(): String = listOfNotNull(
         "$dataType $trackType",
+        errorCodeName,
         httpStatus?.let { "http $it" },
         errorClass,
         rootCauseClass,
@@ -334,6 +337,7 @@ data class DiagnosticsLoadErrorDetail(
     internal fun attributes(): Map<String, SiloLogAttribute> = buildMap {
         put("data_type", SiloLogAttribute.Text(dataType))
         put("track_type", SiloLogAttribute.Text(trackType))
+        errorCodeName?.let { put("error_name", SiloLogAttribute.Text(it)) }
         httpStatus?.let { put("http_status", SiloLogAttribute.Integer(it.toLong())) }
         put("error_class", SiloLogAttribute.Text(errorClass))
         rootCauseClass?.let { put("root_error_class", SiloLogAttribute.Text(it)) }

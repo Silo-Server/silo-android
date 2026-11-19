@@ -49,12 +49,23 @@ class TvEpisodeWindowTest {
     }
 
     @Test
-    fun specialsFollowRegularSeasonsRegardlessOfInputOrder() {
+    fun specialsPrecedeRegularSeasonsRegardlessOfInputOrder() {
         val window = TvEpisodeWindow()
-        val seasons = listOf(Season("special", 0, isSpecials = true)) + seasons(2).reversed()
+        val seasons = seasons(2).reversed() + Season("special", 0, isSpecials = true)
         (0..2).forEach { window.put(it, episodes(it)) }
-        assertEquals(listOf(1, 2, 0), window.orderedSeasons(seasons))
-        assertEquals(episodes(1) + episodes(2) + episodes(0), window.snapshot(seasons, 2).episodes)
+        assertEquals(listOf(0, 1, 2), window.orderedSeasons(seasons))
+        assertEquals(episodes(0) + episodes(1) + episodes(2), window.snapshot(seasons, 2).episodes)
+    }
+
+    @Test
+    fun specialsAloneAreThePreviousSeasonOfSeasonOne() {
+        val window = TvEpisodeWindow()
+        val seasons = listOf(Season("special", 0, isSpecials = true)) + seasons(2)
+        window.put(1, episodes(1))
+        val snapshot = window.snapshot(seasons, 1)
+        assertEquals(episodes(1), snapshot.episodes)
+        assertEquals(0, snapshot.previousSeason)
+        assertEquals(2, snapshot.nextSeason)
     }
 
     @Test

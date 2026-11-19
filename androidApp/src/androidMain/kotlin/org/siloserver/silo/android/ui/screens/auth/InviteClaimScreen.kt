@@ -24,6 +24,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.koin.compose.viewmodel.koinViewModel
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.android.ui.components.marquee.MarqueeButton
 import org.siloserver.silo.android.ui.components.marquee.MarqueeButtonKind
 import org.siloserver.silo.android.ui.components.marquee.MarqueeErrorHaptic
@@ -35,6 +38,7 @@ import org.siloserver.silo.android.ui.components.marquee.MarqueeSeparator
 import org.siloserver.silo.android.ui.components.marquee.MarqueeStage
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTextField
 import org.siloserver.silo.android.ui.components.marquee.MarqueeWordmark
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
 import org.siloserver.silo.common.ui.marquee.ServerBranding
@@ -67,10 +71,9 @@ fun InviteClaimScreen(
 
     state.pendingCleartextOrigin?.let { origin ->
         SiloConfirmDialog(
-            title = "Connect without encryption?",
-            body = "Your new password will be sent unencrypted to ${ServerBranding.hostLabel(origin)}. " +
-                "Only do this on a network you trust.",
-            confirmLabel = "Connect",
+            title = stringResource(CommonR.string.setup_cleartext_title),
+            body = stringResourceWithNames(CommonR.string.account_invite_cleartextBody, ServerBranding.hostLabel(origin)),
+            confirmLabel = stringResource(CommonR.string.setup_cleartext_connect),
             destructive = false,
             onConfirm = viewModel::onConfirmCleartext,
             onDismiss = viewModel::onCancelCleartext,
@@ -85,21 +88,23 @@ fun InviteClaimScreen(
         when {
             state.signInRequiredUsername != null || state.acceptanceUncertain -> {
                 MarqueeHeadline(
-                    title = if (state.signInRequiredUsername != null) "Account created" else "Check sign-in",
-                    lead = if (state.signInRequiredUsername != null) {
-                        "Sign in to $serverUrl as ${state.signInRequiredUsername} using the password you chose. " +
-                            "Use Change server on the sign-in screen if needed."
-                    } else {
-                        state.error.orEmpty()
-                    },
+                    title = stringResource(
+                        if (state.signInRequiredUsername != null) CommonR.string.account_invite_createdTitle else CommonR.string.account_invite_checkTitle,
+                    ),
+                    lead = state.signInRequiredUsername?.let { username ->
+                        stringResourceWithNames(CommonR.string.account_invite_createdLead, serverUrl, username)
+                    } ?: state.error?.text().orEmpty(),
                 )
-                MarqueeButton("Go to sign in", onClick = onNavigateToLogin, modifier = Modifier.padding(top = 24.dp))
+                MarqueeButton(stringResource(CommonR.string.account_invite_goToSignIn), onClick = onNavigateToLogin, modifier = Modifier.padding(top = 24.dp))
             }
 
             state.acceptanceUnavailable || state.invitation?.acceptanceAvailable == false -> {
-                MarqueeHeadline(title = "Can't accept here", lead = "Invitation acceptance is unavailable on this server.")
+                MarqueeHeadline(
+                    title = stringResource(CommonR.string.account_invite_unavailableTitle),
+                    lead = stringResource(CommonR.string.account_invite_unavailableLead),
+                )
                 MarqueeButton(
-                    "Back to sign in",
+                    stringResource(CommonR.string.account_backToSignIn),
                     onClick = onNavigateToLogin,
                     kind = MarqueeButtonKind.Glass,
                     modifier = Modifier.padding(top = 24.dp),
@@ -114,13 +119,12 @@ fun InviteClaimScreen(
 
             state.lookupFailed -> {
                 MarqueeHeadline(
-                    title = "Couldn't check\nthe invitation",
-                    lead = "Your invite is probably still fine — we just couldn't check it. " +
-                        "Make sure you're online and try again.",
+                    title = stringResource(CommonR.string.account_invite_lookupFailedTitle),
+                    lead = stringResource(CommonR.string.account_invite_lookupFailedLead),
                 )
-                MarqueeButton("Try again", onClick = viewModel::onRetryLookup, modifier = Modifier.padding(top = 24.dp))
+                MarqueeButton(stringResource(CommonR.string.common_tryAgain), onClick = viewModel::onRetryLookup, modifier = Modifier.padding(top = 24.dp))
                 MarqueeButton(
-                    "Back to sign in",
+                    stringResource(CommonR.string.account_backToSignIn),
                     onClick = onNavigateToLogin,
                     kind = MarqueeButtonKind.Plain,
                     modifier = Modifier.padding(top = 6.dp),
@@ -129,12 +133,11 @@ fun InviteClaimScreen(
 
             state.invitationInvalid -> {
                 MarqueeHeadline(
-                    title = "This invite\nhas expired",
-                    lead = "The link may have been used already, revoked, or simply expired. " +
-                        "Ask whoever invited you to send a fresh one.",
+                    title = stringResource(CommonR.string.account_invite_invalidTitle),
+                    lead = stringResource(CommonR.string.account_invite_invalidLead),
                 )
                 MarqueeButton(
-                    "Back to sign in",
+                    stringResource(CommonR.string.account_backToSignIn),
                     onClick = onNavigateToLogin,
                     kind = MarqueeButtonKind.Glass,
                     modifier = Modifier.padding(top = 24.dp),
@@ -144,10 +147,10 @@ fun InviteClaimScreen(
             else -> {
                 val invitation = state.invitation ?: return@MarqueeStage
                 MarqueeHeadline(
-                    title = "Welcome to\n${invitation.serverName}",
+                    title = stringResourceWithNames(CommonR.string.account_invite_welcome, invitation.serverName),
                     lead = listOfNotNull(
-                        invitation.inviterName?.let { "$it invited you." },
-                        "Choose a password and you're in. You'll sign in with your email address.",
+                        invitation.inviterName?.let { stringResourceWithNames(CommonR.string.account_invite_invitedBy, it) },
+                        stringResource(CommonR.string.account_invite_lead),
                     ).joinToString(" "),
                 )
                 MarqueeFieldGroup(isError = state.error != null, modifier = Modifier.padding(top = 24.dp)) {
@@ -171,7 +174,7 @@ fun InviteClaimScreen(
                         value = state.password,
                         onValueChange = viewModel::onPasswordChanged,
                         icon = Icons.Outlined.Lock,
-                        placeholder = "Password",
+                        placeholder = stringResource(CommonR.string.tvSignIn_form_passwordPlaceholder),
                         isSecure = true,
                     )
                     MarqueeSeparator()
@@ -179,15 +182,15 @@ fun InviteClaimScreen(
                         value = state.confirmPassword,
                         onValueChange = viewModel::onConfirmPasswordChanged,
                         icon = Icons.Outlined.Lock,
-                        placeholder = "Confirm password",
+                        placeholder = stringResource(CommonR.string.account_invite_confirmPassword),
                         isSecure = true,
                         imeAction = ImeAction.Go,
                         onImeAction = viewModel::onClaimClick,
                     )
                 }
-                state.error?.let { MarqueeErrorText(it, Modifier.padding(top = 10.dp)) }
+                state.error?.let { MarqueeErrorText(it.text(), Modifier.padding(top = 10.dp)) }
                 MarqueeButton(
-                    text = if (state.isSubmitting) "Creating…" else "Create account",
+                    text = stringResource(if (state.isSubmitting) CommonR.string.account_create_creating else CommonR.string.account_create_submit),
                     onClick = viewModel::onClaimClick,
                     isLoading = state.isSubmitting,
                     enabled = !state.isSubmitting,

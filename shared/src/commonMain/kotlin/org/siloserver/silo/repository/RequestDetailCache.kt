@@ -13,6 +13,7 @@ import org.siloserver.silo.model.request.RequestReason
 import org.siloserver.silo.model.request.RequestState
 import org.siloserver.silo.model.request.RequestUserState
 import org.siloserver.silo.model.request.requestInstantKey
+import org.siloserver.silo.model.request.without
 import org.siloserver.silo.network.ApiResult
 
 /**
@@ -67,6 +68,13 @@ class RequestDetailCache(
     fun storeOwnRecord(record: MediaRequest) {
         val key = record.cacheKey()
         ownRecords = if (record.outcome == RequestOutcome.Cancelled) ownRecords - key else ownRecords + (key to record)
+    }
+
+    /** The server deleted [record]: forget it, and leave its title requestable wherever the cache shows it. */
+    fun removeOwnRecord(record: MediaRequest) {
+        val key = record.cacheKey()
+        if (ownRecords[key]?.id == record.id) ownRecords = ownRecords - key
+        patchRequestState(key) { it.without(record) }
     }
 
     /** Patches the title's request state wherever the cache holds it, so the next first frame agrees. */

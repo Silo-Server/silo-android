@@ -2,18 +2,23 @@ package org.siloserver.silo.android.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.discovery.DiscoveredServer
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.uiText
 import org.siloserver.silo.common.network.CleartextConsentStore
+import org.siloserver.silo.common.network.ServerSetupScheme
+import org.siloserver.silo.common.network.ServerSetupValidationException
+import org.siloserver.silo.common.network.buildServerSetupCandidateUrls
+import org.siloserver.silo.common.network.serverSetupUsesCleartext
 import org.siloserver.silo.common.network.cleartextOrigin
 import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupStatusResponse
 import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
-import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.CONTRACT_PROVEN_BY_V2_RESPONSE
-import java.net.URI
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,28 +30,20 @@ data class ServerSetupUiState(
     val selectedScheme: ServerSetupScheme = ServerSetupScheme.Auto,
     val port: String = "",
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     /** Destination after successful server validation. */
     val navigateTo: ServerSetupDestination? = null,
     val pendingCleartextUrl: String? = null,
     /** The found server being connected to, so its row can show progress while [isLoading]. */
     val connectingServerUrl: String? = null,
     /** A failure connecting to a found server; shown beside the found list, not on the address field. */
-    val discoveryError: String? = null,
+    val discoveryError: UiText? = null,
 ) {
     /** True when the entered address will connect over unencrypted HTTP.
      *  Informational only — does not block connecting to LAN/IP servers. */
     val usesCleartext: Boolean
         get() = serverSetupUsesCleartext(serverUrl, selectedScheme, port)
 }
-
-enum class ServerSetupScheme(val label: String, val urlScheme: String?) {
-    Auto("Auto", null),
-    Https("HTTPS", "https"),
-    Http("HTTP", "http"),
-}
-
-class ServerSetupValidationException(message: String) : IllegalArgumentException(message)
 
 sealed class ServerSetupDestination {
     /** Server needs first-time setup (admin creation). */
@@ -136,7 +133,7 @@ class ServerSetupViewModel(
         val candidates = try {
             candidateUrls(current)
         } catch (error: ServerSetupValidationException) {
-            _uiState.update { it.copy(error = error.message) }
+            _uiState.update { it.copy(error = error.message?.let { message -> UiText.Raw(message) }) }
             return
         }
 
@@ -172,7 +169,7 @@ class ServerSetupViewModel(
                 // server is reported as update-server, never retried on v1.
                 val probe = probeContract(candidate)
                 if (probe is ApiV2ProbeResult.UpdateServer) {
-                    fail(ServerContract.UPDATE_REQUIRED_MESSAGE, found)
+                    fail(ServerContract.UPDATE_REQUIRED_TEXT, found)
                     return@launch
                 }
                 // Anything else the probe said (V2, a transient failure, or a
@@ -215,14 +212,14 @@ class ServerSetupViewModel(
             fail(
                 lastError
                     ?.takeIf { message -> message.isNotBlank() }
-                    ?.let { message -> "Could not connect: $message" }
-                    ?: "Could not reach a Silo server at that address.",
+                    ?.let { message -> uiText(CommonR.string.setup_error_couldNotConnect, message) }
+                    ?: uiText(CommonR.string.setup_error_unreachable),
                 found,
             )
         }
     }
 
-    private fun fail(message: String, found: DiscoveredServer?) {
+    private fun fail(message: UiText, found: DiscoveredServer?) {
         _uiState.update {
             if (found == null) {
                 it.copy(isLoading = false, error = message)
@@ -267,7 +264,7 @@ class ServerSetupViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = "Could not safely identify this HTTP server.",
+                        error = uiText(CommonR.string.setup_error_cleartextIdentity),
                         pendingCleartextUrl = null,
                         navigateTo = null,
                     )
@@ -325,119 +322,3 @@ private data class PendingCleartextConnection(
     val destination: ServerSetupDestination,
     val contract: ServerContract?,
 )
-
-/**
- * True when the address WILL connect over plaintext HTTP: an explicit `http`
- * scheme selection, or an `http://` prefix in the input. Auto mode is not
- * flagged pre-connect — it tries HTTPS first and only falls back to HTTP.
- * Informational only (does not block connecting to LAN/IP servers).
- */
-internal fun serverSetupUsesCleartext(
-    rawInput: String,
-    selectedScheme: ServerSetupScheme,
-    port: String,
-): Boolean {
-    if (rawInput.isBlank()) return false
-    if (selectedScheme == ServerSetupScheme.Http) return true
-    if (selectedScheme == ServerSetupScheme.Https) return false
-    return runCatching {
-        buildServerSetupCandidateUrls(rawInput, selectedScheme, port)
-    }.getOrNull()?.let { candidates ->
-        // Auto with an explicit http:// input resolves to a single http
-        // candidate; a bare host yields https first, so no pre-warning.
-        candidates.size == 1 && candidates.first().startsWith("http://")
-    } ?: false
-}
-
-internal fun buildServerSetupCandidateUrls(
-    rawInput: String,
-    selectedScheme: ServerSetupScheme,
-    port: String,
-): List<String> {
-    val input = rawInput.trim()
-    if (input.isBlank()) {
-        throw ServerSetupValidationException("Please enter a server host.")
-    }
-
-    val parsed = parseServerSetupInput(input)
-    val explicitPort = parsed.port ?: parsePort(port)
-    val schemes = when {
-        selectedScheme.urlScheme != null -> listOf(selectedScheme.urlScheme)
-        parsed.scheme != null -> listOf(parsed.scheme)
-        else -> listOf("https", "http")
-    }
-
-    val candidates = schemes.map { scheme ->
-        buildServerSetupUrl(
-            scheme = scheme,
-            host = parsed.host,
-            port = explicitPort,
-            path = parsed.path,
-        )
-    }.toMutableList()
-
-    if (selectedScheme == ServerSetupScheme.Auto && parsed.scheme == null && explicitPort == null) {
-        candidates += buildServerSetupUrl(
-            scheme = "http",
-            host = parsed.host,
-            port = DefaultSiloServerPort,
-            path = parsed.path,
-        )
-    }
-
-    return candidates.distinct()
-}
-
-private const val DefaultSiloServerPort = 8090
-
-private data class ParsedServerSetupInput(
-    val scheme: String?,
-    val host: String,
-    val port: Int?,
-    val path: String,
-)
-
-private fun parseServerSetupInput(input: String): ParsedServerSetupInput {
-    val hasScheme = input.contains("://")
-    val parseTarget = if (hasScheme) input else "https://$input"
-    val uri = runCatching { URI(parseTarget) }.getOrElse {
-        throw ServerSetupValidationException("Enter a valid server address.")
-    }
-    val host = uri.host?.takeIf { it.isNotBlank() }
-        ?: throw ServerSetupValidationException("Enter a valid server address.")
-    val parsedPort = uri.port.takeIf { it > 0 }?.also { validatePort(it) }
-    val rawPath = uri.rawPath.orEmpty().trimEnd('/')
-    val path = rawPath.takeUnless { it.isBlank() || it == "/" }.orEmpty()
-    return ParsedServerSetupInput(
-        scheme = if (hasScheme) uri.scheme?.lowercase() else null,
-        host = host,
-        port = parsedPort,
-        path = path,
-    )
-}
-
-private fun parsePort(port: String): Int? {
-    val trimmed = port.trim()
-    if (trimmed.isBlank()) return null
-    val parsed = trimmed.toIntOrNull()
-        ?: throw ServerSetupValidationException("Port must be a number between 1 and 65535.")
-    validatePort(parsed)
-    return parsed
-}
-
-private fun validatePort(port: Int) {
-    if (port !in 1..65535) {
-        throw ServerSetupValidationException("Port must be a number between 1 and 65535.")
-    }
-}
-
-private fun buildServerSetupUrl(
-    scheme: String,
-    host: String,
-    port: Int?,
-    path: String,
-): String {
-    val authority = if (host.contains(":") && !host.startsWith("[")) "[$host]" else host
-    val portSuffix = port?.let { ":$it" }.orEmpty()
-    return AndroidServerRegistry.normalizeUrl("$scheme://$authority$portSuffix$path")
-}

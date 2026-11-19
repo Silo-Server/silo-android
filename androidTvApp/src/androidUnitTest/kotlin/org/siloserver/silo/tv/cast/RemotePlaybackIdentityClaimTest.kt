@@ -90,7 +90,7 @@ class RemotePlaybackIdentityClaimTest {
         val gated = GatedLogoutApi(api)
         val manager = RemotePlaybackIdentityManager(gated, tokens, deviceNameProvider = { "TV" })
         suspend fun prepareOn(run: Long) =
-            manager.prepare(offer(), CONTROLLER, controllerDeviceName = null, receiverRun = run) {}
+            manager.prepare(offer(), CONTROLLER, controllerDeviceName = null, receiverRun = run, allowReuse = true) {}
 
         prepareOn(STOPPED_RUN)
         val ending = assertNotNull(manager.activeIdentity)
@@ -113,8 +113,36 @@ class RemotePlaybackIdentityClaimTest {
         assertNotEquals(ending.generationId, manager.activeIdentity?.generationId)
     }
 
+    /** Several controllers: a matching device ID alone must not reuse a phone's profile. */
+    @Test fun aMatchingOfferTheReceiverDidNotClearTakesTheFullHandoff() = runTest {
+        prepare(offer(), run = NEXT_RUN)
+        val first = assertNotNull(manager.activeIdentity)
+
+        val ready = manager.prepare(offer(), CONTROLLER, controllerDeviceName = null, receiverRun = NEXT_RUN, allowReuse = false) {}
+
+        assertFalse(ready.reused)
+        assertNotEquals(first.generationId, manager.activeIdentity?.generationId)
+    }
+
+    /** A stale handoff can't grant readiness for a newer generation, even one with identical fields. */
+    @Test fun readinessIsGrantedOnlyForThePreparedGeneration() = runTest {
+        var prepared: String? = null
+        manager.prepare(offer(), CONTROLLER, controllerDeviceName = null, receiverRun = NEXT_RUN, allowReuse = false, onPrepared = { prepared = it }) {}
+        val first = assertNotNull(prepared)
+        assertEquals(first, manager.activeIdentity?.generationId)
+        assertEquals("granted", manager.whileActive(first) { "granted" })
+
+        // Same server, profile and phone, but a fresh approval: a new generation.
+        manager.prepare(offer(), CONTROLLER, controllerDeviceName = null, receiverRun = NEXT_RUN, allowReuse = false) {}
+        assertNotEquals(first, manager.activeIdentity?.generationId)
+        assertNull(manager.whileActive(first) { "granted" })
+
+        manager.end()
+        assertNull(manager.whileActive(first) { "granted" })
+    }
+
     private suspend fun prepare(offer: SiloCastHandoffOffer, run: Long) =
-        manager.prepare(offer, CONTROLLER, controllerDeviceName = null, receiverRun = run) {}
+        manager.prepare(offer, CONTROLLER, controllerDeviceName = null, receiverRun = run, allowReuse = true) {}
 
     private fun offer(profileId: String = "profile-1") = SiloCastHandoffOffer(
         requestId = "request",

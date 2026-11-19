@@ -18,22 +18,22 @@ class AudiobookBookmarksStoreTest {
         val late = bookmark(id = "b1", positionSeconds = 120.0)
         val early = bookmark(id = "b2", positionSeconds = 30.0)
 
-        store.add("srv", "prof", "book", late)
-        store.add("srv", "prof", "book", early)
-        val result = store.add("srv", "prof", "book", late.copy(note = "duplicate"))
+        store.add("srv", "acct", "prof", "book", late)
+        store.add("srv", "acct", "prof", "book", early)
+        val result = store.add("srv", "acct", "prof", "book", late.copy(note = "duplicate"))
 
         assertEquals(listOf("b2", "b1"), result.map { it.id })
         assertNull(result.first { it.id == "b1" }.note)
-        assertEquals(listOf("b2", "b1"), store.list("srv", "prof", "book").map { it.id })
+        assertEquals(listOf("b2", "b1"), store.list("srv", "acct", "prof", "book").map { it.id })
     }
 
     @Test
     fun `remove deletes only the matching id`() {
         val store = AudiobookBookmarksStore(tmp.newFolder("filesDir"))
-        store.add("srv", "prof", "book", bookmark(id = "b1", positionSeconds = 10.0))
-        store.add("srv", "prof", "book", bookmark(id = "b2", positionSeconds = 20.0))
+        store.add("srv", "acct", "prof", "book", bookmark(id = "b1", positionSeconds = 10.0))
+        store.add("srv", "acct", "prof", "book", bookmark(id = "b2", positionSeconds = 20.0))
 
-        val result = store.remove("srv", "prof", "book", "b1")
+        val result = store.remove("srv", "acct", "prof", "book", "b1")
 
         assertEquals(listOf("b2"), result.map { it.id })
     }

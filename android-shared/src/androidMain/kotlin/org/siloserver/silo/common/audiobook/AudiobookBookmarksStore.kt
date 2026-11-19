@@ -5,9 +5,9 @@ import org.siloserver.silo.model.audiobook.AudiobookBookmark
 import java.io.File
 
 /**
- * Per-(serverId, profileId, contentId) on-disk bookmark store. Each
+ * Per-(serverId, accountId, profileId, contentId) on-disk bookmark store. Each
  * book gets its own JSON file at
- * `<filesDir>/audiobook_bookmarks/<serverId>/<profileId>/<contentId>.json`,
+ * `<filesDir>/audiobook_bookmarks/<serverId>/@<accountId>/<profileId>/<contentId>.json`,
  * holding an ordered list of [AudiobookBookmark]s.
  *
  * Local-only for now — once the server exposes a /bookmarks endpoint
@@ -18,18 +18,19 @@ class AudiobookBookmarksStore(baseDir: File) {
 
     private val store = ScopedJsonFileStore(File(baseDir, "audiobook_bookmarks"), TAG)
 
-    fun list(serverId: String, profileId: String, contentId: String): List<AudiobookBookmark> =
-        store.read<List<AudiobookBookmark>>(store.fileFor(serverId, profileId, contentId)).orEmpty()
+    fun list(serverId: String, accountId: String?, profileId: String, contentId: String): List<AudiobookBookmark> =
+        store.read<List<AudiobookBookmark>>(store.fileFor(serverId, accountId, profileId, contentId)).orEmpty()
 
     /** Add a bookmark (deduped by id, existing entry wins), persisting
      *  the full updated list atomically. Returns the persisted list. */
     fun add(
         serverId: String,
+        accountId: String?,
         profileId: String,
         contentId: String,
         bookmark: AudiobookBookmark,
     ): List<AudiobookBookmark> {
-        val target = store.fileFor(serverId, profileId, contentId)
+        val target = store.fileFor(serverId, accountId, profileId, contentId)
         return store.withTargetLock(target) {
             val updated = (store.read<List<AudiobookBookmark>>(target).orEmpty() + bookmark)
                 .distinctBy { it.id }
@@ -42,11 +43,12 @@ class AudiobookBookmarksStore(baseDir: File) {
     /** Remove a bookmark by id. No-op if missing. */
     fun remove(
         serverId: String,
+        accountId: String?,
         profileId: String,
         contentId: String,
         bookmarkId: String,
     ): List<AudiobookBookmark> {
-        val target = store.fileFor(serverId, profileId, contentId)
+        val target = store.fileFor(serverId, accountId, profileId, contentId)
         return store.withTargetLock(target) {
             val updated = store.read<List<AudiobookBookmark>>(target)
                 .orEmpty()

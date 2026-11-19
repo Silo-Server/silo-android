@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.model.request.RequestMediaResult
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -45,6 +47,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -56,6 +60,8 @@ import androidx.tv.material3.Text
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.requests.RequestRowCopy
 import org.siloserver.silo.common.requests.RequestStageTrack
 import org.siloserver.silo.model.catalog.ExternalRatings
@@ -85,6 +91,7 @@ import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.viewmodel.RequestDetailUiState
 import org.siloserver.silo.viewmodel.RequestDetailViewModel
 import org.siloserver.silo.viewmodel.RequestPrimaryAction
+import org.siloserver.silo.common.i18n.LocaleInteger
 
 /**
  * TV request detail on the same page surface and hero as a library title
@@ -210,7 +217,7 @@ fun TvRequestDetailScreen(
                 actionFocusFallback = actionFocusFallback,
                 onOpenRecommendation = router::openResult,
             )
-            state.error != null -> TvErrorScreen(message = state.error.orEmpty(), onRetry = viewModel::load)
+            state.error != null -> TvErrorScreen(message = state.error?.text().orEmpty(), onRetry = viewModel::load)
             else -> RequestDetailLoading(focusRequester = loadingFocusRequester)
         }
     }
@@ -279,14 +286,14 @@ private fun RequestDetailContent(
                             modifier = Modifier.onFocusChanged { onPrimaryFocusChanged(it.hasFocus) },
                         )
                         if (state.canCancel) {
-                            RequestActionPill(icon = Icons.Filled.Close, title = "Cancel Request", onClick = onCancel, focusFallback = actionFocusFallback)
+                            RequestActionPill(icon = Icons.Filled.Close, title = stringResource(CommonR.string.requests_action_cancel), onClick = onCancel, focusFallback = actionFocusFallback)
                         }
                         if (state.canFollow) {
                             // One node across toggles: only the label and icon change, so focus stays.
                             key("follow") {
                                 RequestActionPill(
                                     icon = if (state.isFollowing) Icons.Filled.NotificationsOff else Icons.Filled.Notifications,
-                                    title = state.followActionTitle,
+                                    title = state.followActionTitle.text(),
                                     pending = state.isFollowPending,
                                     onClick = onToggleFollow,
                                     focusFallback = actionFocusFallback,
@@ -295,7 +302,7 @@ private fun RequestDetailContent(
                         }
                         (state.actionErrorMessage ?: state.shownFollowNotice)?.let { message ->
                             Text(
-                                text = message,
+                                text = message.text.text(),
                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp),
                                 color = SiloOnSurface.copy(alpha = 0.72f),
                                 maxLines = 2,
@@ -310,7 +317,7 @@ private fun RequestDetailContent(
         if (recommendations.isNotEmpty()) {
             item(key = "more-like-this", contentType = "rail") {
                 Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                    TvDetailSectionHeader(title = "More like this", modifier = Modifier.padding(horizontal = TvDetailHorizontalInset))
+                    TvDetailSectionHeader(title = stringResource(CommonR.string.requests_moreLikeThis), modifier = Modifier.padding(horizontal = TvDetailHorizontalInset))
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(20.dp),
                         contentPadding = PaddingValues(horizontal = TvDetailHorizontalInset, vertical = 8.dp),
@@ -359,7 +366,7 @@ private fun RequestPrimaryActionPill(
                 RequestPrimaryAction.Loading -> Unit
             }
             Text(
-                text = state.primaryActionTitle,
+                text = state.primaryActionTitle.text(),
                 style = MaterialTheme.typography.titleLarge.copy(fontSize = 14.sp),
                 color = foreground,
                 maxLines = 1,
@@ -476,11 +483,11 @@ private fun RequestStatusStrip(progress: RequestProgress, state: RequestDetailUi
     val record = state.record
     Column(modifier = Modifier.padding(top = 7.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            SummaryField(label = "STATUS", value = progress.longLabel, dot = progress.tint.tvColor())
+            SummaryField(label = stringResource(CommonR.string.requests_strip_status), value = progress.longText.text(), dot = progress.tint.tvColor())
             if (record != null) {
-                RequestRowCopy.day(record.createdAt)?.let { SummaryField(label = "REQUESTED", value = it) }
-                (RequestTargetSummary.text(record.targets) ?: RequestTargetSummary.qualities(record.targets))?.let {
-                    SummaryField(label = "QUALITY", value = it)
+                RequestRowCopy.day(record.createdAt)?.let { SummaryField(label = stringResource(CommonR.string.requests_strip_requested), value = it) }
+                (RequestTargetSummary.text(record.targets)?.text() ?: RequestTargetSummary.qualities(record.targets))?.let {
+                    SummaryField(label = stringResource(CommonR.string.requests_strip_quality), value = it)
                 }
             }
         }
@@ -494,7 +501,7 @@ private fun RequestStatusStrip(progress: RequestProgress, state: RequestDetailUi
                         else -> SiloOnSurface.copy(alpha = 0.45f)
                     }
                     Text(
-                        text = step.title,
+                        text = step.text.text(),
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
                         color = color,
                         maxLines = 1,
@@ -529,19 +536,30 @@ private fun SummaryField(label: String, value: String, dot: Color? = null) {
 }
 
 /** `2026 · 2h 25m · TMDB 7.9`, with genres after it as source tokens. */
+@Composable
 private fun RequestMediaDetail.factTokens(): List<TvHeroFactToken> = buildList {
-    year?.takeIf { it > 0 }?.let { add(TvHeroFactToken.TextToken(it.toString())) }
+    year?.takeIf { it > 0 }?.let { add(TvHeroFactToken.NumberToken(LocaleInteger(it))) }
     if (mediaType == RequestMediaType.Series) {
-        numberOfSeasons?.takeIf { it > 0 }?.let { add(TvHeroFactToken.TextToken(if (it == 1) "1 season" else "$it seasons")) }
+        numberOfSeasons?.takeIf { it > 0 }?.let {
+            add(TvHeroFactToken.TextToken(pluralStringResource(CommonR.plurals.requests_detail_seasons, it, it)))
+        }
     } else {
-        runtime?.takeIf { it > 0 }?.let { add(TvHeroFactToken.TextToken(if (it >= 60) "${it / 60}h ${it % 60}m" else "${it}m")) }
+        runtime?.takeIf { it > 0 }?.let {
+            val text = if (it >= 60) {
+                stringResource(CommonR.string.catalog_runtimeHoursMinutes, LocaleFormat.integer(it / 60), LocaleFormat.integer(it % 60))
+            } else {
+                stringResource(CommonR.string.overlays_runtimeMinutes, LocaleFormat.integer(it))
+            }
+            add(TvHeroFactToken.TextToken(text))
+        }
     }
     ExternalRatings.tmdb(voteAverage)?.let { add(TvHeroFactToken.ExternalRating(it)) }
 }
 
+@Composable
 private fun RequestMediaDetail.creditText(): String? = when {
-    director.isNotBlank() -> "Directed by $director"
-    creators.isNotEmpty() -> "Created by ${creators.take(2).joinToString(", ")}"
+    director.isNotBlank() -> stringResourceWithNames(CommonR.string.detail_directedBy, director)
+    creators.isNotEmpty() -> stringResourceWithNames(CommonR.string.requests_createdBy, creators.take(2).joinToString(", "))
     else -> null
 }
 

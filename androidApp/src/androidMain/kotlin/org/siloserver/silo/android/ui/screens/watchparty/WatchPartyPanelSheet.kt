@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -10,10 +12,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.watchtogether.GuestControlPolicy
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
@@ -22,7 +26,7 @@ import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.watchtogether.WatchPartyAvailability
 import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
 import org.siloserver.silo.watchtogether.WatchPartyEligibility
-import org.siloserver.silo.watchtogether.watchPartyErrorMessage
+import org.siloserver.silo.watchtogether.watchPartyErrorText
 
 /**
  * The party panel over a retained party player (Back opens it). It is the
@@ -48,6 +52,7 @@ internal fun WatchPartyPanelSheet(
     val personalVotesKnown by repository.personalVotesKnown.collectAsState()
     val connection by repository.connectionState.collectAsState()
     val context = LocalContext.current
+    val policyError = stringResource(CommonR.string.watchParty_error_policy)
     val scope = rememberCoroutineScope()
     val isHost = room?.selfRole == MemberRole.Host
     var inviteOpen by rememberSaveable { mutableStateOf(false) }
@@ -80,7 +85,7 @@ internal fun WatchPartyPanelSheet(
                 if (result !is ApiResult.Success) {
                     Toast.makeText(
                         context,
-                        watchPartyErrorMessage(result, "Couldn't change who can play and pause."),
+                        watchPartyErrorText(result, UiText.Raw(policyError)).text(context),
                         Toast.LENGTH_SHORT,
                     ).show()
                 }

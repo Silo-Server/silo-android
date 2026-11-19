@@ -10,6 +10,8 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
+import org.siloserver.silo.common.store.AccountScopedKeys
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.settings.CellularQuality
@@ -56,9 +58,11 @@ class AndroidPlayerSettingsStore(
     private val getAuthScope: suspend () -> org.siloserver.silo.network.AuthScopeSnapshot? = { null },
     /** Null in tests that never reach a server; text opacity then counts as supported. */
     private val contractRevision: SettingsContractRevision? = null,
-    private val dataStoreFactory: (profileId: String) -> DataStore<Preferences> = { profileId ->
+    /** The active saved account; each account's profiles keep their own files. */
+    private val getActiveAccountId: suspend () -> String? = { null },
+    private val dataStoreFactory: (accountId: String?, profileId: String) -> DataStore<Preferences> = { accountId, profileId ->
         PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(fileNameFor(profileId)) },
+            produceFile = { context.preferencesDataStoreFile(fileNameFor(accountId, profileId)) },
         )
     },
 ) : PlayerSettingsStore {
@@ -68,7 +72,9 @@ class AndroidPlayerSettingsStore(
 
     /**
      * Tuple identifying which device-scope settings file applies right now.
-     * Mirrors iOS `currentScopeIdentifier` (server | profile | device).
+     * Mirrors iOS `currentScopeIdentifier` (server | profile | device). The
+     * account picks the file ([fileNameFor]), so [keyPrefix] needs no account
+     * and values adopted from the pre-account file keep their names.
      * When `serverUrl` or `deviceId` is blank, we fall back to legacy
      * per-profile-only keys (no prefix), preserving compatibility with
      * existing installs.
@@ -78,6 +84,7 @@ class AndroidPlayerSettingsStore(
         val serverUrl: String,
         val deviceId: String,
         val authority: org.siloserver.silo.network.AuthScopeSnapshot?,
+        val accountId: String? = null,
     ) {
         val keyPrefix: String =
             if (serverUrl.isBlank() || deviceId.isBlank()) {
@@ -95,6 +102,9 @@ class AndroidPlayerSettingsStore(
          * orphaned pre-rename values.
          */
         val renameSentinel: String = "migration_rename_v1_$keyPrefix"
+
+        /** Which file [migrationDone] tokens belong to. */
+        val storeName: String get() = fileNameFor(accountId, profileId)
     }
 
     // Re-derive scope on every (profile or server) change.
@@ -106,20 +116,21 @@ class AndroidPlayerSettingsStore(
         scopeChangeSignal.collect { emit(currentScope()) }
     }.distinctUntilChanged()
 
-    private suspend fun currentScope(): Scope? {
+    private suspend fun currentScope(): Scope? = AccountScopedKeys.readStable(getActiveAccountId) { accountId ->
         val authority = getAuthScope()
-        val profileId = getActiveProfileId() ?: return null
-        return Scope(
+        val profileId = getActiveProfileId() ?: return@readStable null
+        Scope(
             profileId = profileId,
             serverUrl = getServerUrl().orEmpty(),
             deviceId = getDeviceId().orEmpty(),
             authority = authority,
+            accountId = accountId,
         )
     }
 
-    private fun storeFor(profileId: String): DataStore<Preferences> =
+    private fun storeFor(scope: Scope): DataStore<Preferences> =
         synchronized(storeCache) {
-            storeCache.getOrPut(profileId) { dataStoreFactory(profileId) }
+            storeCache.getOrPut(scope.storeName) { dataStoreFactory(scope.accountId, scope.profileId) }
         }
 
     private suspend fun ensureMigrated(scope: Scope, store: DataStore<Preferences>, isCurrent: suspend () -> Boolean = { true }) {
@@ -128,7 +139,7 @@ class AndroidPlayerSettingsStore(
     }
 
     private suspend fun migrateLegacyCache(scope: Scope, store: DataStore<Preferences>, isCurrent: suspend () -> Boolean) {
-        val token = scope.profileId + "/" + scope.migrationSentinel
+        val token = scope.storeName + "/" + scope.migrationSentinel
         if (synchronized(migrationDone) { token in migrationDone }) return
         val sentinelKey = booleanPreferencesKey(scope.migrationSentinel)
         val current = store.data.first()
@@ -162,7 +173,7 @@ class AndroidPlayerSettingsStore(
      * the user set until a canonical refresh happens to land.
      */
     private suspend fun migrateRenamedKeys(scope: Scope, store: DataStore<Preferences>, isCurrent: suspend () -> Boolean) {
-        val token = scope.profileId + "/" + scope.renameSentinel
+        val token = scope.storeName + "/" + scope.renameSentinel
         if (synchronized(migrationDone) { token in migrationDone }) return
         val sentinelKey = booleanPreferencesKey(scope.renameSentinel)
         val current = store.data.first()
@@ -225,7 +236,7 @@ class AndroidPlayerSettingsStore(
             if (scope == null) {
                 flowOf(default)
             } else {
-                val store = storeFor(scope.profileId)
+                val store = storeFor(scope)
                 flow {
                     ensureMigrated(scope, store)
                     emitAll(store.data.map { read(it, scope) })
@@ -256,12 +267,48 @@ class AndroidPlayerSettingsStore(
                 )
         }
 
+    /**
+     * Whether the active server's manifest defines
+     * `playback.buffering_quality_mode`: null until its manifest is read.
+     */
+    private val bufferingQualityModeDefined: Flow<Boolean?> =
+        if (contractRevision == null) {
+            flowOf(true)
+        } else {
+            combine(currentScopeFlow, contractRevision.known) { scope, _ ->
+                scope?.let { contractRevision.stores(it.serverUrl, PlaybackSettingsKeys.BufferingQualityMode) }
+            }.distinctUntilChanged()
+        }
+
+    // No legacy boolean behind this one: an absent or unknown value is the
+    // contract default. Until the server's manifest is read, the last mode
+    // seen here applies; a server without the setting plays the default, and
+    // nothing on this device stands in for it.
+    override val bufferingQualityModeFlow: Flow<BufferingQualityMode> =
+        combine(
+            profileScopedFlow(BufferingQualityMode.Default) { p, s ->
+                BufferingQualityMode.fromWire(p.stringFor(s, PlaybackSettingsKeys.BufferingQualityMode, ""))
+                    ?: BufferingQualityMode.Default
+            },
+            bufferingQualityModeDefined,
+        ) { mode, defined -> if (defined == false) BufferingQualityMode.Default else mode }
+            .distinctUntilChanged()
+
+    override val bufferingQualityModeSupportedFlow: Flow<Boolean> =
+        bufferingQualityModeDefined.map { it == true }.distinctUntilChanged()
+
     // ---- Booleans ------------------------------------------------------
     override val autoSkipCreditsFlow: Flow<Boolean> =
         profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.AutoSkipCredits, false) }
 
     override val autoPlayNextFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.AutoPlayNext, true) }
+
+    override val themeMusicEnabledFlow: Flow<Boolean> =
+        profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.ThemeMusicEnabled, false) }
+
+    override val themeMusicLoopFlow: Flow<Boolean> =
+        profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.ThemeMusicLoop, false) }
 
     override val hdrEnabledFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.HdrEnabled, true) }
@@ -444,6 +491,18 @@ class AndroidPlayerSettingsStore(
             }.distinctUntilChanged()
         }
 
+    // Unknown revision counts as profile, as text opacity does: the flusher
+    // holds the write until the revision is known.
+    override val subtitleSyncSavedToProfileFlow: Flow<Boolean> =
+        if (contractRevision == null) {
+            subtitleUsesDeviceOverrideFlow.map { !it }
+        } else {
+            combine(subtitleUsesDeviceOverrideFlow, currentScopeFlow, contractRevision.known) { deviceOnly, scope, _ ->
+                !deviceOnly &&
+                    scope?.let { contractRevision.storesPerProfile(it.serverUrl, PlaybackSettingsKeys.SubtitleSyncMs) } != false
+            }.distinctUntilChanged()
+        }
+
     override suspend fun setSubtitleMatchesDevice(enabled: Boolean) =
         writeBoolLocal(PlaybackSettingsKeys.SubtitleMatchesDevice, enabled)
 
@@ -464,11 +523,36 @@ class AndroidPlayerSettingsStore(
     override suspend fun setIntroSkipMode(value: IntroSkipMode) =
         writeString(PlaybackSettingsKeys.IntroSkipMode, value.wireValue)
 
+    /**
+     * Settings offers this only while the server's manifest defines the key
+     * ([bufferingQualityModeSupportedFlow]). Like [setCellularQuality] it is
+     * marked unconfirmed, so a write the flusher held while the manifest was
+     * unknown is sent again by the first refresh rather than replaced with
+     * the server's default.
+     */
+    override suspend fun setBufferingQualityMode(value: BufferingQualityMode) {
+        val key = PlaybackSettingsKeys.BufferingQualityMode
+        withScope { scope, store ->
+            store.edit {
+                it[stringPreferencesKey(scope.keyPrefix + key)] = value.wireValue
+                markDeviceOverride(it, scope, key)
+                it[unconfirmedKeysKey(scope)] = it[unconfirmedKeysKey(scope)].orEmpty() + key
+            }
+            serverSettingsFlusher.enqueue(scope.profileId, key, value.wireValue, scope.serverUrl, scope.authority)
+        }
+    }
+
     override suspend fun setAutoSkipCredits(value: Boolean) =
         writeBool(PlaybackSettingsKeys.AutoSkipCredits, value)
 
     override suspend fun setAutoPlayNext(value: Boolean) =
         writeBool(PlaybackSettingsKeys.AutoPlayNext, value)
+
+    override suspend fun setThemeMusicEnabled(value: Boolean) =
+        writeBool(PlaybackSettingsKeys.ThemeMusicEnabled, value)
+
+    override suspend fun setThemeMusicLoop(value: Boolean) =
+        writeBool(PlaybackSettingsKeys.ThemeMusicLoop, value)
 
     override suspend fun setHdrEnabled(value: Boolean) =
         writeBool(PlaybackSettingsKeys.HdrEnabled, value)
@@ -527,8 +611,68 @@ class AndroidPlayerSettingsStore(
     override suspend fun setAudioSyncMs(value: Int) =
         writeInt(PlaybackSettingsKeys.AudioSyncMs, value.coerceIn(-5000, 5000))
 
-    override suspend fun setSubtitleSyncMs(value: Int) =
-        writeInt(PlaybackSettingsKeys.SubtitleSyncMs, value.coerceIn(-10000, 10000))
+    /**
+     * Subtitle timing follows the subtitle appearance's scope: the profile's
+     * value unless this device keeps its own subtitles ("Only on This
+     * Device"). A server below [PlaybackSettingsKeys.SubtitleSyncProfileMinRevision]
+     * only stores it per device ([SettingsContractRevision.storesPerProfile]),
+     * so there it stays a device value — decided here when the revision is
+     * already known and by the flusher otherwise.
+     */
+    override suspend fun setSubtitleSyncMs(value: Int) {
+        val clamped = value.coerceIn(-10000, 10000)
+        withScope { scope, store ->
+            val profileUnsupported = keptPerDeviceOnly(scope, PlaybackSettingsKeys.SubtitleSyncMs)
+            store.edit { prefs ->
+                prefs[intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleSyncMs)] = clamped
+                enqueueSubtitleScoped(
+                    prefs, scope, PlaybackSettingsKeys.SubtitleSyncMs, clamped.toString(),
+                    deviceOnly = profileUnsupported,
+                )
+            }
+        }
+    }
+
+    /**
+     * Whether [scope]'s server is already known to store [key] per device
+     * only, without probing. Unknown counts as not: the flusher holds the
+     * write until the revision is known.
+     */
+    private fun keptPerDeviceOnly(scope: Scope, key: String): Boolean =
+        contractRevision?.storesPerProfile(scope.serverUrl, key) == false
+
+    /**
+     * Queues a subtitle setting at the scope the "Only on This Device" toggle
+     * names: this device's own row while it is on (or when [deviceOnly] says
+     * the server cannot store it per profile), otherwise the profile's.
+     *
+     * A profile save also clears a device row this device still holds for
+     * [key], so the value just saved is the one that shows here rather than a
+     * stale device value that outranks it.
+     *
+     * Called inside the edit transaction that wrote the value, so writes
+     * enqueue in commit order.
+     */
+    private fun enqueueSubtitleScoped(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        scope: Scope,
+        key: String,
+        value: String,
+        deviceOnly: Boolean = false,
+    ) {
+        val usesDevice = deviceOnly || prefs.boolFor(scope, PlaybackSettingsKeys.SubtitleUsesDeviceOverride, false)
+        if (usesDevice) {
+            markDeviceOverride(prefs, scope, key)
+            serverSettingsFlusher.enqueue(scope.profileId, key, value, scope.serverUrl, scope.authority, SettingWriteScope.Device)
+        } else {
+            val staleDeviceRow = key in prefs[deviceOverridesKey(scope)].orEmpty()
+            clearDeviceOverride(prefs, scope, key)
+            serverSettingsFlusher.enqueue(
+                scope.profileId, key, value, scope.serverUrl, scope.authority,
+                SettingWriteScope.Profile(clearDevice = staleDeviceRow),
+            )
+        }
+    }
 
     override suspend fun setNextUpPromptSeconds(value: Int) =
         writeInt(PlaybackSettingsKeys.NextUpPromptSeconds, value.coerceIn(0, 120))
@@ -634,6 +778,9 @@ class AndroidPlayerSettingsStore(
     // `edit` returns would let two concurrent edits enqueue in the opposite
     // order to the one they committed in, and the server would keep the
     // older composite.
+    //
+    // The edit starts from the appearance on screen and saves to the profile
+    // unless "Only on This Device" is on ([enqueueSubtitleScoped]).
     override suspend fun updateSubtitleAppearance(transform: (SubtitleAppearance) -> SubtitleAppearance) {
         withScope { scope, store ->
             store.edit { prefs ->
@@ -646,11 +793,10 @@ class AndroidPlayerSettingsStore(
                 // than left behind: they are read back as an overlay, so a
                 // stale field would resurrect the value the user just replaced.
                 writeGranularAppearance(prefs, scope, sanitized)
-                // Setting an explicit appearance implicitly enables the
-                // device override (matches iOS `setSubtitleAppearance`).
-                prefs[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = true
-                markDeviceOverride(prefs, scope, PlaybackSettingsKeys.SubtitleAppearance)
-                serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
+                // An edit no longer turns on the device override: appearance
+                // is a profile preference, and only the explicit toggle keeps
+                // a device's own.
+                enqueueSubtitleScoped(prefs, scope, PlaybackSettingsKeys.SubtitleAppearance, json)
             }
         }
     }
@@ -674,8 +820,7 @@ class AndroidPlayerSettingsStore(
                 if (prefs.stringFor(scope, PlaybackSettingsKeys.SubtitleAppearance, "") == json) return@edit
                 prefs[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleAppearance)] = json
                 prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = json
-                markDeviceOverride(prefs, scope, PlaybackSettingsKeys.SubtitleAppearance)
-                serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
+                enqueueSubtitleScoped(prefs, scope, PlaybackSettingsKeys.SubtitleAppearance, json)
             }
         }
     }
@@ -724,7 +869,7 @@ class AndroidPlayerSettingsStore(
         }
         runCatching { serverSettingsFlusher.flushNow() }
         if (pinned != null) {
-            return applyServerEffective(repo, pinned, storeFor(pinned.profileId), pinned.authority) { isStillCurrent(pinned) }
+            return applyServerEffective(repo, pinned, storeFor(pinned), pinned.authority) { isStillCurrent(pinned) }
         }
         var applied = false
         withScope { scope, store -> applied = applyServerEffective(repo, scope, store, authority = null) { true } }
@@ -766,7 +911,9 @@ class AndroidPlayerSettingsStore(
      */
     private suspend fun isStillCurrent(captured: Scope): Boolean {
         val now = currentScope() ?: return false
-        if (now.profileId != captured.profileId || now.serverUrl != captured.serverUrl || now.deviceId != captured.deviceId) {
+        if (now.profileId != captured.profileId || now.serverUrl != captured.serverUrl ||
+            now.deviceId != captured.deviceId || now.accountId != captured.accountId
+        ) {
             return false
         }
         val owner = captured.authority ?: return now.authority == null
@@ -777,24 +924,21 @@ class AndroidPlayerSettingsStore(
     }
 
     /**
-     * [RemoteDeviceSettings] less the keys newer than the server at
-     * [serverUrl] is known to store. A server answers a batched read that
-     * names a key its contract lacks with 404 for the whole batch, so a key
-     * from a later revision ([CellularQuality]) is asked for only once the
-     * revision is known to include it. Until then its local value stands.
+     * [RemoteDeviceSettings] less the keys the server at [serverUrl] is not
+     * known to store. A server answers a batched read that names a key its
+     * contract lacks with 404 for the whole batch, so a key some servers lack
+     * ([SettingsContractRevision.stores]) is asked for only once the server is
+     * known to have it. Until then its local value stands.
      */
     private suspend fun remoteKeysStoredBy(serverUrl: String): List<String> {
         val tracker = contractRevision ?: return RemoteDeviceSettings
-        val revision = runCatching { tracker.revisionFor(serverUrl) }.getOrNull()
-        return RemoteDeviceSettings.filter { key ->
-            val needed = CellularQuality.minimumRevision(key) ?: return@filter true
-            revision != null && revision >= needed
-        }
+        runCatching { tracker.revisionFor(serverUrl) }
+        return RemoteDeviceSettings.filter { key -> tracker.stores(serverUrl, key) == true }
     }
 
     /**
-     * Keys the server at [serverUrl] is not known to store: the revision last
-     * read for it is older than the key, or none has been read. "Use profile
+     * Keys the server at [serverUrl] is not known to store: what was last
+     * read for it lacks the key, or nothing has been read. "Use profile
      * setting" for one of them clears the local value, so the contract
      * default applies, as the setting would on a server that had no rows for
      * it. Kept, the value would outlive the reset: an older server drops the
@@ -806,11 +950,7 @@ class AndroidPlayerSettingsStore(
      */
     private fun keysUnstoredBy(serverUrl: String): Set<String> {
         val tracker = contractRevision ?: return emptySet()
-        val revision = tracker.known.value?.takeIf { it.serverUrl == serverUrl }?.manifestRevision
-        return RemoteDeviceSettings.filterTo(mutableSetOf()) { key ->
-            val needed = CellularQuality.minimumRevision(key) ?: return@filterTo false
-            revision == null || revision < needed
-        }
+        return RemoteDeviceSettings.filterTo(mutableSetOf()) { key -> tracker.stores(serverUrl, key) != true }
     }
 
     private fun removeLocalValue(
@@ -826,6 +966,11 @@ class AndroidPlayerSettingsStore(
         }
     }
 
+    /**
+     * "Only on This Device". On pins the appearance on screen to this device
+     * (Apple parity), and later subtitle edits — appearance and timing — stay
+     * here. Off deletes this device's rows so the profile's values apply again.
+     */
     override suspend fun setSubtitleDeviceOverrideEnabled(enabled: Boolean) {
         withScope { scope, store ->
             val snapshot = store.data.first()
@@ -833,11 +978,7 @@ class AndroidPlayerSettingsStore(
             if (current == enabled) return@withScope
 
             if (enabled) {
-                val appearance = SubtitleAppearance.decode(
-                    snapshot[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)]
-                        ?: snapshot.stringFor(scope, PlaybackSettingsKeys.SubtitleAppearance, "")
-                )
-                val sanitized = appearance.sanitized()
+                val sanitized = snapshot.projectedAppearance(scope).sanitized()
                 val json = sanitized.toJsonString()
                 store.edit {
                     it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = true
@@ -863,6 +1004,22 @@ class AndroidPlayerSettingsStore(
                     }
                     it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = false
                     clearDeviceOverride(it, scope, PlaybackSettingsKeys.SubtitleAppearance)
+                    // Timing goes back to the profile's too — but only where
+                    // the server can hold it per profile; below that revision
+                    // this device's row is the only timing there is. An
+                    // unknown revision queues a clear the flusher holds until
+                    // the revision is known, so going offline cannot lose it.
+                    // Read and queued in this transaction, so a timing edit
+                    // made after the toggle-off is never cleared by it.
+                    val timingOnDevice = PlaybackSettingsKeys.SubtitleSyncMs in it[deviceOverridesKey(scope)].orEmpty()
+                    val timingDeviceOnly = keptPerDeviceOnly(scope, PlaybackSettingsKeys.SubtitleSyncMs)
+                    if (timingOnDevice && !timingDeviceOnly) {
+                        clearDeviceOverride(it, scope, PlaybackSettingsKeys.SubtitleSyncMs)
+                        serverSettingsFlusher.enqueueDelete(
+                            scope.profileId, PlaybackSettingsKeys.SubtitleSyncMs, scope.serverUrl, scope.authority,
+                            onlyWhereStoredPerProfile = true,
+                        )
+                    }
                 }
                 serverSettingsFlusher.enqueueDelete(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, scope.serverUrl, scope.authority)
                 serverSettingsFlusher.flushNow()
@@ -1144,8 +1301,8 @@ class AndroidPlayerSettingsStore(
         if (!current()) return false
         val profileId = authority.profileId ?: return false
         val deviceId = getDeviceId()?.takeIf { it.isNotBlank() } ?: return false
-        val scope = Scope(profileId, authority.serverUrl, deviceId, authority)
-        val store = storeFor(profileId)
+        val scope = Scope(profileId, authority.serverUrl, deviceId, authority, authority.accountId)
+        val store = storeFor(scope)
         if (!current()) return false
         ensureMigrated(scope, store, ::current)
         for ((key, raw) in values) {
@@ -1209,7 +1366,7 @@ class AndroidPlayerSettingsStore(
         block: (scope: Scope, store: DataStore<Preferences>) -> Unit,
     ) {
         val scope = currentScope() ?: return
-        val store = storeFor(scope.profileId)
+        val store = storeFor(scope)
         ensureMigrated(scope, store)
         block(scope, store)
     }
@@ -1277,10 +1434,10 @@ class AndroidPlayerSettingsStore(
          */
         const val DEVICE_OVERRIDE_KEYS = "device_override_keys"
         /**
-         * Local-only: keys from a later contract revision ([CellularQuality])
+         * Local-only: keys some servers lack ([SettingsContractRevision.stores])
          * this device set but no refresh has yet shown stored for it. The
-         * flusher drops them for an older server; this is what sends them
-         * once the server can store them.
+         * flusher drops them for an older server; this is what sends them once
+         * the server can store them.
          */
         const val UNCONFIRMED_GATED_KEYS = "unconfirmed_gated_keys"
         const val MIGRATION_SENTINEL_LEGACY = "migration_v1"
@@ -1334,8 +1491,11 @@ class AndroidPlayerSettingsStore(
         fun isIntKey(key: String): Boolean = key in INT_KEYS
         fun isDoubleKey(key: String): Boolean = key in DOUBLE_KEYS
 
-        fun fileNameFor(profileId: String): String =
-            "silo_player_settings_${profileHash(profileId)}"
+        /** Per (account, profile); `AccountLocalData` adopts and purges these files. */
+        const val FILE_BASE = "silo_player_settings"
+
+        fun fileNameFor(accountId: String?, profileId: String): String =
+            AccountScopedKeys.profileFileName(FILE_BASE, accountId, profileHash(profileId))
 
         fun profileHash(profileId: String): String =
             sha256Hex(profileId).take(16)

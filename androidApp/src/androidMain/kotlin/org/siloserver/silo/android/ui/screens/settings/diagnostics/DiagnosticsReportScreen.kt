@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -43,6 +44,11 @@ import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploadDecision
+import org.siloserver.silo.common.diagnostics.diagnosticsReportStateLabel
+import org.siloserver.silo.common.diagnostics.diagnosticsSizeLabel
+import org.siloserver.silo.common.diagnostics.diagnosticsUploadNotice
+import org.siloserver.silo.common.diagnostics.diagnosticsUploadStatusLabel
+import org.siloserver.silo.common.R as CommonR
 
 @Composable
 fun DiagnosticsReportScreen(
@@ -56,12 +62,12 @@ fun DiagnosticsReportScreen(
     var uploading by remember { mutableStateOf(false) }
     var sentShortId by remember { mutableStateOf<String?>(null) }
     var sentState by remember { mutableStateOf("processing") }
-    var uploadNotice by remember { mutableStateOf<String?>(null) }
+    var uploadNotice by remember { mutableStateOf<DiagnosticsUploadDecision?>(null) }
     var uploadNoticeIsError by remember { mutableStateOf(true) }
     Scaffold(
         topBar = {
             SiloTopBar(
-                title = "Report details",
+                title = stringResource(CommonR.string.diagnostics_report_title),
                 onBackClick = onBackClick,
                 containerColor = SiloSettingsBackground,
             )
@@ -86,10 +92,10 @@ fun DiagnosticsReportScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.size(12.dp))
-                        Text("Sending report…")
+                        Text(stringResource(CommonR.string.diagnostics_report_sending))
                     }
                 } else {
-                    Text("This report is no longer on this device.")
+                    Text(stringResource(CommonR.string.diagnostics_report_gone))
                 }
             }
             else -> LazyColumn(
@@ -103,26 +109,41 @@ fun DiagnosticsReportScreen(
                             Text(report.type.displayName(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                             Text(report.capturedAt, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(12.dp))
-                            DetailLine("Evidence", formatDiagnosticBytes(report.evidenceBytes))
                             DetailLine(
-                                "Destination",
+                                stringResource(CommonR.string.diagnostics_report_evidence),
+                                diagnosticsSizeLabel(report.evidenceBytes),
+                            )
+                            DetailLine(
+                                stringResource(CommonR.string.diagnostics_row_destination),
                                 if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
-                                    "Silo Diagnostics"
+                                    stringResource(CommonR.string.diagnostics_destination_hosted)
                                 } else {
                                     report.destinationServerInstanceId
                                 },
                             )
                             if (report.destinationKind == DiagnosticsDestinationKind.SELF_HOSTED) {
-                                DetailLine("Captured profile", report.capturedProfileId ?: "Account scoped")
+                                DetailLine(
+                                    stringResource(CommonR.string.diagnostics_report_capturedProfile),
+                                    report.capturedProfileId
+                                        ?: stringResource(CommonR.string.diagnostics_report_accountScoped),
+                                )
                             }
-                            DetailLine("Expires", formatDiagnosticDate(report.expiresAtEpochMs))
-                            DetailLine("Upload state", report.uploadStatus.name.lowercase().replace('_', ' '))
-                            report.uploadErrorCode?.let { DetailLine("Last error", it) }
+                            DetailLine(
+                                stringResource(CommonR.string.diagnostics_report_expires),
+                                formatDiagnosticDate(report.expiresAtEpochMs),
+                            )
+                            DetailLine(
+                                stringResource(CommonR.string.diagnostics_report_uploadState),
+                                diagnosticsUploadStatusLabel(report.uploadStatus),
+                            )
+                            report.uploadErrorCode?.let {
+                                DetailLine(stringResource(CommonR.string.diagnostics_report_lastError), it)
+                            }
                         }
                     }
                 }
                 item {
-                    SettingsSection(title = "Archive entries") {
+                    SettingsSection(title = stringResource(CommonR.string.diagnostics_report_archiveEntries)) {
                         report.archiveEntries.forEach { entry ->
                             Text(
                                 entry,
@@ -140,14 +161,14 @@ fun DiagnosticsReportScreen(
                                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.size(12.dp))
                                 Text(
-                                    "Sending report…",
+                                    stringResource(CommonR.string.diagnostics_report_sending),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
-                        uploadNotice?.let { notice ->
+                        uploadNotice?.let { decision ->
                             Text(
-                                notice,
+                                diagnosticsUploadNotice(decision),
                                 color = if (uploadNoticeIsError) {
                                     MaterialTheme.colorScheme.error
                                 } else {
@@ -170,22 +191,32 @@ fun DiagnosticsReportScreen(
                                             }
                                             is DiagnosticsUploadDecision.HostedProcessing -> {
                                                 uploadNoticeIsError = false
-                                                uploadNotice = uploadKeptMessage(decision)
+                                                uploadNotice = decision
                                             }
                                             else -> {
                                                 uploadNoticeIsError = true
-                                                uploadNotice = uploadKeptMessage(decision)
+                                                uploadNotice = decision
                                             }
                                         }
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
-                            ) { Text(if (uploading) "Sending…" else "Send") }
+                            ) {
+                                Text(
+                                    stringResource(
+                                        if (uploading) {
+                                            CommonR.string.settings_diagnostics_sending
+                                        } else {
+                                            CommonR.string.diagnostics_consent_confirm
+                                        },
+                                    ),
+                                )
+                            }
                             OutlinedButton(
                                 enabled = !uploading,
                                 onClick = { confirmDelete = true },
                                 modifier = Modifier.weight(1f),
-                            ) { Text("Delete") }
+                            ) { Text(stringResource(CommonR.string.diagnostics_erase_confirm)) }
                         }
                     }
                 }
@@ -195,14 +226,15 @@ fun DiagnosticsReportScreen(
 
     if (confirmDelete && report != null) {
         SiloConfirmDialog(
-            title = "Delete this report?",
-            body = if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
-                "The local evidence will be removed from this device. If this report was already " +
-                    "submitted, its copy in Silo Diagnostics will also be permanently deleted."
-            } else {
-                "The local evidence will be permanently removed from this device."
-            },
-            confirmLabel = "Delete",
+            title = stringResource(CommonR.string.diagnostics_report_deleteTitle),
+            body = stringResource(
+                if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                    CommonR.string.diagnostics_report_deleteHostedBody
+                } else {
+                    CommonR.string.diagnostics_report_deleteLocalBody
+                },
+            ),
+            confirmLabel = stringResource(CommonR.string.diagnostics_erase_confirm),
             onConfirm = {
                 confirmDelete = false
                 viewModel.delete(report.id, onBackClick)
@@ -223,55 +255,36 @@ private fun DiagnosticsSentConfirmation(
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(18.dp)) {
         SettingsSectionCard {
             Column(Modifier.padding(16.dp)) {
-                Text("Report sent", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(stringResource(CommonR.string.diagnostics_report_sent), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Reference ID", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(CommonR.string.diagnostics_report_referenceId), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         Text(shortId, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.titleMedium)
                     }
                     IconButton(onClick = { clipboard.setText(AnnotatedString(shortId)) }) {
                         Icon(
                             imageVector = Icons.Outlined.ContentCopy,
-                            contentDescription = "Copy reference ID",
+                            contentDescription = stringResource(CommonR.string.diagnostics_copyReferenceId),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                DetailLine("Processing state", state.replace('_', ' '))
+                DetailLine(
+                    stringResource(CommonR.string.diagnostics_report_processingState),
+                    diagnosticsReportStateLabel(state),
+                )
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    "The report was removed from this device after the destination accepted a copy. " +
-                        "Share the reference ID with Silo Diagnostics or your server admin.",
+                    stringResource(CommonR.string.diagnostics_report_sentBody),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
         }
-        Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+        Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text(stringResource(CommonR.string.common_done)) }
     }
-}
-
-internal fun uploadKeptMessage(decision: DiagnosticsUploadDecision): String = when (decision) {
-    DiagnosticsUploadDecision.KeptUncertain -> "The server may have received this report. It has been kept on this device and will not be sent again."
-    is DiagnosticsUploadDecision.Uploaded -> "" // handled by the caller
-    is DiagnosticsUploadDecision.HostedProcessing ->
-        "Report ${decision.shortId} was accepted and is still processing. It will be checked again automatically."
-    DiagnosticsUploadDecision.KeptRetryable ->
-        "The upload didn't go through. The report stays on this device to try again later."
-    DiagnosticsUploadDecision.KeptIdentityChanged ->
-        "Sign-in changed during the upload. The report stays on this device."
-    DiagnosticsUploadDecision.KeptTooLarge ->
-        "This report is larger than the server accepts."
-    DiagnosticsUploadDecision.KeptServerUpdateRequired ->
-        "Your server needs an update to accept this report."
-    DiagnosticsUploadDecision.KeptUnavailable ->
-        "Diagnostics uploads aren't available right now. The report stays on this device."
-    DiagnosticsUploadDecision.KeptInvalid ->
-        "This report couldn't be read and can't be sent."
-    DiagnosticsUploadDecision.KeptConsentReviewRequired ->
-        "The server's consent notice changed. Review it and send again."
 }
 
 @Composable

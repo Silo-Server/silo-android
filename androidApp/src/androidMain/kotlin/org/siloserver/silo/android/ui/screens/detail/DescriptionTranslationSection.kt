@@ -10,8 +10,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.MachineTranslatedLabel
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
 
@@ -28,27 +30,33 @@ fun DescriptionTranslationSection(
     modifier: Modifier = Modifier,
 ) {
     when (phase) {
-        DescriptionTranslationPhase.Translating -> Row(
-            modifier = modifier,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(14.dp),
-                strokeWidth = 2.dp,
-            )
-            Text(
-                text = "Translating description…",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        DescriptionTranslationPhase.Translating -> TranslatingDescriptionLabel(modifier)
         DescriptionTranslationPhase.Failed -> TextButton(onClick = onTranslate, modifier = modifier) {
-            Text("Translation failed — retry")
+            Text(stringResource(CommonR.string.detail_translation_failedRetry))
         }
         DescriptionTranslationPhase.Idle -> TextButton(onClick = onTranslate, modifier = modifier) {
-            Text("Translate description")
+            Text(stringResource(CommonR.string.detail_translation_translateDescription))
         }
+    }
+}
+
+/** "Translating description…" progress under an overview. */
+@Composable
+fun TranslatingDescriptionLabel(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(14.dp),
+            strokeWidth = 2.dp,
+        )
+        Text(
+            text = stringResource(CommonR.string.detail_translation_translatingDescription),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

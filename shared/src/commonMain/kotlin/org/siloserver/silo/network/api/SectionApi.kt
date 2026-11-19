@@ -14,14 +14,17 @@ import org.siloserver.silo.network.apiv2.*
 /** Home and library section reads are viewer-scoped v2 transports; DI supplies the real token manager. */
 class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client, ApiV2Gate.Unrestricted),
     private val sectionItems: LibrarySectionItemsV2Api = LibrarySectionItemsV2Api(client, TokenManagerImpl(), ApiV2Gate.Unrestricted),
-    private val home: HomeSectionsV2Api = HomeSectionsV2Api(client, TokenManagerImpl(), ApiV2Gate.Unrestricted)) {
+    private val home: HomeSectionsV2Api = HomeSectionsV2Api(client, TokenManagerImpl(), ApiV2Gate.Unrestricted),
+    private val rowItemLimit: SectionRowItemLimit = SectionRowItemLimit.Unsupported) {
 
     // --- Home ---
 
     suspend fun captureHomeAuthority() = home.capture()
     suspend fun isHomeAuthorityCurrent(owner: AuthScopeSnapshot) = home.current(owner)
     suspend fun getHomeSections(owner: AuthScopeSnapshot, widths: ArtworkWidths? = null): ApiResult<SectionsResponse> =
-        home.list(owner, widths)
+        rowItemLimit.read(owner) { limit -> home.list(owner, widths, limit) }
+
+    suspend fun getHomeLayout(owner: AuthScopeSnapshot): ApiResult<List<HomeLayoutRow>> = home.layout(owner)
 
     suspend fun getHomeSectionItems(id: String, owner: AuthScopeSnapshot,
         widths: ArtworkWidths? = null): ApiResult<HomeSectionItemsResponse> = home.section(id, owner, widths)
@@ -32,7 +35,8 @@ class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
     // --- Library Sections ---
 
     suspend fun getLibrarySections(libraryId: Int, owner: AuthScopeSnapshot,
-        widths: ArtworkWidths? = null): ApiResult<SectionsResponse> = sectionItems.list(libraryId, owner, widths)
+        widths: ArtworkWidths? = null): ApiResult<SectionsResponse> =
+        rowItemLimit.read(owner) { limit -> sectionItems.list(libraryId, owner, widths, limit) }
 
     suspend fun captureLibrarySectionAuthority() = sectionItems.capture()
     suspend fun isLibrarySectionAuthorityCurrent(owner: AuthScopeSnapshot) = sectionItems.current(owner)
@@ -44,12 +48,26 @@ class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
      * profile overrides, so callers must not refill a `customized` or `is_custom` section through it.
      */
     suspend fun getLibrarySectionCatalogItems(libraryId: Int, sectionId: String,
-        owner: AuthScopeSnapshot, continuation: CatalogContinuationV2?, widths: ArtworkWidths? = null): ApiResult<CatalogResponse> {
-        if (!sectionItems.current(owner)) return identityChanged()
-        val result = v2.browse(CatalogQueryV2(source = "section", scope = "library",
-            libraryId = libraryId.toString(), sectionId = sectionId, limit = 100), continuation, widths = widths)
+        owner: AuthScopeSnapshot, continuation: CatalogContinuationV2?, widths: ArtworkWidths? = null): ApiResult<CatalogResponse> =
+        getSectionCatalogItems(libraryId, sectionId, owner, continuation, limit = 100, widths = widths)
+
+    /**
+     * Pages a row's full list through `GET /api/v2/catalog?source=section`: the
+     * Home row when [libraryId] is null, else that library's row. The read is
+     * dropped as `identity_changed` if [owner] stops being the acting profile
+     * before or after the exchange, as the row reads are. A row the profile
+     * can no longer see answers 404.
+     */
+    suspend fun getSectionCatalogItems(libraryId: Int?, sectionId: String, owner: AuthScopeSnapshot,
+        continuation: CatalogContinuationV2?, limit: Int = 50, widths: ArtworkWidths? = null): ApiResult<CatalogResponse> {
+        suspend fun current() = if (libraryId == null) home.current(owner) else sectionItems.current(owner)
+        if (sectionId.isBlank() || (libraryId != null && libraryId <= 0))
+            return ApiResult.Error(422, "validation_failed", "Invalid section.")
+        if (!current()) return identityChanged()
+        val result = v2.browse(CatalogQueryV2(source = "section", scope = if (libraryId == null) "home" else "library",
+            libraryId = libraryId?.toString(), sectionId = sectionId, limit = limit), continuation, widths = widths)
             .map { it.toCatalogResponse() }
-        if (!sectionItems.current(owner)) return identityChanged()
+        if (!current()) return identityChanged()
         return result
     }
 

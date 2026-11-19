@@ -6,6 +6,7 @@ import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSourceException
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlaybackException
@@ -15,6 +16,7 @@ import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import java.io.IOException
 import java.net.SocketTimeoutException
+import javax.net.ssl.SSLException
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -113,7 +115,7 @@ class PlaybackErrorDiagnosticsTest {
 
         val line = lines.single()
         val json = Json.parseToJsonElement(line).jsonObject
-        assertEquals("media load error (media video, http 410, InvalidResponseCodeException, IOException)", json.message())
+        assertEquals("media load error (media video, ERROR_CODE_IO_BAD_HTTP_STATUS, http 410, InvalidResponseCodeException, IOException)", json.message())
         val attrs = json.attrs()
         assertEquals("media", attrs.text("data_type"))
         assertEquals("video", attrs.text("track_type"))
@@ -139,7 +141,7 @@ class PlaybackErrorDiagnosticsTest {
         val line = lines.single()
         val json = Json.parseToJsonElement(line).jsonObject
         assertEquals(
-            "media load error (manifest unknown, HttpDataSourceException, SocketTimeoutException, canceled)",
+            "media load error (manifest unknown, ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT, HttpDataSourceException, SocketTimeoutException, canceled)",
             json.message(),
         )
         assertEquals(false, json.attrs().containsKey("http_status"))
@@ -175,9 +177,31 @@ class PlaybackErrorDiagnosticsTest {
         )
         val attrs = json.attrs()
         assertEquals(1_048_576L, attrs.getValue("bytes_loaded").jsonPrimitive.long)
-        assertEquals(3_145_728L, attrs.getValue("resume_offset").jsonPrimitive.long)
+        assertEquals(2_097_152L, attrs.getValue("resume_offset").jsonPrimitive.long)
         assertEquals(1L, attrs.getValue("attempt").jsonPrimitive.long)
         assertEquals(1_000L, attrs.getValue("retry_delay_ms").jsonPrimitive.long)
+        assertNoPrivateStreamDetail(line)
+    }
+
+    @Test
+    fun loadErrorKeepsTheDataSourceErrorCode() {
+        SiloLog.installSink { lines += it }
+        val error = DataSourceException(
+            SSLException("handshake failed for $STREAM_URL"),
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+        )
+
+        DiagnosticsPlaybackLogger.loadError(
+            mediaLoadErrorDiagnosticsDetail(MediaLoadData(C.DATA_TYPE_MEDIA), error, wasCanceled = false),
+        )
+
+        val line = lines.single()
+        val json = Json.parseToJsonElement(line).jsonObject
+        assertEquals(
+            "media load error (media unknown, ERROR_CODE_IO_NETWORK_CONNECTION_FAILED, DataSourceException, SSLException)",
+            json.message(),
+        )
+        assertEquals("ERROR_CODE_IO_NETWORK_CONNECTION_FAILED", json.attrs().text("error_name"))
         assertNoPrivateStreamDetail(line)
     }
 

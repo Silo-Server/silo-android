@@ -3,6 +3,7 @@ package org.siloserver.silo.common.player
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSourceException
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlaybackException
 import androidx.media3.exoplayer.mediacodec.MediaCodecDecoderException
@@ -46,6 +47,8 @@ internal fun mediaLoadErrorDiagnosticsDetail(
     return DiagnosticsLoadErrorDetail(
         dataType = mediaLoadData.dataType.dataTypeName(),
         trackType = mediaLoadData.trackType.diagnosticsTrackTypeName(),
+        errorCodeName = chain.firstNotNullOfOrNull { it as? DataSourceException }
+            ?.let { PlaybackException.getErrorCodeName(it.reason) },
         httpStatus = chain.httpStatus(),
         errorClass = error.diagnosticsClassName(),
         rootCauseClass = chain.rootCauseClassName(),

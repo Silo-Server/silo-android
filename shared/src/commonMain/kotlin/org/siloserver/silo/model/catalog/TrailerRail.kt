@@ -1,5 +1,8 @@
 package org.siloserver.silo.model.catalog
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+
 /**
  * One card in the detail page's "Trailers & More" rail: either a remote
  * provider video (YouTube) or a locally scanned extras file (trailer,
@@ -10,37 +13,54 @@ package org.siloserver.silo.model.catalog
  */
 sealed interface TrailerRailEntry {
     val key: String
-    val title: String
+
+    /** The video's own name, else a label for its [kind]. */
+    val title: UiText
     val kind: String
+
+    /**
+     * Card image: YouTube's still for a remote video, or the extra's own image
+     * (a sidecar beside its file, or a frame the server took). Null while a
+     * local extra has none.
+     */
+    val thumbnailUrl: String?
+
+    /** Placeholder hash shown while a local extra's image loads. */
+    val thumbhash: String?
 
     data class Remote(val video: ItemVideo) : TrailerRailEntry {
         override val key = "remote:${video.site}:${video.siteKey}"
-        override val title = video.name?.trim()?.takeIf { it.isNotEmpty() }
+        override val title = video.name?.trim()?.takeIf { it.isNotEmpty() }?.let(UiText::Raw)
             ?: extraKindLabel(video.kind)
         override val kind = video.kind
+        override val thumbnailUrl = youtubeThumbnailUrl(video.siteKey)
+        override val thumbhash: String? = null
     }
 
     data class Local(val extra: ItemExtra) : TrailerRailEntry {
         override val key = "local:${extra.contentId}"
-        override val title = extra.title?.trim()?.takeIf { it.isNotEmpty() }
+        override val title = extra.title?.trim()?.takeIf { it.isNotEmpty() }?.let(UiText::Raw)
             ?: extraKindLabel(extra.kind)
         override val kind = extra.kind
+        override val thumbnailUrl = extra.stillUrl
+        override val thumbhash = extra.stillThumbhash
     }
 }
 
 /**
  * Merge an item's remote videos and local extras into one ordered rail.
  *
- * Remote videos come first in server order (the server already sorts
- * trailers and official uploads first), then local extras in server order.
+ * Local extras come first in server order, because they play in Silo while
+ * remote videos hand off to YouTube. Remote videos follow in server order
+ * (the server already sorts trailers and official uploads first).
  * YouTube is the only remote site the clients can open, so other sites are
  * dropped rather than rendered as cards that do nothing.
  */
 fun trailerRailEntries(detail: ItemDetail): List<TrailerRailEntry> = buildList {
+    detail.extras.orEmpty().forEach { add(TrailerRailEntry.Local(it)) }
     detail.videos.orEmpty()
         .filter { it.site.equals("youtube", ignoreCase = true) && it.siteKey.isNotBlank() }
         .forEach { add(TrailerRailEntry.Remote(it)) }
-    detail.extras.orEmpty().forEach { add(TrailerRailEntry.Local(it)) }
 }.distinctBy(TrailerRailEntry::key)
 
 /** YouTube's still for a video. `hqdefault` exists for every upload. */
@@ -61,16 +81,22 @@ fun trailerRailDurationLabel(entry: TrailerRailEntry): String? {
     }
 }
 
-fun extraKindLabel(kind: String): String = when (kind.lowercase()) {
-    "trailer" -> "Trailer"
-    "teaser" -> "Teaser"
-    "featurette" -> "Featurette"
-    "behind_the_scenes", "behind-the-scenes" -> "Behind the Scenes"
-    "deleted_scene", "deleted-scene" -> "Deleted Scene"
-    "interview" -> "Interview"
+/**
+ * A label for an extra's kind. A kind Silo doesn't know shows as the server
+ * spells it, title-cased ("blooper_reel" reads "Blooper Reel").
+ */
+fun extraKindLabel(kind: String): UiText = when (kind.lowercase()) {
+    "trailer" -> UiText.Key(SharedString.ExtraTrailer)
+    "teaser" -> UiText.Key(SharedString.ExtraTeaser)
+    "featurette" -> UiText.Key(SharedString.ExtraFeaturette)
+    "behind_the_scenes", "behind-the-scenes" -> UiText.Key(SharedString.ExtraBehindTheScenes)
+    "deleted_scene", "deleted-scene" -> UiText.Key(SharedString.ExtraDeletedScene)
+    "interview" -> UiText.Key(SharedString.ExtraInterview)
     else -> kind.replace('_', ' ').replace('-', ' ').trim()
         .split(' ')
         .filter { it.isNotBlank() }
         .joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
-        .ifBlank { "Extra" }
+        .ifBlank { null }
+        ?.let(UiText::Raw)
+        ?: UiText.Key(SharedString.ExtraOther)
 }

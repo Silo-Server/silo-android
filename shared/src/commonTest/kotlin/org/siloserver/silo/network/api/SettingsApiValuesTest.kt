@@ -278,6 +278,22 @@ class SettingsApiValuesTest {
         assertIs<ApiResult.Error>(api.overlayConfig())
     }
 
+    @Test
+    fun `overlayConfig resolves image urls against the answering server`() = runTest {
+        val ref = "a".repeat(64) + ".webp"
+        val (api, _) = api(
+            responseBody = """
+                {"enabled":true,"defaults":"{\"preset\":\"classic\"}","images":[
+                 {"ref":"$ref","name":"4K","url":"/api/v2/overlay-images/$ref","width":300,"height":120}]}
+            """.trimIndent(),
+        )
+
+        val config = assertIs<ApiResult.Success<OverlayConfigResponse>>(api.overlayConfig()).data
+
+        assertEquals("""{"preset":"classic"}""", config.defaults)
+        assertEquals("https://example.invalid/api/v2/overlay-images/$ref", config.images.single().url)
+    }
+
     // ---- writes ----
 
     @Test

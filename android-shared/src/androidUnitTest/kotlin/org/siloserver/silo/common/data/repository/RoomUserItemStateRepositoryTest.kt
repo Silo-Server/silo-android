@@ -53,7 +53,7 @@ class RoomUserItemStateRepositoryTest {
         repo.resolve(watched, WriteOutcome.SYNCED)
         assertEquals(emptySet(), repo.contentIdsWithPendingOrNewerUserState(listOf("c1"), 2000L))
         assertEquals(setOf("c1"), repo.contentIdsWithPendingOrNewerUserState(listOf("c1"), 500L))
-        repo.recordPosition("c2", 7, 5.0, 60.0)
+        repo.recordDownload("c2", 7, 5.0, 60.0)
         assertEquals(setOf("c2"), repo.contentIdsWithPendingOrNewerUserState(listOf("c1", "c2"), 2000L))
         currentSnapshot = AuthScopeSnapshot("s1", "p2", "https://s1.example", "pt2")
         assertEquals(emptySet(), repo.contentIdsWithPendingOrNewerUserState(listOf("c1", "c2"), 0L))
@@ -65,8 +65,8 @@ class RoomUserItemStateRepositoryTest {
         val repository = RoomUserItemStateRepository(db, { currentSnapshot }, now = { time })
         val watched = repository.recordWatched("episode", true)
         repository.resolve(watched, WriteOutcome.SYNCED)
-        repository.recordPosition("episode", 7, 30.0, 60.0)
-        db.dirtyOperationDao().dueBatch("s1", "p1", 1000L, 10).forEach {
+        repository.recordDownload("episode", 7, 30.0, 60.0)
+        db.dirtyOperationDao().dueBatch("s1", "", "p1", 1000L, 10).forEach {
             repository.resolve(OutboxHandle(it.id), WriteOutcome.SYNCED)
         }
         time = 3000L
@@ -84,17 +84,17 @@ class RoomUserItemStateRepositoryTest {
     fun trackChoicesDoNotPreventWatchedResetsOrRejectedResetRecovery() = runTest {
         var time = 1000L
         val repository = RoomUserItemStateRepository(db, { currentSnapshot }, now = { time })
-        repository.recordPosition("episode", 7, 30.0, 60.0)
+        repository.recordDownload("episode", 7, 30.0, 60.0)
         time = 3000L
         repository.recordAudioTrackSelection("episode", 7, "audio")
         // A watched write admitted at 2000 must clear the older progress, even
         // though an unrelated track choice updated the row afterward.
-        db.userItemStateDao().clearPlaybackProgressBefore("s1", "p1", "episode", 2000L, 4000L)
+        db.userItemStateDao().clearPlaybackProgressBefore("s1", "", "p1", "episode", 2000L, 4000L)
         assertNull(repository.localPlaybackProgress("episode"))
         time = 5000L
         repository.recordSubtitleTrackSelection("episode", 7, "subtitle")
-        db.userItemStateDao().restorePlaybackProgressIfUnchanged("s1", "p1", "episode", 7, 30.0, 3000L, 1000L, 4000L)
-        val row = db.userItemStateDao().get("s1", "p1", "episode", 7)!!
+        db.userItemStateDao().restorePlaybackProgressIfUnchanged("s1", "", "p1", "episode", 7, 30.0, 3000L, 1000L, 4000L)
+        val row = db.userItemStateDao().get("s1", "", "p1", "episode", 7)!!
         assertEquals(30.0, row.positionSeconds)
         assertEquals("audio", row.audioFingerprint)
         assertEquals("subtitle", row.subtitleFingerprint)
@@ -105,17 +105,17 @@ class RoomUserItemStateRepositoryTest {
     @Test
     fun rowsWrittenBeforeThePositionTimestampKeepTheirGuards() = runTest {
         val repository = RoomUserItemStateRepository(db, { currentSnapshot }, now = { 1000L })
-        repository.recordPosition("episode", 7, 30.0, 60.0)
+        repository.recordDownload("episode", 7, 30.0, 60.0)
         val legacy = "UPDATE user_item_state SET positionUpdatedAtMs = NULL"
         db.openHelper.writableDatabase.execSQL(legacy)
         // A resume sample saved after the watched op was admitted survives its late acknowledgement.
-        db.userItemStateDao().clearPlaybackProgressBefore("s1", "p1", "episode", 500L, 2000L)
-        assertEquals(30.0, db.userItemStateDao().get("s1", "p1", "episode", 7)!!.positionSeconds)
+        db.userItemStateDao().clearPlaybackProgressBefore("s1", "", "p1", "episode", 500L, 2000L)
+        assertEquals(30.0, db.userItemStateDao().get("s1", "", "p1", "episode", 7)!!.positionSeconds)
         // A reset made before the upgrade is still undone when its op is rejected.
-        db.userItemStateDao().clearPlaybackProgress("s1", "p1", "episode", 4000L)
+        db.userItemStateDao().clearPlaybackProgress("s1", "", "p1", "episode", 4000L)
         db.openHelper.writableDatabase.execSQL(legacy)
-        db.userItemStateDao().restorePlaybackProgressIfUnchanged("s1", "p1", "episode", 7, 30.0, 1000L, null, 4000L)
-        assertEquals(30.0, db.userItemStateDao().get("s1", "p1", "episode", 7)!!.positionSeconds)
+        db.userItemStateDao().restorePlaybackProgressIfUnchanged("s1", "", "p1", "episode", 7, 30.0, 1000L, null, 4000L)
+        assertEquals(30.0, db.userItemStateDao().get("s1", "", "p1", "episode", 7)!!.positionSeconds)
     }
 
     @Test
@@ -123,12 +123,12 @@ class RoomUserItemStateRepositoryTest {
         val handle = repo.recordWatched("c1", watched = true)
         assertTrue(handle.opId >= 0)
 
-        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "c1")?.watched)
+        assertEquals(true, db.contentItemStateDao().get("s1", "", "p1", "c1")?.watched)
 
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(OutboxOperation.SET_WATCHED, op.opKind)
         assertNull(op.targetFileId)
-        assertEquals("s1|p1|c1|${OutboxOperation.SET_WATCHED}", op.coalesceKey)
+        assertEquals("s1||p1|c1|${OutboxOperation.SET_WATCHED}", op.coalesceKey)
     }
 
     @Test
@@ -147,9 +147,9 @@ class RoomUserItemStateRepositoryTest {
             error = "offline",
         )
 
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
 
-        val drained = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+        val drained = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 40_000L, limit = 10)
         assertEquals(
             listOf(OutboxOperation.SET_WATCHED, OutboxOperation.SET_POSITION),
             drained.map { it.opKind },
@@ -163,14 +163,14 @@ class RoomUserItemStateRepositoryTest {
     @Test
     fun watchedChangesClearResumeButPreserveFilePreferencesAndReadingState() = runTest {
         val location = "epubcfi(/6/4!/4)"
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
         repo.recordAudioTrackSelection("c1", fileId = 7, audioFingerprint = "audio")
         repo.recordSubtitleTrackSelection("c1", fileId = 7, subtitleFingerprint = "subtitle")
         repo.recordEbookProgress("c1", fileId = 7, location = location, progress = 0.42)
 
         repo.recordWatched("c1", watched = true)
 
-        var row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        var row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals(0.0, row?.positionSeconds)
         assertEquals(3600.0, row?.durationSeconds)
         assertEquals("audio", row?.audioFingerprint)
@@ -179,37 +179,37 @@ class RoomUserItemStateRepositoryTest {
         assertEquals(0.42, row?.readProgress)
         assertNull(repo.localPlaybackProgress("c1"))
 
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 789.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 789.0, durationSeconds = 3600.0)
         repo.recordWatched("c1", watched = false)
 
-        row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals(0.0, row?.positionSeconds)
         assertNull(repo.localPlaybackProgress("c1"))
     }
 
     @Test
     fun watchedChangeSupersedesAnOlderPendingPosition() = runTest {
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
 
         repo.recordWatched("c1", watched = true)
 
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(OutboxOperation.SET_WATCHED, op.opKind)
     }
 
     @Test
     fun terminalWatchedFailureRestoresClearedResumeUnlessPlaybackMovedOn() = runTest {
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
         val rejected = repo.recordWatched("c1", watched = true)
 
         repo.resolve(rejected, WriteOutcome.TERMINAL)
 
-        assertEquals(456.0, repo.localPosition("c1", fileId = 7))
+        assertEquals(456.0, storedPosition("c1", 7))
 
         val secondRejected = repo.recordWatched("c1", watched = true)
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 789.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 789.0, durationSeconds = 3600.0)
         repo.resolve(secondRejected, WriteOutcome.TERMINAL)
-        assertEquals(789.0, repo.localPosition("c1", fileId = 7))
+        assertEquals(789.0, storedPosition("c1", 7))
     }
 
     @Test
@@ -221,19 +221,19 @@ class RoomUserItemStateRepositoryTest {
             now = { currentTime },
             idGenerator = { "timed-${nextId++}" },
         )
-        timedRepo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        timedRepo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
         timedRepo.recordWatched("c1", watched = true)
 
         currentTime += 1
         val latest = timedRepo.recordWatched("c1", watched = false)
         timedRepo.resolve(latest, WriteOutcome.TERMINAL)
 
-        assertEquals(456.0, timedRepo.localPosition("c1", fileId = 7))
+        assertEquals(456.0, storedPosition("c1", 7))
     }
 
     @Test
     fun newerWatchedChangeInheritsRollbackFromAnInFlightChange() = runTest {
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
         val older = repo.recordWatched("c1", watched = true)
         assertEquals(1, db.dirtyOperationDao().claim(older.opId))
 
@@ -241,13 +241,13 @@ class RoomUserItemStateRepositoryTest {
         repo.resolve(older, WriteOutcome.TERMINAL)
         repo.resolve(newer, WriteOutcome.TERMINAL)
 
-        assertEquals(456.0, repo.localPosition("c1", fileId = 7))
+        assertEquals(456.0, storedPosition("c1", 7))
     }
 
     @Test
     fun syncedWatchedChangeReplaysAfterAnInFlightPosition() = runTest {
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
-        val position = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        val position = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(1, db.dirtyOperationDao().claim(position.id))
         var syncRequests = 0
         val guardedRepo = RoomUserItemStateRepository(
@@ -269,7 +269,7 @@ class RoomUserItemStateRepositoryTest {
     fun watchedToggleDoesNotClobberExistingRating() = runTest {
         repo.recordRating("c1", rating = 5)
         repo.recordWatched("c1", watched = true)
-        val row = db.contentItemStateDao().get("s1", "p1", "c1")
+        val row = db.contentItemStateDao().get("s1", "", "p1", "c1")
         assertEquals(5, row?.ratingValue)
         assertEquals(true, row?.watched)
         // Distinct kinds do not coalesce against each other.
@@ -281,7 +281,7 @@ class RoomUserItemStateRepositoryTest {
         repo.recordWatched("c1", watched = true)
         repo.recordWatched("c1", watched = false)
         assertEquals(1, db.dirtyOperationDao().count())
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(false, OutboxOperation.decodeBooleanPayload(op.payloadJson))
     }
 
@@ -295,11 +295,11 @@ class RoomUserItemStateRepositoryTest {
     @Test
     fun resolveTerminalDropsOpAndRevertsProjection() = runTest {
         val handle = repo.recordRating("c1", rating = 4)
-        assertEquals(4, db.contentItemStateDao().get("s1", "p1", "c1")?.ratingValue)
+        assertEquals(4, db.contentItemStateDao().get("s1", "", "p1", "c1")?.ratingValue)
         repo.resolve(handle, WriteOutcome.TERMINAL)
         assertEquals(0, db.dirtyOperationDao().count())
         // Optimistic rating reverted to null so the card overlay defers to server.
-        assertNull(db.contentItemStateDao().get("s1", "p1", "c1")?.ratingValue)
+        assertNull(db.contentItemStateDao().get("s1", "", "p1", "c1")?.ratingValue)
     }
 
     @Test
@@ -311,6 +311,17 @@ class RoomUserItemStateRepositoryTest {
         // Favorites live in the durable MembershipPort; the projection never carries a local opinion.
         assertNull(states["c2"]?.favorite)
         assertNull(states["c3"]) // no local opinion
+    }
+
+    @Test
+    fun localWatchedIsPendingOnlyUntilTheServerAcknowledgesIt() = runTest {
+        val handle = repo.recordWatched("c1", watched = true)
+        assertEquals(true, repo.localContentStates(listOf("c1"))["c1"]?.watchedPending)
+        repo.resolve(handle, WriteOutcome.SYNCED)
+        val acked = repo.localContentStates(listOf("c1"))["c1"]
+        // The projection row outlives the acknowledgement; only the pending flag drops.
+        assertEquals(true, acked?.watched)
+        assertEquals(false, acked?.watchedPending)
     }
 
     @Test
@@ -335,17 +346,17 @@ class RoomUserItemStateRepositoryTest {
 
     @Test
     fun recordPositionWritesFileProjectionAndContentCoalescedOp() = runTest {
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 123.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 123.0, durationSeconds = 3600.0)
 
         // File-level local projection for resume.
-        val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals(123.0, row?.positionSeconds)
         assertEquals(3600.0, row?.durationSeconds)
 
         // Single content-level position op (coalesce key omits fileId).
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(OutboxOperation.SET_POSITION, op.opKind)
-        assertEquals("s1|p1|c1|${OutboxOperation.SET_POSITION}", op.coalesceKey)
+        assertEquals("s1||p1|c1|${OutboxOperation.SET_POSITION}", op.coalesceKey)
         assertEquals(7, op.targetFileId)
     }
 
@@ -355,8 +366,8 @@ class RoomUserItemStateRepositoryTest {
         currentSnapshot = authScope("server", "profile-b", generation = 5L)
 
         assertFalse(repo.recordPosition(captured, "movie", 7, 42.0, 100.0))
-        assertNull(db.userItemStateDao().get("server", "profile-a", "movie", 7))
-        assertNull(db.userItemStateDao().get("server", "profile-b", "movie", 7))
+        assertNull(db.userItemStateDao().get("server", "", "profile-a", "movie", 7))
+        assertNull(db.userItemStateDao().get("server", "", "profile-b", "movie", 7))
     }
 
     @Test
@@ -367,31 +378,68 @@ class RoomUserItemStateRepositoryTest {
         assertTrue(repo.recordPosition(captured, "movie", 7, 42.0, 100.0))
         assertEquals(
             42.0,
-            db.userItemStateDao().get("server", "profile-a", "movie", 7)?.positionSeconds,
+            db.userItemStateDao().get("server", "", "profile-a", "movie", 7)?.positionSeconds,
         )
     }
 
     @Test
     fun recordPositionCoalescesToLatestPerContent() = runTest {
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 10.0, durationSeconds = 3600.0)
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 99.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 10.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 99.0, durationSeconds = 3600.0)
         assertEquals(1, db.dirtyOperationDao().count())
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(99.0, OutboxOperation.decodePositionPayload(op.payloadJson).first)
+    }
+
+    @Test
+    fun audiobookSnapshotsStayLocalAndNeverOverrideTheServer() = runTest {
+        repo.recordPosition("book", fileId = 3, positionSeconds = 50.0, durationSeconds = 3600.0)
+
+        assertEquals(0, db.dirtyOperationDao().count())
+        assertNull(repo.localPlaybackProgress("book"))
+        assertEquals(50.0, repo.localPositionForContent("book"))
+    }
+
+    @Test
+    fun downloadPositionOverridesOnlyUntilItsOpSettles() = runTest {
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
+        assertEquals(2, op.opVersion)
+        assertEquals(456.0, repo.localPlaybackProgress("c1")?.positionSeconds)
+
+        db.dirtyOperationDao().deleteById(op.id)
+        assertNull(repo.localPlaybackProgress("c1"))
+        assertNull(repo.localPosition("c1", fileId = 7))
+    }
+
+    @Test
+    fun aSentPositionStandsOnlyOfflineUntilANewSampleIsTaken() = runTest {
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        db.userItemStateDao().markPlaybackProgressSent("s1", "", "p1", "c1", fileId = 7, sampledAtMs = 1000L)
+
+        // The server has it, or may have it: online its answer stands.
+        assertNull(repo.localPlaybackProgress("c1"))
+        assertNull(repo.localPositionForContent("c1", includeSent = false))
+        // Offline it is still the newest position this device knows.
+        assertEquals(456.0, repo.localPlaybackProgress("c1", includeSent = true)?.positionSeconds)
+        assertEquals(456.0, repo.localPositionForContent("c1", includeSent = true))
+
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 470.0, durationSeconds = 3600.0)
+        assertEquals(470.0, repo.localPlaybackProgress("c1")?.positionSeconds)
     }
 
     @Test
     fun localPositionReadsBackTheRecordedResumePoint() = runTest {
         assertNull(repo.localPosition("c1", fileId = 7))
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
         assertEquals(456.0, repo.localPosition("c1", fileId = 7))
     }
 
     @Test
     fun localPlaybackProgressForContentReturnsFurthestPositionWithFileId() = runTest {
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 120.0, durationSeconds = 3600.0)
-        repo.recordPosition("c1", fileId = 8, positionSeconds = 480.0, durationSeconds = 3700.0)
-        repo.recordPosition("c2", fileId = 9, positionSeconds = 90.0, durationSeconds = null)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 120.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 8, positionSeconds = 480.0, durationSeconds = 3700.0)
+        repo.recordDownload("c2", fileId = 9, positionSeconds = 90.0, durationSeconds = null)
 
         val progress = repo.localPlaybackProgressForContent(listOf("c1", "c2", "missing"))
 
@@ -413,8 +461,8 @@ class RoomUserItemStateRepositoryTest {
         val ids = (0 until 1_500).map { "c$it" }
         repo.recordWatched("c3", watched = true)
         repo.recordWatched("c1400", watched = true)
-        repo.recordPosition("c1400", fileId = 7, positionSeconds = 120.0, durationSeconds = 3600.0)
-        repo.recordPosition("c1400", fileId = 8, positionSeconds = 480.0, durationSeconds = 3700.0)
+        repo.recordDownload("c1400", fileId = 7, positionSeconds = 120.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1400", fileId = 8, positionSeconds = 480.0, durationSeconds = 3700.0)
 
         val states = repo.localContentStates(ids)
         val progress = repo.localPlaybackProgressForContent(ids)
@@ -426,11 +474,11 @@ class RoomUserItemStateRepositoryTest {
 
     @Test
     fun recordTrackSelectionsWritesFileProjectionWithoutOutbox() = runTest {
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
         repo.recordAudioTrackSelection("c1", fileId = 7, audioFingerprint = "1|eng|eac3|5.1|false")
         repo.recordSubtitleTrackSelection("c1", fileId = 7, subtitleFingerprint = "off")
 
-        val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals(456.0, row?.positionSeconds)
         assertEquals("1|eng|eac3|5.1|false", row?.audioFingerprint)
         assertEquals("off", row?.subtitleFingerprint)
@@ -446,7 +494,7 @@ class RoomUserItemStateRepositoryTest {
 
     @Test
     fun recordTrackSelectionWritesOneLogicalSnapshotWithoutClobberingOtherFileState() = runTest {
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
         repo.recordAudioTrackSelection("c1", fileId = 7, audioFingerprint = "old-audio")
         repo.recordSubtitleTrackSelection("c1", fileId = 7, subtitleFingerprint = "old-subtitle")
 
@@ -457,7 +505,7 @@ class RoomUserItemStateRepositoryTest {
             subtitleFingerprint = " new-subtitle ",
         )
 
-        val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals(456.0, row?.positionSeconds)
         assertEquals(3600.0, row?.durationSeconds)
         assertEquals("new-audio", row?.audioFingerprint)
@@ -477,7 +525,7 @@ class RoomUserItemStateRepositoryTest {
             subtitleUpdate = TrackSelectionFingerprintUpdate.Set("new-subtitle"),
         )
 
-        val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals("old-audio", row?.audioFingerprint)
         assertEquals("new-subtitle", row?.subtitleFingerprint)
     }
@@ -494,7 +542,7 @@ class RoomUserItemStateRepositoryTest {
             subtitleUpdate = TrackSelectionFingerprintUpdate.Preserve,
         )
 
-        val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertNull(row?.audioFingerprint)
         assertEquals("old-subtitle", row?.subtitleFingerprint)
     }
@@ -518,8 +566,8 @@ class RoomUserItemStateRepositoryTest {
         )
 
         assertFalse(accepted)
-        assertNull(db.userItemStateDao().get("s1", "p1", "c1", 7))
-        assertNull(db.userItemStateDao().get("s1", "p2", "c1", 7))
+        assertNull(db.userItemStateDao().get("s1", "", "p1", "c1", 7))
+        assertNull(db.userItemStateDao().get("s1", "", "p2", "c1", 7))
     }
 
     @Test
@@ -541,8 +589,8 @@ class RoomUserItemStateRepositoryTest {
         )
 
         assertFalse(accepted)
-        assertNull(db.userItemStateDao().get("s1", "p1", "c1", 7))
-        assertNull(db.userItemStateDao().get("s2", "p1", "c1", 7))
+        assertNull(db.userItemStateDao().get("s1", "", "p1", "c1", 7))
+        assertNull(db.userItemStateDao().get("s2", "", "p1", "c1", 7))
     }
 
     @Test
@@ -569,7 +617,7 @@ class RoomUserItemStateRepositoryTest {
             )
         }
 
-        val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals("old-audio", row?.audioFingerprint)
         assertEquals("old-subtitle", row?.subtitleFingerprint)
     }
@@ -593,7 +641,7 @@ class RoomUserItemStateRepositoryTest {
         }
 
         assertSame(cancellation, thrown)
-        assertNull(db.userItemStateDao().get("s1", "p1", "c1", 7))
+        assertNull(db.userItemStateDao().get("s1", "", "p1", "c1", 7))
     }
 
     @Test
@@ -602,32 +650,32 @@ class RoomUserItemStateRepositoryTest {
         val back = repo.localEbookProgress("c1", fileId = 7)
         assertEquals("epubcfi(/6/4!/4)", back?.location)
         assertEquals(0.42, back?.progress)
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(OutboxOperation.SET_EBOOK_PROGRESS, op.opKind)
-        assertEquals("s1|p1|c1|${OutboxOperation.SET_EBOOK_PROGRESS}", op.coalesceKey)
+        assertEquals("s1||p1|c1|${OutboxOperation.SET_EBOOK_PROGRESS}", op.coalesceKey)
     }
 
     @Test
     fun recordPositionRejectsNonFinitePosition() = runTest {
-        repo.recordPosition("c1", fileId = 7, positionSeconds = Double.NaN, durationSeconds = 3600.0)
-        repo.recordPosition("c1", fileId = 7, positionSeconds = -5.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = Double.NaN, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = -5.0, durationSeconds = 3600.0)
         // No projection row, no outbox op — invalid values can't poison the drain.
-        assertNull(db.userItemStateDao().get("s1", "p1", "c1", 7))
+        assertNull(db.userItemStateDao().get("s1", "", "p1", "c1", 7))
         assertEquals(0, db.dirtyOperationDao().count())
     }
 
     @Test
     fun recordPositionZeroDoesNotClobberAnExistingResume() = runTest {
         // A good resume point is recorded during playback...
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 1200.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 1200.0, durationSeconds = 3600.0)
         // ...then a player-teardown race snapshots position as 0. That stale 0 must
         // NOT overwrite the resume locally or sync SET_POSITION=0 to the server,
         // else re-entering the detail would show "Play" instead of "Resume".
-        repo.recordPosition("c1", fileId = 7, positionSeconds = 0.0, durationSeconds = 3600.0)
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 0.0, durationSeconds = 3600.0)
 
         assertEquals(1200.0, repo.localPosition("c1", fileId = 7))
         // Only the original 1200s op is queued; the 0 produced no new/overwriting op.
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(1200.0, OutboxOperation.decodePositionPayload(op.payloadJson).first)
     }
 
@@ -638,6 +686,23 @@ class RoomUserItemStateRepositoryTest {
         assertEquals("p1", handle.scope?.profileId)
         assertEquals("https://s1.example", handle.scope?.serverUrl)
     }
+
+    /** Downloaded playback writes through the scoped overload, which queues the position. */
+    private suspend fun RoomUserItemStateRepository.recordDownload(
+        contentId: String,
+        fileId: Int,
+        positionSeconds: Double,
+        durationSeconds: Double?,
+    ) {
+        val scope = checkNotNull(currentSnapshot)
+        recordPosition(
+            PlaybackWriteScope(scope.serverId, checkNotNull(scope.profileId), scope.credentialGenerationId, scope.identityGeneration),
+            contentId, fileId, positionSeconds, durationSeconds,
+        )
+    }
+
+    private suspend fun storedPosition(contentId: String, fileId: Int): Double? =
+        db.userItemStateDao().get("s1", "", "p1", contentId, fileId)?.positionSeconds
 
     private fun authScope(
         serverId: String,

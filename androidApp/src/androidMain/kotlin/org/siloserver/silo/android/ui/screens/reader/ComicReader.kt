@@ -39,6 +39,8 @@ import okhttp3.OkHttpClient
 import org.koin.compose.koinInject
 import java.io.File
 import java.util.zip.ZipFile
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Comic / manga reader for CBZ (zip-of-images) archives. CBR/RAR remains
@@ -151,7 +153,7 @@ fun ComicReader(
                     .toggleChromeOnTap(onToggleChrome),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("Could not open this comic archive.")
+                Text(stringResource(CommonR.string.reader_comic_openFailed))
             }
             return
         }
@@ -162,7 +164,7 @@ fun ComicReader(
                     .toggleChromeOnTap(onToggleChrome),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("No readable images found in this comic archive.")
+                Text(stringResource(CommonR.string.reader_comic_empty))
             }
             return
         }
@@ -230,9 +232,10 @@ private fun ComicPage(
     onPageTap: (Float) -> Unit,
 ) {
     var bitmapResult by remember(entryName) { mutableStateOf<Result<Bitmap>?>(null) }
+    val decodeFailedMessage = stringResource(CommonR.string.reader_comic_pageDecodeFailed)
     LaunchedEffect(entryName) {
         bitmapResult = withContext(Dispatchers.IO) {
-            decodeComicPageBitmap(zip, entryName, targetMaxDimension)
+            decodeComicPageBitmap(zip, entryName, targetMaxDimension, decodeFailedMessage)
         }
     }
     // TODO: Fit-mode rendering with pan/scroll is deferred to the comic-v2/SSIV
@@ -298,8 +301,9 @@ private fun decodeComicPageBitmap(
     zip: ZipFile,
     entryName: String,
     targetMaxDimension: Int,
+    decodeFailedMessage: String,
 ): Result<Bitmap> =
-    requiredReaderLoadResult("Could not decode comic page.") {
+    requiredReaderLoadResult(decodeFailedMessage) {
         val entry = zip.getEntry(entryName) ?: return@requiredReaderLoadResult null
         // Pass 1: bounds only, so we can downsample to roughly the
         // display size instead of decoding full-res ARGB_8888.

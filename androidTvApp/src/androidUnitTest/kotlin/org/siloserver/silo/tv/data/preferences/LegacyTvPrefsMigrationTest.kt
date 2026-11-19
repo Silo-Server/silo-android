@@ -68,7 +68,7 @@ class LegacyTvPrefsMigrationTest {
         selectionStore = TvLibrarySelectionStore(
             context = mockContextStub(),
             tokenManager = tokenManager,
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(
                     produceFile = { File(tempFolder.root, "lib_$id.preferences_pb") },
                 )
@@ -423,7 +423,7 @@ class LegacyTvPrefsMigrationTest {
                 return base.updateData(transform)
             }
         }
-        val selection = TvLibrarySelectionStore(mockContextStub(), tokenManager, dataStoreFactory = { blocked })
+        val selection = TvLibrarySelectionStore(mockContextStub(), tokenManager, dataStoreFactory = { _, _ -> blocked })
         assertFalse(selection.seedLegacySelection(original,42))
         assertTrue(base.data.first().asMap().isEmpty())
     }

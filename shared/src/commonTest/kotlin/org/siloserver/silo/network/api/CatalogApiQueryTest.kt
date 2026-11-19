@@ -96,6 +96,37 @@ class CatalogApiQueryTest {
 
     }
 
+    @Test
+    fun getCatalogSendsFlagFilterValuesAsJsonBooleans() = runTest {
+        val requests = mutableListOf<Map<String, String?>>()
+        val api = CatalogApi(
+            client = clientFor(
+                requests = requests,
+                body = """{"total":0,"total_exact":true,"window_cursor":"w","page":{"has_more":false},"items":[]}""",
+            ),
+        )
+
+        api.getCatalog(
+            libraryId = 7,
+            mediaType = "series",
+            queryGroups = listOf(
+                CatalogQueryGroup(
+                    match = "all",
+                    rules = listOf(
+                        CatalogQueryRule(field = "watched", op = "is", value = "false"),
+                        CatalogQueryRule(field = "dolby_vision", op = "is", value = "true"),
+                        CatalogQueryRule(field = "genre", op = "contains", value = "true"),
+                    ),
+                ),
+            ),
+        )
+
+        val body = SiloJson.parseToJsonElement(requests.single().getValue("body")!!).jsonObject
+        val values = body.getValue("groups").jsonArray.single().jsonObject.getValue("rules").jsonArray
+            .map { it.jsonObject.getValue("value").jsonPrimitive }
+        assertEquals(listOf(JsonPrimitive(false), JsonPrimitive(true), JsonPrimitive("true")), values)
+    }
+
     private fun clientFor(
         requests: MutableList<Map<String, String?>>,
         body: String,

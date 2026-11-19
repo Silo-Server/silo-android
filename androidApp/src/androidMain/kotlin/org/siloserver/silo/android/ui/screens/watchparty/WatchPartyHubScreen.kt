@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.text
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,9 +24,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -51,6 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -67,6 +71,8 @@ import org.siloserver.silo.android.cast.SiloCastSessionManager
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.feature.WatchPartyExposure
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSelectionMode
@@ -158,9 +164,9 @@ fun WatchPartyHubScreen(
     // before joining, creating, or consuming a detail/invitation handoff.
     if (enabled && casting) {
         SiloConfirmDialog(
-            title = "Stop casting to use Watch Party?",
-            body = "Casting will stop. Watch Party plays on this device.",
-            confirmLabel = "Stop casting",
+            title = stringResource(CommonR.string.watchParty_cast_title),
+            body = stringResource(CommonR.string.watchParty_cast_body),
+            confirmLabel = stringResource(CommonR.string.watchParty_cast_confirm),
             onConfirm = castManager::disconnect,
             onDismiss = onBack,
         )
@@ -200,11 +206,11 @@ fun WatchPartyHubScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (showEnded && ended != null) {
                             WatchPartyBanner(
-                                text = watchPartyEndedMessage(ended.reason),
+                                text = stringResource(watchPartyEndedMessage(ended.reason)),
                                 action = {
                                     if (endedRejoin) {
                                         TextButton(onClick = viewModel::rejoinRecent, enabled = !busy) {
-                                            Text("Rejoin", color = SiloOnSurface)
+                                            Text(stringResource(CommonR.string.watchParty_hub_rejoin), color = SiloOnSurface)
                                         }
                                     }
                                     DismissButton { dismissedEnded = endedKey }
@@ -212,16 +218,16 @@ fun WatchPartyHubScreen(
                             )
                         }
                         if (!enabled) {
-                            WatchPartyBanner("Watch Party is turned off. Turn it on in Settings, under Experimental.")
+                            WatchPartyBanner(stringResource(CommonR.string.watchParty_hub_turnedOff))
                         } else {
                             when (state.availability) {
-                                null -> WatchPartyBanner("Checking Watch Party support…")
+                                null -> WatchPartyBanner(stringResource(CommonR.string.watchParty_page_checking))
                                 is WatchPartyAvailability.Unsupported ->
-                                    WatchPartyBanner("This server doesn't support Watch Party yet.")
+                                    WatchPartyBanner(stringResource(CommonR.string.watchParty_hub_unsupported))
                                 WatchPartyAvailability.NotAllowed ->
-                                    WatchPartyBanner("Your account can't use Watch Party.")
+                                    WatchPartyBanner(stringResource(CommonR.string.watchParty_hub_notAllowed))
                                 is WatchPartyAvailability.ProbeFailed -> WatchPartyBanner(
-                                    "Couldn't check whether this server supports Watch Party.",
+                                    stringResource(CommonR.string.watchParty_hub_probeFailed),
                                     tone = WatchPartyBannerTone.Warning,
                                 )
                                 is WatchPartyAvailability.Available -> Unit
@@ -230,12 +236,12 @@ fun WatchPartyHubScreen(
                         // Errors stay inline; an uncertain create keeps its room id for Retry.
                         state.error?.let { message ->
                             WatchPartyBanner(
-                                text = message,
+                                text = message.text(),
                                 tone = WatchPartyBannerTone.Warning,
                                 action = {
                                     if (state.createRetryable) {
                                         TextButton(onClick = viewModel::retryCreate, enabled = !busy) {
-                                            Text("Retry", color = SiloOnSurface)
+                                            Text(stringResource(CommonR.string.common_retry), color = SiloOnSurface)
                                         }
                                     }
                                     DismissButton(viewModel::clearError)
@@ -251,12 +257,14 @@ fun WatchPartyHubScreen(
                                 )
                                 Spacer(Modifier.width(12.dp))
                                 Text(
-                                    when (state.busy) {
-                                        WatchPartyPendingAction.Create -> "Starting your party…"
-                                        WatchPartyPendingAction.Join -> "Joining…"
-                                        WatchPartyPendingAction.Stage -> "Adding your title…"
-                                        else -> "Working…"
-                                    },
+                                    stringResource(
+                                        when (state.busy) {
+                                            WatchPartyPendingAction.Create -> CommonR.string.watchParty_hub_starting
+                                            WatchPartyPendingAction.Join -> CommonR.string.watchParty_code_joining
+                                            WatchPartyPendingAction.Stage -> CommonR.string.watchParty_hub_addingTitle
+                                            else -> CommonR.string.watchParty_hub_working
+                                        },
+                                    ),
                                     fontSize = WatchPartyMetrics.BODY.sp,
                                     color = SiloSecondaryText,
                                 )
@@ -269,7 +277,7 @@ fun WatchPartyHubScreen(
 
                 if (current != null) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        WatchPartyEyebrow("You're in a Watch Party")
+                        WatchPartyEyebrow(stringResource(CommonR.string.watchParty_hub_inParty))
                         if (current.code.isNotBlank()) {
                             Text(
                                 current.code,
@@ -281,14 +289,14 @@ fun WatchPartyHubScreen(
                             )
                         }
                         WatchPartyButton(
-                            text = "Return to party",
+                            text = stringResource(CommonR.string.watchParty_hub_returnToParty),
                             icon = Icons.Filled.PlayArrow,
                             onClick = viewModel::returnToParty,
                             enabled = !busy,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         WatchPartyButton(
-                            text = "Leave party",
+                            text = stringResource(CommonR.string.watchParty_options_leave),
                             kind = WatchPartyButtonKind.Secondary,
                             onClick = {
                                 if (current.selfRole == MemberRole.Host) confirmHostLeave = true else roomSession.depart()
@@ -297,7 +305,7 @@ fun WatchPartyHubScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Text(
-                            "Leave this party to host or join another one.",
+                            stringResource(CommonR.string.watchParty_hub_leaveToSwitch),
                             fontSize = WatchPartyMetrics.CAPTION.sp,
                             color = SiloSecondaryText,
                         )
@@ -309,26 +317,27 @@ fun WatchPartyHubScreen(
                     // Hosting needs staged selection; a server without it can still be joined.
                     if (!available || canHost) {
                         WatchPartyButton(
-                            text = "Start a party",
+                            text = stringResource(CommonR.string.watchParty_page_start),
                             icon = Icons.Filled.Add,
                             onClick = { viewModel.host() },
                             enabled = canEnter,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         WatchPartyButton(
-                            text = "Start a party and let everyone vote",
+                            text = stringResource(CommonR.string.watchParty_page_startVote),
                             kind = WatchPartyButtonKind.Secondary,
                             onClick = { viewModel.host(RoomSelectionMode.Vote) },
                             enabled = canEnter,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     } else {
-                        WatchPartyBanner(text = "This server can't host a Watch Party. You can still join one.")
+                        WatchPartyBanner(text = stringResource(CommonR.string.watchParty_hub_cannotHost))
                     }
                     state.recent?.takeIf { !endedRejoin }?.let { recent ->
                         WatchPartyButton(
-                            text = recent.title?.takeIf { it.isNotBlank() }?.let { "Rejoin $it" }
-                                ?: "Rejoin recent party",
+                            text = recent.title?.takeIf { it.isNotBlank() }
+                                ?.let { stringResourceWithNames(CommonR.string.watchParty_rejoin_title, it) }
+                                ?: stringResource(CommonR.string.watchParty_rejoin_recent),
                             icon = Icons.Filled.Refresh,
                             kind = WatchPartyButtonKind.Outlined,
                             onClick = viewModel::rejoinRecent,
@@ -339,7 +348,8 @@ fun WatchPartyHubScreen(
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    WatchPartyEyebrow("Have a code?")
+                    WatchPartyEyebrow(stringResource(CommonR.string.watchParty_hub_haveCode))
+                    val pasteEmpty = stringResource(CommonR.string.watchParty_hub_pasteEmpty)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         WatchPartyCodeField(
                             value = code,
@@ -350,14 +360,14 @@ fun WatchPartyHubScreen(
                         )
                         WatchPartyCircleButton(
                             icon = Icons.Outlined.ContentPaste,
-                            contentDescription = "Paste",
+                            contentDescription = stringResource(CommonR.string.watchParty_hub_paste),
                             size = 52.dp,
                             shape = RoundedCornerShape(14.dp),
                             enabled = !busy,
                             onClick = {
                                 val pasted = clipboard.getText()?.text?.trim().orEmpty()
                                 if (pasted.isEmpty()) {
-                                    Toast.makeText(context, "Copy an invitation or party code first.", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, pasteEmpty, Toast.LENGTH_SHORT).show()
                                 } else {
                                     code = pasted
                                 }
@@ -365,7 +375,7 @@ fun WatchPartyHubScreen(
                         )
                     }
                     WatchPartyButton(
-                        text = "Join party",
+                        text = stringResource(CommonR.string.watchParty_code_joinParty),
                         kind = WatchPartyButtonKind.Secondary,
                         onClick = join,
                         enabled = canEnter && code.isNotBlank(),
@@ -373,7 +383,7 @@ fun WatchPartyHubScreen(
                     )
                     if (state.availability != null && !available) {
                         WatchPartyButton(
-                            text = "Check again",
+                            text = stringResource(CommonR.string.watchParty_page_checkAgain),
                             kind = WatchPartyButtonKind.Secondary,
                             onClick = { viewModel.refresh(force = true) },
                             modifier = Modifier.fillMaxWidth(),
@@ -398,10 +408,10 @@ fun WatchPartyHubScreen(
 @Composable
 private fun HubHeadline(modifier: Modifier = Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy((WatchPartyMetrics.BODY * 0.6f).dp)) {
-        WatchPartyEyebrow("Watch Party")
-        WatchPartyHeroTitle("Watch something\ntogether")
+        WatchPartyEyebrow(stringResource(CommonR.string.watchParty_title))
+        WatchPartyHeroTitle(stringResource(CommonR.string.watchParty_page_headline))
         Text(
-            "Pick a title, share the code, and everyone's playback stays in step.",
+            stringResource(CommonR.string.watchParty_page_body),
             fontSize = WatchPartyMetrics.BODY.sp,
             color = SiloSecondaryText,
         )
@@ -411,7 +421,7 @@ private fun HubHeadline(modifier: Modifier = Modifier) {
 @Composable
 private fun DismissButton(onClick: () -> Unit) {
     IconButton(onClick = onClick) {
-        Icon(Icons.Filled.Close, contentDescription = "Dismiss", tint = SiloSecondaryText)
+        Icon(Icons.Filled.Close, contentDescription = stringResource(CommonR.string.watchParty_action_dismiss), tint = SiloSecondaryText)
     }
 }
 
@@ -425,6 +435,7 @@ private fun WatchPartyCodeField(
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(14.dp)
+    val label = stringResource(CommonR.string.watchParty_hub_codeField)
     val style = TextStyle(
         fontSize = 17.sp,
         fontWeight = FontWeight.Medium,
@@ -450,11 +461,18 @@ private fun WatchPartyCodeField(
             .clip(shape)
             .background(WatchPartyColors.chromeFill)
             .border(1.dp, WatchPartyColors.chromeBorder, shape)
-            .semantics { contentDescription = "Party code or invite link" },
+            .semantics { contentDescription = label },
         decorationBox = { inner ->
             Box(Modifier.fillMaxSize().padding(horizontal = 14.dp), contentAlignment = Alignment.CenterStart) {
                 if (value.isEmpty()) {
-                    Text("Party code or invite link", style = style.copy(color = SiloSecondaryText.copy(alpha = 0.5f)), maxLines = 1)
+                    // Monospace at 17sp holds about 19 characters here; a longer
+                    // translated placeholder steps down instead of being cut.
+                    BasicText(
+                        label,
+                        style = style.copy(color = SiloSecondaryText.copy(alpha = 0.5f)),
+                        maxLines = 1,
+                        autoSize = TextAutoSize.StepBased(minFontSize = 11.sp, maxFontSize = 17.sp, stepSize = 0.5.sp),
+                    )
                 }
                 inner()
             }

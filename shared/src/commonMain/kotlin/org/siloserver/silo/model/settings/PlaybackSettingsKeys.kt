@@ -36,6 +36,22 @@ object PlaybackSettingsKeys {
      * order as [AutoSkipIntro], which it supersedes.
      */
     const val IntroSkipMode = "playback.intro_skip_mode"
+
+    /**
+     * `never` | `ask` | `always` — see
+     * [org.siloserver.silo.domain.player.BufferingQualityMode] and the server's
+     * `docs/design/2026-10-17-buffering-quality.md`. Same scopes as
+     * [IntroSkipMode]. An older server neither stores nor answers it; a
+     * client tells by the key's presence in the server's manifest
+     * ([ManifestDetectedKeys]), never by its revision.
+     */
+    const val BufferingQualityMode = "playback.buffering_quality_mode"
+
+    /**
+     * Keys some supported servers lack, detected by their presence in the
+     * server's settings manifest rather than by its revision number.
+     */
+    val ManifestDetectedKeys: Set<String> = setOf(BufferingQualityMode)
     const val AutoSkipCredits = "playback.auto_skip_credits"
     const val AutoPlayNext = "playback.auto_play_next"
     // Renamed at the settings cutover: every other key carries a domain prefix
@@ -49,6 +65,13 @@ object PlaybackSettingsKeys {
     const val PlaybackSpeed = "player.playback_speed"
     const val AudioSyncMs = "player.audio_sync_ms"
     const val SubtitleSyncMs = "player.subtitle_sync_ms"
+
+    /**
+     * The settings manifest revision from which [SubtitleSyncMs] is accepted
+     * at profile scope. Older servers store it per device only and refuse
+     * `scope=profile` with a 422.
+     */
+    const val SubtitleSyncProfileMinRevision = 19
     const val VideoGravity = "player.video_gravity"
     const val OrientationMode = "player.orientation_mode"
     // Android shipped this under player.* while Apple and the server used
@@ -70,6 +93,14 @@ object PlaybackSettingsKeys {
     const val SubtitleTextOutline = "subtitle.text_outline"
     const val SubtitleTextOutlineColor = "subtitle.text_outline_color"
     const val SubtitlePosition = "subtitle.position"
+
+    /**
+     * Play local theme music on movie and show detail pages, and repeat it
+     * while the page stays open. Both default off and need contract revision
+     * 11 ([DeviceSettingRevisions]).
+     */
+    const val ThemeMusicEnabled = SettingKeys.UI_THEME_MUSIC_ENABLED
+    const val ThemeMusicLoop = SettingKeys.UI_THEME_MUSIC_LOOP
 
     /**
      * Local-only flag tracking whether the user has enabled a per-device
@@ -183,6 +214,7 @@ object PlaybackSettingsKeys {
         AudioLanguage,
         AutoSkipIntro,
         IntroSkipMode,
+        BufferingQualityMode,
         AutoSkipCredits,
         AutoPlayNext,
         SubtitleAppearance,
@@ -207,6 +239,8 @@ object PlaybackSettingsKeys {
         SubtitleTextOutline,
         SubtitleTextOutlineColor,
         SubtitlePosition,
+        ThemeMusicEnabled,
+        ThemeMusicLoop,
     )
 
     /**
@@ -224,10 +258,15 @@ object PlaybackSettingsKeys {
         AudioLanguage,
         AutoSkipIntro,
         IntroSkipMode,
+        BufferingQualityMode,
         AutoSkipCredits,
         AutoPlayNext,
         NextUpPromptSeconds,
         SubtitleAppearance,
+        ThemeMusicEnabled,
+        ThemeMusicLoop,
+        // Profile scope from manifest revision 19.
+        SubtitleSyncMs,
     )
 
     /**
@@ -243,6 +282,14 @@ object PlaybackSettingsKeys {
         IntroSkipMode, AutoSkipIntro -> listOf(IntroSkipMode, AutoSkipIntro)
         else -> listOf(key)
     }
+
+    /**
+     * The manifest revision from which the server accepts [key] at profile
+     * scope, or null for a key whose profile scope arrived with the key.
+     * Read through `SettingsContractRevision.storesPerProfile`.
+     */
+    fun profileScopeMinimumRevision(key: String): Int? =
+        SubtitleSyncProfileMinRevision.takeIf { key == SubtitleSyncMs }
 
     /** Whether this device holds its own value for [key]'s control. */
     fun hasDeviceOverride(overrides: Set<String>, key: String): Boolean =

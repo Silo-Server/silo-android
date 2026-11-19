@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
@@ -28,6 +30,8 @@ class MobileQualityMenuTest {
         recipe: PlaybackEffectiveRecipeV3?,
         sessionPreference: String? = "1080p",
         picked: String? = null,
+        reportedQuality: String? = null,
+        reported: Boolean = false,
     ) = PlayerViewModel.PlayerUiState(
         playbackPlan = PlaybackExecutionPlan(
             planId = "plan",
@@ -36,6 +40,8 @@ class MobileQualityMenuTest {
             availableQualities = ladder,
             effectiveRecipe = recipe,
             sourceFile = PlaybackSourceDescriptorV3(width = 1920, height = 1080, bitrateKbps = 8_000),
+            activeQuality = reportedQuality,
+            activeQualityReported = reported,
         ),
         committedQualityPreference = picked,
         sessionQualityPreference = sessionPreference,
@@ -53,7 +59,7 @@ class MobileQualityMenuTest {
         // The source entry an older server still lists is not in the menu.
         val uncapped = state(sourcePlays)
         assertNull(uncapped.activeQualityId(menu))
-        assertEquals("1080p", playbackQualityValueLabel(menu, null, uncapped.qualityPreference))
+        assertEquals(UiText.Key(SharedString.Quality1080p), playbackQualityValueLabel(menu, null, uncapped.qualityPreference))
         assertEquals(listOf("auto", "1080p-medium", "720p-medium"), menu.map { it.id })
     }
 
@@ -65,6 +71,19 @@ class MobileQualityMenuTest {
         // Auto picked in the player over a saved 1080p.
         assertEquals("auto", state(sourcePlays, picked = "auto").activeQualityId(menu))
         assertEquals("720p-medium", state(sourcePlays, picked = "720p-medium").activeQualityId(menu))
+    }
+
+    @Test
+    fun aPlanThatReportsItsEntryOverridesTheInferredRow() {
+        val menu = playbackQualityMenu(ladder)
+        val capped = PlaybackEffectiveRecipeV3(width = 1280, height = 720, bitrateKbps = 3_000)
+
+        assertEquals("720p-medium", state(capped).activeQualityId(menu))
+        // An encode between two rungs: no row, and the control names the setting.
+        val between = state(capped, reported = true)
+        assertNull(between.activeQualityId(menu))
+        assertEquals(UiText.Key(SharedString.Quality1080p), playbackQualityValueLabel(menu, null, between.qualityPreference))
+        assertEquals("auto", state(capped, sessionPreference = "auto", reported = true).activeQualityId(menu))
     }
 
     @Test

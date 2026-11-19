@@ -1,5 +1,8 @@
 package org.siloserver.silo.model.settings
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+
 /**
  * The cellular quality picker's presets.
  *
@@ -27,7 +30,7 @@ package org.siloserver.silo.model.settings
  */
 data class QualityPreset(
     val id: String,
-    val label: String,
+    val label: UiText,
     /** A `playback.preferred_quality` enum member. */
     val resolution: String,
     /** null is uncapped — the absence of a `playback.max_bitrate_kbps` row. */
@@ -44,49 +47,49 @@ object QualityPresets {
     val ALL: List<QualityPreset> = listOf(
         QualityPreset(
             id = "auto",
-            label = "Auto",
+            label = QualityChoices.resolutionText(RESOLUTION_AUTO),
             resolution = RESOLUTION_AUTO,
             bitrateKbps = null,
         ),
         QualityPreset(
             id = "2160p",
-            label = "4K",
+            label = QualityChoices.resolutionText("2160p"),
             resolution = "2160p",
             bitrateKbps = null,
         ),
         QualityPreset(
             id = "1080p-high",
-            label = "1080p High",
+            label = preset(SharedString.QualityPresetHigh, "1080p"),
             resolution = "1080p",
             bitrateKbps = 10000,
         ),
         QualityPreset(
             id = "1080p",
-            label = "1080p",
+            label = QualityChoices.resolutionText("1080p"),
             resolution = "1080p",
             bitrateKbps = 6000,
         ),
         QualityPreset(
             id = "1080p-low",
-            label = "1080p Low",
+            label = preset(SharedString.QualityPresetLow, "1080p"),
             resolution = "1080p",
             bitrateKbps = 3000,
         ),
         QualityPreset(
             id = "720p-high",
-            label = "720p High",
+            label = preset(SharedString.QualityPresetHigh, "720p"),
             resolution = "720p",
             bitrateKbps = 4000,
         ),
         QualityPreset(
             id = "720p",
-            label = "720p",
+            label = QualityChoices.resolutionText("720p"),
             resolution = "720p",
             bitrateKbps = 2000,
         ),
         QualityPreset(
             id = "480p",
-            label = "480p",
+            label = QualityChoices.resolutionText("480p"),
             resolution = "480p",
             bitrateKbps = 1500,
         ),
@@ -102,26 +105,6 @@ object QualityPresets {
     }
 
     fun byId(id: String?): QualityPreset? = ALL.firstOrNull { it.id == id }
-
-    /**
-     * A label for any stored pair, including combinations no preset covers —
-     * someone who set the two axes independently through the API, or whose
-     * values came from a legacy compound value.
-     */
-    fun describe(resolution: String?, bitrateKbps: Int?): String {
-        presetFor(resolution, bitrateKbps)?.let { return it.label }
-
-        val normalized = normalizeResolution(resolution)
-        val resolutionLabel = when (normalized) {
-            RESOLUTION_AUTO -> "Auto"
-            "2160p" -> "4K"
-            else -> normalized
-        }
-        val capped = bitrateKbps?.takeIf { it > 0 } ?: return resolutionLabel
-        val mbps = capped / 1000.0
-        val rounded = if (capped % 1000 == 0) "${capped / 1000}" else formatOneDecimal(mbps)
-        return "$resolutionLabel at $rounded Mbps"
-    }
 
     /**
      * Reduces any stored resolution — including the compound transcode-ladder
@@ -143,8 +126,7 @@ object QualityPresets {
         }
     }
 
-    private fun formatOneDecimal(value: Double): String {
-        val tenths = kotlin.math.round(value * 10).toInt()
-        return "${tenths / 10}.${tenths % 10}"
-    }
+    /** "1080p High" for a preset with a bitrate step in its name. */
+    private fun preset(step: SharedString, resolution: String): UiText =
+        UiText.Key(step, listOf(QualityChoices.resolutionText(resolution)))
 }

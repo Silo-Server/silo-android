@@ -30,6 +30,7 @@ import androidx.tv.material3.Text
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.tv.data.preferences.TvHomeSectionPreferences
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
@@ -43,11 +44,16 @@ import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.viewmodel.HomeDismissal
 import org.siloserver.silo.viewmodel.HomeViewModel
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 
 internal fun shouldShowHomeEmptyState(
     isLoading: Boolean,
-    error: String?,
+    error: UiText?,
     visibleSectionCount: Int,
 ): Boolean = !isLoading && error == null && visibleSectionCount == 0
 
@@ -66,6 +72,8 @@ fun TvHomeScreen(
     onPlayItem: (contentId: String, type: String?, resumePositionSeconds: Double?) -> Unit = { _, _, _ -> },
     onSeeAll: () -> Unit = {},
     onOpenForYou: () -> Unit = {},
+    /** Opens a row's full page from its "Explore all" card. */
+    onExploreSection: ((ResolvedSection) -> Unit)? = null,
     onOpenSettings: () -> Unit = {},
     onInitialContentFocus: () -> Unit = {},
     focusRequest: Int = 0,
@@ -75,12 +83,22 @@ fun TvHomeScreen(
     firstRowContainerFocusRequester: FocusRequester? = null,
     shouldRefreshOnResume: () -> Boolean = { true },
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
+    /** Opens a card of a row of collections. */
+    onCollectionClick: ((SectionCollectionCard) -> Unit)? = null,
+    /**
+     * The libraries TV shows this profile, whose server collections Home's
+     * rows may show; null until they are known, which shows none. See
+     * [withTvShownCollections].
+     */
+    homeCollectionLibraryIds: Set<Int>? = null,
     viewModel: HomeViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
     val homeSectionPreferences: TvHomeSectionPreferences = koinInject()
     val homeSectionPreferenceState by homeSectionPreferences.state.collectAsState()
-    val normalizedSections = remember(state.sections) { state.sections.normalizeTvHomeSections() }
+    val normalizedSections = remember(state.sections, homeCollectionLibraryIds) {
+        state.sections.normalizeTvHomeSections().withTvShownCollections(homeCollectionLibraryIds)
+    }
     val visibleSections = remember(normalizedSections, homeSectionPreferenceState.layout) {
         TvHomeSectionPreferences.arrange(
             sections = normalizedSections,
@@ -121,7 +139,7 @@ fun TvHomeScreen(
             modifier = Modifier.background(MaterialTheme.colorScheme.background),
         )
         state.error != null && state.sections.isEmpty() -> TvErrorScreen(
-            message = state.error!!,
+            message = state.error!!.text(),
             onRetry = viewModel::loadSections,
             modifier = Modifier.background(MaterialTheme.colorScheme.background),
         )
@@ -143,6 +161,7 @@ fun TvHomeScreen(
                 onPlayItem = onPlayItem,
                 onSeeAll = onSeeAll,
                 onOpenForYou = onOpenForYou,
+                onExploreSection = onExploreSection,
                 onInitialContentFocus = onInitialContentFocus,
                 focusRequest = focusRequest,
                 detailReturnFocusRequest = detailReturnFocusRequest,
@@ -150,12 +169,12 @@ fun TvHomeScreen(
                 firstRowFocusRequester = firstRowFocusRequester,
                 firstRowContainerFocusRequester = firstRowContainerFocusRequester,
                 onContentUpFallbackChanged = onContentUpFallbackChanged,
+                onCollectionClick = onCollectionClick,
                 onSetWatched = viewModel::setWatched,
                 onMarqueeTranslated = viewModel::refreshFromRealtime,
                 onToggleFavorite = viewModel::toggleFavorite,
                 onToggleWatchlist = viewModel::toggleWatchlist,
-                onDismissContinueWatching = viewModel::dismissContinueWatching,
-                onDismissNextUp = viewModel::dismissNextUp,
+                onRemoveFromHome = viewModel::dismissFromHome,
             )
         }
     }
@@ -195,18 +214,18 @@ private fun TvHomeEmptyState(
         ) {
             Text(
                 text = if (sectionsHiddenByPreference) {
-                    "Home sections are hidden"
+                    stringResource(CommonR.string.home_hiddenSections)
                 } else {
-                    "Nothing to watch yet"
+                    stringResource(CommonR.string.home_empty)
                 },
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = if (sectionsHiddenByPreference) {
-                    "Choose which rows appear in Settings → General → Home Sections."
+                    stringResource(CommonR.string.home_hiddenSectionsBodyTv)
                 } else {
-                    "Add media to your libraries or start watching to see it here."
+                    stringResource(CommonR.string.home_emptyBody)
                 },
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -217,7 +236,11 @@ private fun TvHomeEmptyState(
                 contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp),
             ) {
                 Text(
-                    text = if (sectionsHiddenByPreference) "Open Settings" else "Refresh",
+                    text = if (sectionsHiddenByPreference) {
+                        stringResource(CommonR.string.home_openSettings)
+                    } else {
+                        stringResource(CommonR.string.states_refresh)
+                    },
                     style = MaterialTheme.typography.labelLarge,
                 )
             }
@@ -233,6 +256,7 @@ private fun TvHomeContent(
     onPlayItem: (contentId: String, type: String?, resumePositionSeconds: Double?) -> Unit,
     onSeeAll: () -> Unit = {},
     onOpenForYou: () -> Unit = {},
+    onExploreSection: ((ResolvedSection) -> Unit)? = null,
     onInitialContentFocus: () -> Unit,
     focusRequest: Int,
     detailReturnFocusRequest: Int,
@@ -240,16 +264,19 @@ private fun TvHomeContent(
     firstRowFocusRequester: FocusRequester?,
     firstRowContainerFocusRequester: FocusRequester?,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)?,
+    onCollectionClick: ((SectionCollectionCard) -> Unit)? = null,
     onSetWatched: (String, Boolean) -> Unit = { _, _ -> },
     onToggleFavorite: (String, Boolean) -> Unit = { _, _ -> },
     onToggleWatchlist: (String, Boolean) -> Unit = { _, _ -> },
-    onDismissContinueWatching: (String, String) -> Unit = { _, _ -> },
-    onDismissNextUp: (String, String) -> Unit = { _, _ -> },
+    onRemoveFromHome: (SectionItem) -> Unit = {},
     sectionsFullyResolved: Boolean = true,
     onMarqueeTranslated: () -> Unit = {},
 ) {
+    val resumeText = stringResource(CommonR.string.cardMenu_resume)
+    val playText = stringResource(CommonR.string.cardMenu_play)
     TvSkylineSectionFeed(
         onMarqueeTranslated = onMarqueeTranslated,
+        onCollectionClick = onCollectionClick,
         surfaceKey = "home",
         // tvOS Home drops the foreground marquee + row band by 56pt while
         // keeping the ambient art and top navigation fixed (28dp at TV scale).
@@ -270,6 +297,7 @@ private fun TvHomeContent(
         onSeeAllClickForSection = { section ->
             if (section.isForYouRow()) onOpenForYou else null
         },
+        onExploreAllForSection = onExploreSection,
         showProgressForSection = { section ->
             section.isTvProgressRow()
         },
@@ -298,10 +326,8 @@ private fun TvHomeContent(
             }
         },
         cardActions = { section, item ->
-            val isProgressRow = section.isTvProgressRow()
             val isContinueWatching = section.isTvContinueWatchingRow()
-            val progressUpdatedAt = item.progressUpdatedAt
-            val seriesId = item.seriesId
+            val dismissal = if (section.isTvProgressRow()) HomeDismissal.of(item) else null
             TvMediaCardActions(
                 onPlay = if (isContinueWatching) {
                     {
@@ -314,20 +340,12 @@ private fun TvHomeContent(
                 } else {
                     null
                 },
-                playLabel = if (item.positionSeconds != null) "Resume" else "Play",
+                playLabel = if (item.positionSeconds != null) resumeText else playText,
                 onSetWatched = { watched -> onSetWatched(item.contentId, watched) },
                 onToggleFavorite = { fav -> onToggleFavorite(item.contentId, fav) },
                 onToggleWatchlist = { wl -> onToggleWatchlist(item.contentId, wl) },
-                onRemoveFromContinueWatching = when {
-                    !isProgressRow -> null
-                    progressUpdatedAt != null -> {
-                        { onDismissContinueWatching(item.contentId, progressUpdatedAt) }
-                    }
-                    seriesId != null -> {
-                        { onDismissNextUp(item.contentId, seriesId) }
-                    }
-                    else -> null
-                },
+                onRemoveFromHome = dismissal?.let { { onRemoveFromHome(item) } },
+                removeFromHomeLabel = dismissal?.menuLabel.orEmpty(),
             )
         },
     )

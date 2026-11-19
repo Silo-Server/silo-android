@@ -77,12 +77,17 @@ class DurableLoginAuthorityTest {
     }
 
     @Test fun bootstrapIsConcurrentAndCheckedEvenIfFailedCommitChangedPreferenceMemory() = runTest {
-        val registry = AndroidServerRegistry(prefs)
-        val id = registry.addOrUpdate("https://example.invalid")
-        registry.switchTo(id)
-        // Existing authenticated installation predating durable identity.
+        val saved = AndroidServerRegistry(prefs)
+        val id = saved.addOrUpdate("https://example.invalid")
+        saved.switchTo(id)
+        // Existing authenticated installation predating durable identity (and
+        // accounts): the next launch's registry migrates the per-server slot
+        // into an account that has tokens but no login id yet.
         prefs.edit().putString("$id.access_token", "a").putString("$id.refresh_token", "r")
-            .putString("$id.profile_id", "p").commit()
+            .putString("$id.profile_id", "p").remove(AndroidServerRegistry.KEY_ACCOUNTS_MIGRATED).commit()
+        val registry = AndroidServerRegistry(prefs)
+        val account = assertNotNull(registry.activeAccountId.value)
+        assertNull(prefs.getString(AndroidServerRegistry.accountScopedKey(id, account, "login_authority_id"), null))
         var fail = true
         val controlled = object : SharedPreferences by prefs {
             override fun edit(): SharedPreferences.Editor {

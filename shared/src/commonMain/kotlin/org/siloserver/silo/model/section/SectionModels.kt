@@ -39,6 +39,13 @@ data class SectionItem(
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("backdrop_url") val backdropUrl: String? = null,
     @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
+    /** Episode cards: the parent series' and season's artwork, never an episode still. Absent on older servers. */
+    @SerialName("series_poster_url") val seriesPosterUrl: String? = null,
+    @SerialName("series_poster_thumbhash") val seriesPosterThumbhash: String? = null,
+    @SerialName("series_backdrop_url") val seriesBackdropUrl: String? = null,
+    @SerialName("series_backdrop_thumbhash") val seriesBackdropThumbhash: String? = null,
+    @SerialName("season_poster_url") val seasonPosterUrl: String? = null,
+    @SerialName("season_poster_thumbhash") val seasonPosterThumbhash: String? = null,
     @SerialName("logo_url") val logoUrl: String? = null,
     @SerialName("user_state") val userState: MediaItemUserState? = null,
     /** This profile's metadata language while the card's description is not available in it yet. */
@@ -52,20 +59,115 @@ data class ResolvedSection(
     val id: String,
     @SerialName("section_type") val sectionType: String,
     val title: String,
+    /**
+     * The shared catalog key whose English is [title] (`home.section.*`),
+     * present only while the title is the server's own text, with its named
+     * arguments. A client that has the key shows its translation; otherwise
+     * [title]. Absent on servers that predate it and for titles someone typed.
+     */
+    @SerialName("title_key") val titleKey: String? = null,
+    @SerialName("title_args") val titleArgs: Map<String, String>? = null,
     val featured: Boolean = false,
     @SerialName("item_limit") val itemLimit: Int = 0,
     @SerialName("total_count") val totalCount: Int = 0,
     @SerialName("is_custom") val isCustom: Boolean = false,
     val customized: Boolean = false,
-    val items: List<SectionItem> = emptyList()
+    val items: List<SectionItem> = emptyList(),
+    /**
+     * A row of collections' cards ([isCollectionRow]), in the row's order.
+     * Such a row has no [items], its [totalCount] counts these cards, and
+     * [itemLimit] does not apply. Empty on every other row.
+     */
+    val collections: List<SectionCollectionCard> = emptyList(),
 ) {
     /** Convenience alias for [sectionType] used by domain layer. */
     val type: String get() = sectionType
+
+    /** A row whose cards are collections, not titles (`collection_posters`). */
+    val isCollectionRow: Boolean get() = sectionType == COLLECTION_POSTERS_SECTION_TYPE
+
+    /**
+     * Whether the row has anything to show: its collections for a row of
+     * collections, its titles for every other row.
+     */
+    val hasCards: Boolean get() = if (isCollectionRow) collections.isNotEmpty() else items.isNotEmpty()
+}
+
+/** `section_type` of a row of collections. */
+const val COLLECTION_POSTERS_SECTION_TYPE = "collection_posters"
+
+/**
+ * One card of a row of collections. A [SOURCE_LIBRARY] card opens the server
+ * collection [id] in library [libraryId]; a [SOURCE_USER] card opens the
+ * personal collection [id], made by [creatorProfileId].
+ */
+@Serializable
+data class SectionCollectionCard(
+    // Defaults keep one malformed card from failing the whole Home read;
+    // [isOpenable] then leaves it out.
+    val id: String = "",
+    val source: String = "",
+    val title: String = "",
+    /** The assigned poster or the viewer's collage; blank means the collection placeholder. */
+    @SerialName("poster_url") val posterUrl: String? = null,
+    @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
+    @SerialName("poster_is_collage") val posterIsCollage: Boolean = false,
+    /**
+     * Server collections with a backdrop: presigned at the size a collection
+     * page's hero uses. Absent on servers before silo-server#4415, on a
+     * collection without one, and always on a personal collection.
+     */
+    @SerialName("backdrop_url") val backdropUrl: String? = null,
+    @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
+    /** The titles the viewer sees in the collection. */
+    @SerialName("item_count") val itemCount: Int = 0,
+    /** Server collections: a library the viewer can open that holds it. */
+    @SerialName("library_id") val libraryId: String? = null,
+    /** Personal collections: the profile that made it. */
+    @SerialName("creator_profile_id") val creatorProfileId: String? = null,
+) {
+    val isUserCollection: Boolean get() = source == SOURCE_USER
+
+    /** [libraryId] as this client's library id; null for a personal collection. */
+    val libraryIdInt: Int? get() = libraryId?.toIntOrNull()
+
+    /** Unique within a row: a server and a personal collection may share an id. */
+    val rowKey: String get() = "$source:$id"
+
+    /** Whether this client can open the card: a known source, and a library for a server collection. */
+    val isOpenable: Boolean
+        get() = id.isNotBlank() && when (source) {
+            SOURCE_LIBRARY -> libraryIdInt != null
+            SOURCE_USER -> true
+            else -> false
+        }
+
+    /** The card as a library collection, for the collection cards and routes that take one. */
+    fun toLibraryCollection(): LibraryCollection = LibraryCollection(
+        id = id,
+        name = title,
+        itemCount = itemCount,
+        posterUrl = posterUrl?.takeIf { it.isNotBlank() },
+        posterThumbhash = posterThumbhash?.takeIf { it.isNotBlank() },
+        kind = if (isUserCollection) "user_collections" else "regular",
+        creatorProfileId = creatorProfileId,
+    )
+
+    companion object {
+        const val SOURCE_LIBRARY = "library"
+        const val SOURCE_USER = "user"
+    }
 }
 
 @Serializable
 data class SectionsResponse(
     val sections: List<ResolvedSection> = emptyList()
+)
+
+/** One Home row from `GET /api/v2/home/layout`: which row it is, without its cards. */
+data class HomeLayoutRow(
+    val id: String,
+    val sectionType: String,
 )
 
 @Serializable

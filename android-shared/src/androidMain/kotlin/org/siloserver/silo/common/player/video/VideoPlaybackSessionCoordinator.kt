@@ -39,11 +39,13 @@ class VideoPlaybackSessionCoordinator(
                     preferredAudioLanguage = result.preferredAudioLanguage,
                     preferredTextLanguage = result.preferredTextLanguage,
                     preferredSubtitleMode = result.preferredSubtitleMode,
+                    preferredSubtitleTrackSignature = result.preferredSubtitleTrackSignature,
                     showForcedSubtitles = result.showForcedSubtitles,
                     intro = result.intro,
                     credits = result.credits,
                     recap = result.recap,
                     preview = result.preview,
+                    markerSegments = result.markerSegments,
                     chapters = result.chapters,
                     seriesId = result.seriesId,
                     seriesTitle = result.seriesTitle,
@@ -61,6 +63,7 @@ class VideoPlaybackSessionCoordinator(
                     message = result.message,
                     diagnosticsCode = result.diagnosticsCode,
                     terminalReason = result.terminalReason,
+                    messageRes = result.messageRes,
                 )
             }
             is VideoPlaybackStartResult.ServerUnreachable -> {

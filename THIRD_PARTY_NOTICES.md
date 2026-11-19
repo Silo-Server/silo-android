@@ -22,6 +22,10 @@ The Dolby Vision bridge AAR is built from the `dolby_vision` crate in [`quietvoi
 
 `android-shared/src/androidMain/res/drawable/tmdb_logo.xml` is TMDB's approved "alt short" logo from <https://www.themoviedb.org/about/logos-attribution>, converted to a VectorDrawable without changing its shape or colours. It is a trademark of TMDB and is not covered by this repository's license. Silo shows it next to TMDB scores; keep it unmodified and less prominent than Silo's own branding.
 
+## Lucide Icons
+
+The card-overlay glyphs in `android-shared/src/androidMain/kotlin/org/siloserver/silo/common/overlays/OverlayIconMapping.kt` and the watched check in `CardWatchStatusBadge.kt` are drawn from [Lucide](https://lucide.dev) icon data (lucide-react 0.576.0), distributed under the ISC license; portions derived from Feather are under the MIT license. Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2026 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2026.
+
 ## Fonts
 
 The phone and TV apps bundle [Inter](https://github.com/rsms/inter) (`res/font/inter_*`, including Inter Tight) and [Outfit](https://github.com/Outfitio/Outfit-Fonts) (`res/font/outfit_*.ttf`). Both are distributed under the SIL Open Font License 1.1.

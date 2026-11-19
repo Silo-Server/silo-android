@@ -1170,8 +1170,8 @@ class DiagnosticsBundleBuilderTest {
             "player error (ERROR_CODE_IO_BAD_HTTP_STATUS, http 410, InvalidResponseCodeException, IOException)",
             "player error (ERROR_CODE_DECODER_INIT_FAILED, MediaCodecVideoRenderer, " +
                 "DecoderInitializationException, IllegalStateException)",
-            "media load error (media video, http 410, InvalidResponseCodeException, IOException)",
-            "media load error (manifest unknown, HttpDataSourceException, SocketTimeoutException, canceled)",
+            "media load error (media video, ERROR_CODE_IO_BAD_HTTP_STATUS, http 410, InvalidResponseCodeException, IOException)",
+            "media load error (manifest unknown, ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT, HttpDataSourceException, SocketTimeoutException, canceled)",
             "progressive direct-play retry (StreamResetException CANCEL, try 1, retry_delay_ms=1000)",
             "progressive direct-play retry exhausted (ProtocolException, try 12)",
             "session ended remotely (http 410)",

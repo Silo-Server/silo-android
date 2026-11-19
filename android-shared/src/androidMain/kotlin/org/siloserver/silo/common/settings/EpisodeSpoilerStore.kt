@@ -3,6 +3,7 @@ package org.siloserver.silo.common.settings
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
@@ -90,7 +91,7 @@ interface EpisodeSpoilerStore {
     val lastError: StateFlow<String?>
 
     /** Why the last switch change wasn't saved, for Settings; cleared by the next save. */
-    val saveError: StateFlow<String?>
+    val saveError: StateFlow<SettingsSaveError?>
 
     /** Idempotent first load. Safe to call from every provider mount. */
     suspend fun hydrateIfNeeded()
@@ -115,6 +116,7 @@ class DefaultEpisodeSpoilerStore private constructor(
     private val getActiveProfileId: suspend () -> String?,
     private val getServerUrl: suspend () -> String?,
     private val captureAuthority: suspend () -> AuthScopeSnapshot?,
+    private val getActiveAccountId: suspend () -> String?,
     private val cache: EpisodeSpoilerCache,
     identityChanges: Flow<Unit>,
 ) : EpisodeSpoilerStore {
@@ -126,6 +128,7 @@ class DefaultEpisodeSpoilerStore private constructor(
         getActiveProfileId: suspend () -> String?,
         getServerUrl: suspend () -> String?,
         captureAuthority: suspend () -> AuthScopeSnapshot?,
+        getActiveAccountId: suspend () -> String? = { null },
         identityChanges: Flow<Unit> = emptyFlow(),
     ) : this(
         repository = repository,
@@ -133,6 +136,7 @@ class DefaultEpisodeSpoilerStore private constructor(
         getActiveProfileId = getActiveProfileId,
         getServerUrl = getServerUrl,
         captureAuthority = captureAuthority,
+        getActiveAccountId = getActiveAccountId,
         cache = SharedPreferencesEpisodeSpoilerCache(
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
         ),
@@ -143,8 +147,8 @@ class DefaultEpisodeSpoilerStore private constructor(
     private val _lastError = MutableStateFlow<String?>(null)
     override val state: StateFlow<EpisodeSpoilerState> = _state.asStateFlow()
     override val lastError: StateFlow<String?> = _lastError.asStateFlow()
-    private val _saveError = MutableStateFlow<String?>(null)
-    override val saveError: StateFlow<String?> = _saveError.asStateFlow()
+    private val _saveError = MutableStateFlow<SettingsSaveError?>(null)
+    override val saveError: StateFlow<SettingsSaveError?> = _saveError.asStateFlow()
 
     private val lock = Any()
 
@@ -309,11 +313,13 @@ class DefaultEpisodeSpoilerStore private constructor(
                 if (generation != startGeneration) return@launch
                 repository.setProfileValue(setting.key, JsonPrimitive(enabled), authority)
             }
-            val error = when (result) {
+            // The failure's own words; null when it gave none.
+            val detail = when (result) {
                 is ApiResult.Success -> null
-                is ApiResult.Error -> result.message.ifBlank { SAVE_FAILED_MESSAGE }
-                is ApiResult.NetworkError -> result.exception.message ?: SAVE_FAILED_MESSAGE
+                is ApiResult.Error -> result.message.ifBlank { null }
+                is ApiResult.NetworkError -> result.exception.message
             }
+            val error = if (result is ApiResult.Success) null else detail ?: SAVE_FAILED_MESSAGE
             val snapshot = synchronized(lock) {
                 if (generation != startGeneration) return@launch
                 if (error == null) confirmed = confirmed.with(setting, enabled)
@@ -326,7 +332,7 @@ class DefaultEpisodeSpoilerStore private constructor(
                     _state.value = _state.value.with(setting, shown)
                 }
                 _lastError.value = error
-                _saveError.value = error?.let(::saveErrorText)
+                _saveError.value = error?.let { saveError(detail) }
                 confirmed
             }
             if (error == null) synchronized(lock) {
@@ -352,17 +358,17 @@ class DefaultEpisodeSpoilerStore private constructor(
         _lastError.value = null
     }
 
-    private suspend fun currentIdentity(): String? {
-        val profileId = getActiveProfileId()?.takeIf { it.isNotBlank() } ?: return null
-        return "${getServerUrl().orEmpty()}|$profileId"
+    private suspend fun currentIdentity(): String? = AccountScopedKeys.readStable(getActiveAccountId) { accountId ->
+        val profileId = getActiveProfileId()?.takeIf { it.isNotBlank() } ?: return@readStable null
+        AccountScopedKeys.identity(getServerUrl().orEmpty(), accountId, profileId)
     }
 
     internal companion object {
         const val PREFS_NAME = "silo_episode_spoilers"
         const val SAVE_FAILED_MESSAGE = "Could not save the setting."
 
-        /** Same wording as the title art and skip-interval save errors. */
-        fun saveErrorText(message: String): String = "Couldn't save spoiler settings: $message"
+        /** A failed save as shown; [detail] null words it as "Could not save the setting." */
+        fun saveError(detail: String?): SettingsSaveError = SettingsSaveError.EpisodeSpoilers(detail)
 
         /** Only a JSON boolean `true` turns a switch on; anything else is off. */
         fun decode(effective: Map<String, EffectiveSettingValue>, setting: EpisodeSpoilerSetting): Boolean =
@@ -388,6 +394,7 @@ class DefaultEpisodeSpoilerStore private constructor(
             getActiveProfileId = getActiveProfileId,
             getServerUrl = getServerUrl,
             captureAuthority = captureAuthority,
+            getActiveAccountId = { null },
             cache = cache,
             identityChanges = identityChanges,
         )
@@ -444,11 +451,7 @@ private class SharedPreferencesEpisodeSpoilerCache(
         }
     }
 
-    private fun prefix(identity: String): String =
-        "es_" + java.security.MessageDigest.getInstance("SHA-256")
-            .digest(identity.toByteArray(Charsets.UTF_8))
-            .joinToString(separator = "") { "%02x".format(it) }
-            .take(24)
+    private fun prefix(identity: String): String = settingsCachePrefix("es_", identity)
 
     private companion object {
         const val SUPPORTED = "supported"

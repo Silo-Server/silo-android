@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -37,6 +38,8 @@ import org.siloserver.silo.android.ui.theme.SiloDestructive
 import org.siloserver.silo.android.ui.theme.SiloForeground
 import org.siloserver.silo.android.ui.theme.SiloMutedText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceContainer
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.auth.AccountIdentity
 
 /**
@@ -57,45 +60,48 @@ fun SignInSection(
     }
     if (!state.visible) return
 
-    SettingsSection(title = "Sign-in", modifier = modifier) {
+    SettingsSection(title = stringResource(CommonR.string.settings_signIn_title), modifier = modifier) {
         state.identities.forEach { identity ->
             SettingsRow(
-                label = identity.providerName.ifBlank { "Sign-in provider (turned off)" },
+                label = identity.providerName.ifBlank { stringResource(CommonR.string.settings_signIn_providerTurnedOff) },
                 description = identityDescription(identity),
             )
             // The server says up front when this is the only way to sign in.
             if (state.canUnlink != false) {
                 SettingsDestructiveRow(
-                    label = "Disconnect",
-                    description = "Stop signing in to this account with ${SignInSettingsViewModel.providerLabel(identity)}.",
+                    label = stringResource(CommonR.string.settings_signIn_disconnect),
+                    description = settingsText(
+                        CommonR.string.settings_signIn_disconnectDescription,
+                        SignInSettingsViewModel.providerLabel(identity),
+                    ).resolve(),
                     onClick = { viewModel.onDisconnect(identity) },
                     enabled = !state.busy,
                 )
             }
         }
         if (state.canUnlink == false) {
-            SettingsProse(body = SignInSettingsViewModel.ONLY_SIGN_IN_METHOD)
+            SettingsProse(body = SignInSettingsViewModel.ONLY_SIGN_IN_METHOD.resolve())
         }
         state.connectable.forEach { provider ->
             SettingsNavigationRow(
-                label = "Connect ${provider.displayName}",
-                description = SignInSettingsViewModel.connectDescription(provider.displayName),
+                label = stringResourceWithNames(CommonR.string.settings_signIn_connect, provider.displayName),
+                description = SignInSettingsViewModel.connectDescription(provider.displayName).resolve(),
                 onClick = { viewModel.onConnect(provider) },
                 enabled = !state.busy,
             )
         }
         state.directory?.let { provider ->
             SettingsNavigationRow(
-                label = "Connect ${provider.displayName}",
-                description = SignInSettingsViewModel.connectDirectoryDescription(provider.displayName),
+                label = stringResourceWithNames(CommonR.string.settings_signIn_connect, provider.displayName),
+                description = SignInSettingsViewModel.connectDirectoryDescription(provider.displayName).resolve(),
                 onClick = { viewModel.onConnectDirectory(provider) },
                 enabled = !state.busy,
             )
         }
         state.network?.let { provider ->
             SettingsNavigationRow(
-                label = "Connect ${provider.displayName}",
-                description = SignInSettingsViewModel.connectNetworkDescription(provider.displayName, state.networkLinkKeepsPassword),
+                label = stringResourceWithNames(CommonR.string.settings_signIn_connect, provider.displayName),
+                description = SignInSettingsViewModel.connectNetworkDescription(provider.displayName, state.networkLinkKeepsPassword).resolve(),
                 onClick = { viewModel.onConnectNetwork(provider) },
                 enabled = !state.busy,
             )
@@ -103,16 +109,18 @@ fun SignInSection(
         // Connect and disconnect finish after the browser or a dialog closes:
         // announce the outcome, which appears away from where focus is.
         val announced = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
-        state.message?.let { SettingsProse(body = it, modifier = announced) }
-        state.error?.let { SettingsProse(body = it, title = "Couldn't finish", modifier = announced) }
+        state.message?.let { SettingsProse(body = it.resolve(), modifier = announced) }
+        state.error?.let {
+            SettingsProse(body = it.resolve(), title = stringResource(CommonR.string.settings_signIn_couldNotFinish), modifier = announced)
+        }
     }
 
     state.passwordPrompt?.let { provider ->
         ConfirmPasswordDialog(
             providerName = provider.displayName,
-            body = SignInSettingsViewModel.connectPrompt(provider.displayName),
-            confirmLabel = "Continue",
-            error = state.passwordError,
+            body = SignInSettingsViewModel.connectPrompt(provider.displayName).resolve(),
+            confirmLabel = stringResource(CommonR.string.settings_signIn_continue),
+            error = state.passwordError?.resolve(),
             busy = state.busy,
             onConfirm = viewModel::onConfirmPassword,
             onDismiss = viewModel::onDismissPasswordPrompt,
@@ -125,9 +133,9 @@ fun SignInSection(
                 provider.displayName,
                 provider.networkIdentity?.label,
                 state.networkLinkKeepsPassword,
-            ),
-            confirmLabel = "Connect",
-            error = state.passwordError,
+            ).resolve(),
+            confirmLabel = stringResource(CommonR.string.common_connect),
+            error = state.passwordError?.resolve(),
             busy = state.busy,
             onConfirm = viewModel::onConfirmNetwork,
             onDismiss = viewModel::onDismissNetworkPrompt,
@@ -136,7 +144,7 @@ fun SignInSection(
     state.directoryPrompt?.let { provider ->
         ConnectDirectoryDialog(
             providerName = provider.displayName,
-            error = state.passwordError,
+            error = state.passwordError?.resolve(),
             busy = state.busy,
             onConfirm = viewModel::onConfirmDirectory,
             onDismiss = viewModel::onDismissDirectoryPrompt,
@@ -144,21 +152,27 @@ fun SignInSection(
     }
     state.confirmDisconnect?.let { identity ->
         SiloConfirmDialog(
-            title = "Disconnect ${SignInSettingsViewModel.providerLabel(identity)}?",
-            body = SignInSettingsViewModel.disconnectConfirmBody(identity, state.canUnlink),
-            confirmLabel = "Disconnect",
+            title = settingsText(
+                CommonR.string.settings_signIn_disconnectConfirm_title,
+                SignInSettingsViewModel.providerLabel(identity),
+            ).resolve(),
+            body = SignInSettingsViewModel.disconnectConfirmBody(identity, state.canUnlink).resolve(),
+            confirmLabel = stringResource(CommonR.string.settings_signIn_disconnect),
             onConfirm = viewModel::onConfirmDisconnect,
             onDismiss = viewModel::onDismissDisconnect,
         )
     }
 }
 
-private fun identityDescription(identity: AccountIdentity): String = buildString {
-    val who = identity.accountLabel
-    if (who.isNotBlank()) append("Signed in as ").append(who)
-    formatDate(identity.linkedAt)?.let {
-        if (isNotEmpty()) append(" · ")
-        append("Connected ").append(it)
+@Composable
+private fun identityDescription(identity: AccountIdentity): String {
+    val who = identity.accountLabel.takeIf { it.isNotBlank() }
+    val date = formatDate(identity.linkedAt)
+    return when {
+        who != null && date != null -> stringResourceWithNames(CommonR.string.settings_signIn_identity_signedInAsConnected, who, date)
+        who != null -> stringResourceWithNames(CommonR.string.settings_signIn_identity_signedInAs, who)
+        date != null -> stringResource(CommonR.string.settings_signIn_identity_connected, date)
+        else -> ""
     }
 }
 
@@ -180,23 +194,23 @@ private fun ConfirmPasswordDialog(
 ) {
     var password by remember { mutableStateOf("") }
     SiloDialog(
-        title = "Connect $providerName",
+        title = stringResourceWithNames(CommonR.string.settings_signIn_connect, providerName),
         message = body,
         onDismissRequest = onDismiss,
         actions = listOf(
             SiloDialogAction(
-                label = if (busy) "Checking…" else confirmLabel,
+                label = if (busy) stringResource(CommonR.string.settings_signIn_checking) else confirmLabel,
                 onClick = { onConfirm(password) },
                 style = SiloDialogActionStyle.Primary,
                 enabled = !busy && password.isNotEmpty(),
             ),
-            SiloDialogAction("Cancel", onDismiss),
+            SiloDialogAction(stringResource(CommonR.string.common_cancel), onDismiss),
         ),
     ) {
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("Password") },
+            label = { Text(stringResource(CommonR.string.settings_signIn_password)) },
             singleLine = true,
             isError = error != null,
             supportingText = error?.let { { Text(it, color = SiloDestructive) } },
@@ -221,23 +235,23 @@ private fun ConnectDirectoryDialog(
     var directoryPassword by remember { mutableStateOf("") }
     val complete = !busy && password.isNotEmpty() && username.isNotBlank() && directoryPassword.isNotEmpty()
     SiloDialog(
-        title = "Connect $providerName",
-        message = SignInSettingsViewModel.connectDirectoryPrompt(providerName),
+        title = stringResourceWithNames(CommonR.string.settings_signIn_connect, providerName),
+        message = SignInSettingsViewModel.connectDirectoryPrompt(providerName).resolve(),
         onDismissRequest = onDismiss,
         actions = listOf(
             SiloDialogAction(
-                label = if (busy) "Checking…" else "Connect",
+                label = stringResource(if (busy) CommonR.string.settings_signIn_checking else CommonR.string.common_connect),
                 onClick = { onConfirm(password, username, directoryPassword) },
                 style = SiloDialogActionStyle.Primary,
                 enabled = complete,
             ),
-            SiloDialogAction("Cancel", onDismiss),
+            SiloDialogAction(stringResource(CommonR.string.common_cancel), onDismiss),
         ),
     ) {
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("This account's password") },
+            label = { Text(stringResource(CommonR.string.settings_signIn_accountPassword)) },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
@@ -246,7 +260,7 @@ private fun ConnectDirectoryDialog(
         OutlinedTextField(
             value = username,
             onValueChange = { username = it },
-            label = { Text("$providerName username") },
+            label = { Text(stringResourceWithNames(CommonR.string.settings_signIn_directoryUsername, providerName)) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth(),
@@ -254,7 +268,7 @@ private fun ConnectDirectoryDialog(
         OutlinedTextField(
             value = directoryPassword,
             onValueChange = { directoryPassword = it },
-            label = { Text("$providerName password") },
+            label = { Text(stringResourceWithNames(CommonR.string.settings_signIn_directoryPassword, providerName)) },
             singleLine = true,
             isError = error != null,
             supportingText = error?.let { { Text(it, color = SiloDestructive) } },

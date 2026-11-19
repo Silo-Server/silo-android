@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.catalog.editionLabel
 import android.graphics.Rect
 import android.widget.Toast
@@ -26,14 +28,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Groups
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,14 +52,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import org.siloserver.silo.common.ui.LanguageNames
+import org.siloserver.silo.common.player.allowsAudioDelay
 import org.siloserver.silo.common.player.video.markerSkipTarget
 import org.siloserver.silo.common.player.video.ManualMarkerKind
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import org.siloserver.silo.android.R
 import org.siloserver.silo.common.player.NoticeTone
 import org.siloserver.silo.common.player.PlayerNotice
-import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
+import org.siloserver.silo.domain.player.BufferingQualityNotice
+import org.siloserver.silo.domain.player.BufferingQualityPill
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.PlaybackQualityOption
 import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.playback.playbackQualityValueLabel
@@ -66,6 +72,7 @@ import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
 import org.siloserver.silo.playback.statusLabelFor
 import org.siloserver.silo.playback.timingActionsFor
+import org.siloserver.silo.common.i18n.text
 
 /** How long a failed AI subtitle job stays on screen when its sheet was closed. */
 private const val AI_FAILURE_NOTICE_MS = 8_000L
@@ -104,7 +111,9 @@ fun PlayerOverlay(
     onNextUpVideoBoundsChanged: (Rect) -> Unit,
     brightnessFraction: Float,
     onSetBrightness: (Float) -> Unit,
-    showBufferingIndicator: Boolean = true,
+    // The loading spinner is up (PlayerScreen owns its timing). It fills the
+    // play disc while the controls show and stands alone while they don't.
+    spinnerVisible: Boolean = false,
     onBack: () -> Unit,
     onPlayPause: () -> Unit,
     onSeek: (Double) -> Unit,
@@ -205,6 +214,7 @@ fun PlayerOverlay(
     val context = LocalContext.current
 
     val introSkipState by viewModel.introSkipState.collectAsState()
+    val trickplayThumbnail by viewModel.trickplayThumbnail.collectAsState()
     val introSkipCountdownRun by viewModel.introSkipCountdownRun.collectAsState()
     val introSkipTimerRunning by viewModel.introSkipTimerRunning.collectAsState()
     // Back while the pill is up dismisses it and is consumed; a second Back
@@ -212,12 +222,34 @@ fun PlayerOverlay(
     // disabled. The player has no other BackHandler of its own — sheets live in
     // their own dialog windows, so an open sheet's Back never reaches here.
     BackHandler(enabled = introSkipState.isVisible && introPillAllowed) { viewModel.onDismissIntroPrompt() }
+    val bufferingPill by viewModel.bufferingPill.collectAsState()
+    val bufferingCountdownRun by viewModel.bufferingCountdownRun.collectAsState()
+    val bufferingTimerRunning by viewModel.bufferingTimerRunning.collectAsState()
+    val bufferingNoticeKind by viewModel.bufferingNotice.collectAsState()
+    // Hidden under Next Up, as the intro pill is.
+    val bufferingPillShown = bufferingPill.isVisible && !state.showUpNext
+    // Back on a buffering pill is consumed: Keep quality on the prompt, hide
+    // on the undo. The controller holds its pill while the intro pill shows;
+    // should both still be up, the intro pill takes Back.
+    BackHandler(enabled = bufferingPillShown && !(introSkipState.isVisible && introPillAllowed)) {
+        viewModel.onBufferingBack()
+    }
+    val bufferingNotice = bufferingNoticeKind?.let { kind ->
+        PlayerNotice(
+            stringResource(
+                when (kind) {
+                    BufferingQualityNotice.LOWERED -> CommonR.string.bufferingQuality_lowered
+                    BufferingQualityNotice.CANT_LOWER -> CommonR.string.bufferingQuality_cantLower
+                },
+            ),
+            NoticeTone.Info,
+        )
+    }
     val sleepTimerState by viewModel.sleepTimerState.collectAsState()
     val sleepTimerDefault by viewModel.sleepTimerDefaultMinutes.collectAsState()
     val videoGravity by viewModel.videoGravity.collectAsState()
     val playbackSpeed by viewModel.playbackSpeed.collectAsState()
     val notice by viewModel.notice.collectAsState()
-    val sessionState by viewModel.sessionState.collectAsState()
     val subtitleTools by viewModel.subtitleTools.collectAsState()
     val subtitleSync by viewModel.subtitleSyncState.collectAsState()
     val subtitleSyncNotice by viewModel.subtitleSyncNotice.collectAsState()
@@ -232,7 +264,7 @@ fun PlayerOverlay(
         }
         if (nextGravity != videoGravity) {
             viewModel.onSetVideoGravity(nextGravity)
-            Toast.makeText(context, mobileVideoGravityLabel(nextGravity), Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(mobileVideoGravityLabel(nextGravity)), Toast.LENGTH_SHORT).show()
         }
     }
     // Remote "display_message" from the control socket — show transiently.
@@ -252,7 +284,10 @@ fun PlayerOverlay(
         aiJobFailure?.let { failure ->
             // An open sheet shows the reason itself.
             if (!aiTranslateVisible) {
-                aiFailureNotice = PlayerNotice("AI subtitles failed. ${failure.message}", NoticeTone.Warning)
+                aiFailureNotice = PlayerNotice(
+                    context.getString(CommonR.string.player_notice_aiSubtitlesFailed, failure.message.text(context)),
+                    NoticeTone.Warning,
+                )
             }
             viewModel.consumeAiJobFailure(failure)
         }
@@ -265,6 +300,11 @@ fun PlayerOverlay(
             aiFailureNotice = null
         }
     }
+    // The buffering notice waits while this one holds the slot, so it keeps
+    // its full time for when it can show.
+    val aiFailureNoticeShown = aiFailureNotice != null
+    SideEffect { viewModel.onAiFailureNoticeChanged(aiFailureNoticeShown) }
+    DisposableEffect(viewModel) { onDispose { viewModel.onAiFailureNoticeChanged(false) } }
 
     // Lazy one-shot AI status probe on first TracksSheet open (web parity).
     LaunchedEffect(tracksSheetVisible) {
@@ -297,7 +337,8 @@ fun PlayerOverlay(
         ) {
         // Gesture layer stays out of the tree while controls are visible so
         // full-screen pointer handlers cannot consume taps meant for buttons.
-        if (!alwaysShowControls && !state.showControls && !state.showUpNext) {
+        // Nothing to toggle or skip until the item's first frame.
+        if (!alwaysShowControls && !state.showControls && !state.showUpNext && !state.awaitingFirstFrame) {
             PlayerGestureHandler(
                 onToggleControls = onToggleControls,
                 onSkipForward = gatedSkipForward,
@@ -316,19 +357,13 @@ fun PlayerOverlay(
             )
         }
 
-        // Buffering indicator. Shown during ExoPlayer buffering AND during outage
-        // recovery — the lifecycle's Reconnecting state isn't visible to the player,
-        // so we surface the spinner ourselves so the screen doesn't appear frozen.
-        if (showBufferingIndicator &&
-            (state.isBuffering || sessionState is SessionState.Reconnecting)
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .size(56.dp)
-                    .align(Alignment.Center),
-                color = PlayerChrome.Paper,
-                strokeWidth = 3.dp,
-            )
+        // The first load shows only the spinner; the controls arrive with the
+        // item's first frame.
+        val controlsShown = (alwaysShowControls || state.showControls) && !state.showUpNext && !menuDocked &&
+            !state.awaitingFirstFrame
+        // Up Next draws the spinner in its own video frame.
+        if (spinnerVisible && !controlsShown && !state.showUpNext) {
+            PlayerLoadingSpinner(modifier = Modifier.align(Alignment.Center))
         }
 
         AnimatedVisibility(
@@ -350,15 +385,30 @@ fun PlayerOverlay(
         // server-reconnecting / suspend warnings as a transient toast. Stacks above the
         // buffering spinner; fine to obscure briefly during Reconnecting (the spinner is
         // a redundant signal at that point).
+        // While the buffering pill shows, the anchor rises above the controls so
+        // the pill stays tappable, and drops below the top bar so it covers no
+        // control (the sleep timer chip's rule).
+        val noticeBelowTopBar = bufferingPillShown &&
+            (alwaysShowControls || state.showControls) && !state.showUpNext && !menuDocked
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(top = 16.dp, start = 16.dp),
+                .padding(top = if (noticeBelowTopBar) 72.dp else 16.dp, start = 16.dp)
+                .zIndex(if (bufferingPillShown) 9f else 0f),
             contentAlignment = Alignment.TopStart,
         ) {
-            // A session notice (reconnecting, suspended) outranks an AI failure.
-            PlayerNoticeOverlay(notice = notice ?: aiFailureNotice)
+            // A session notice (reconnecting, suspended) outranks an AI failure,
+            // and both outrank a buffering notice.
+            PlayerNoticeOverlay(
+                notice = notice ?: aiFailureNotice ?: bufferingNotice,
+                bufferingPill = if (bufferingPillShown) bufferingPill else BufferingQualityPill.Hidden,
+                bufferingCountdownRun = bufferingCountdownRun,
+                bufferingTimerRunning = bufferingTimerRunning,
+                onBufferingLower = viewModel::onBufferingLower,
+                onBufferingKeep = viewModel::onBufferingKeep,
+                onBufferingRestore = viewModel::onBufferingRestore,
+            )
         }
 
         // Subtitle sync card (top-right, below the top bar's actions): follows
@@ -417,7 +467,8 @@ fun PlayerOverlay(
                         modifier = Modifier.size(15.dp),
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    val label = roomStatus ?: "${roomSnapshot.memberCount} watching"
+                    val label = roomStatus
+                        ?: pluralStringResource(CommonR.plurals.player_watchParty_memberCount, roomSnapshot.memberCount, roomSnapshot.memberCount)
                     Text(
                         text = label,
                         style = PlayerType.PillLabel.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
@@ -426,7 +477,7 @@ fun PlayerOverlay(
                     )
                     if (isRoomHost && roomSnapshot.code.isNotBlank()) {
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = "Code ${roomSnapshot.code}", style = PlayerType.Time.copy(color = PlayerChrome.Graphite))
+                        Text(text = stringResource(CommonR.string.player_watchParty_code, roomSnapshot.code), style = PlayerType.Time.copy(color = PlayerChrome.Graphite))
                     }
                 }
             }
@@ -434,7 +485,7 @@ fun PlayerOverlay(
 
         // Transport controls (shown/hidden with animation)
         AnimatedVisibility(
-            visible = (alwaysShowControls || state.showControls) && !state.showUpNext && !menuDocked,
+            visible = controlsShown,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
@@ -443,31 +494,29 @@ fun PlayerOverlay(
         ) {
             PlayerControls(
                 title = state.title,
-                subtitle = state.subtitle,
+                subtitle = state.displaySubtitle(),
                 eyebrow = playerEyebrow(state),
                 tracksValue = playerTracksValue(state),
                 chapterValue = chapterTitleAt(state.chapters, shownPosition),
-                qualityValue = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference),
+                qualityValue = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference).text(),
                 pictureInPictureAvailable = pictureInPictureAvailable,
                 onEnterPictureInPicture = onEnterPictureInPicture,
                 isPlaying = state.isPlaying,
                 isPaused = state.isPaused,
+                isLoading = spinnerVisible,
                 position = shownPosition,
                 duration = state.duration,
                 bufferedPosition = state.bufferedPosition,
                 chapters = state.chapters,
-                intro = state.intro,
-                credits = state.credits,
-                recap = state.recap,
-                preview = state.preview,
+                markers = state.markerTimeline,
                 hasChapters = state.chapters.isNotEmpty(),
                 hasTracks = state.subtitleTracks.isNotEmpty() || state.audioTracks.isNotEmpty(),
                 hasQualityMenu = hasQualityMenu,
                 isOrientationLocked = isOrientationLocked,
                 orientationLockSupported = orientationLockSupported,
                 tabletopMode = tabletopMode,
-                playbackSpeed = playbackSpeed,
                 // A party plays at 1x; the saved speed is never changed from it.
+                playbackSpeed = if (inRoom) 1.0 else playbackSpeed,
                 playbackSpeedEnabled = !inRoom,
                 // A shuffle replaces the series order: no sequential next episode.
                 nextEpisode = state.nextEpisode.takeUnless { inRoom || state.shuffle != null },
@@ -497,6 +546,8 @@ fun PlayerOverlay(
                 onPlayNextEpisode = viewModel::playUpNextNow,
                 onSetBrightness = onSetBrightness,
                 onScrubbingChange = viewModel::onScrubbingChanged,
+                scrubThumbnail = trickplayThumbnail,
+                onScrubTarget = viewModel::showTrickplay,
                 castSlot = castSlot,
             )
         }
@@ -533,11 +584,11 @@ fun PlayerOverlay(
         }
 
         if (!state.showUpNext && !introSkipState.isVisible && seekEnabled && !state.isLoading) {
-            val target = markerSkipTarget(state.position, state.recap, state.credits)
+            val target = markerSkipTarget(state.position, state.markerTimeline)
             if (target != null) {
                 Box(modifier = bottomEndSlotModifier, contentAlignment = Alignment.BottomEnd) {
                     MarkerSkipPill(
-                        label = stringResource(if (target.kind == ManualMarkerKind.Recap) R.string.marker_skip_recap else R.string.marker_skip_credits),
+                        label = stringResource(if (target.kind == ManualMarkerKind.Recap) CommonR.string.marker_skipRecap else CommonR.string.marker_skipCredits),
                         onClick = { gatedSeek(target.endSeconds) },
                     )
                 }
@@ -579,6 +630,7 @@ fun PlayerOverlay(
                 nextEpisode = state.nextEpisode
                     ?: retainedUpNextInfo.takeUnless { state.showUpNext && state.shuffle != null },
                 onVideoBoundsChanged = onNextUpVideoBoundsChanged,
+                spinnerVisible = spinnerVisible,
                 onDeckItems = state.onDeckItems,
                 videoEnded = state.upNextVideoEnded,
                 countdownSeconds = state.upNextCountdownSeconds,
@@ -704,6 +756,9 @@ fun PlayerOverlay(
             PlaybackQualitySheet(
                 options = qualityOptions,
                 activeId = activeQualityId,
+                // A learned limit holds this Auto plan down.
+                autoLimitedAfterBuffering = state.playbackPlan?.bandwidthLimit != null &&
+                    activeQualityId == PLAYBACK_QUALITY_AUTO,
                 inRoom = inRoom,
                 onSelect = viewModel::onSelectQuality,
                 onDismiss = { qualitySheetVisible = false },
@@ -742,7 +797,7 @@ fun PlayerOverlay(
             // A party hides speed (session-only 1x) and the version picker.
             showPlaybackSpeed = !inRoom,
             showQuality = hasQualityMenu,
-            qualityLabel = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference),
+            qualityLabel = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference).text(),
             onOpenQuality = {
                 settingsSheetVisible = false
                 qualitySheetVisible = true
@@ -775,9 +830,12 @@ fun PlayerOverlay(
                 statsSheetVisible = true
             },
             audioDelayMs = viewModel.audioDelayMs.collectAsState().value,
-            audioDelayEnabled = state.playbackPlan?.claims?.audio?.passthrough != true,
+            audioDelayEnabled = viewModel.audioOutputPath.collectAsState().value.allowsAudioDelay(
+                planClaimsPassthrough = state.playbackPlan?.claims?.audio?.passthrough,
+            ),
             onSetAudioDelay = viewModel::onSetAudioDelay,
             subtitleDelayMs = viewModel.subtitleDelayMs.collectAsState().value,
+            subtitleDelaySavedToProfile = viewModel.subtitleDelaySavedToProfile.collectAsState().value,
             onSetSubtitleDelay = viewModel::onSetSubtitleDelay,
             sleepTimerState = sleepTimerState,
             tabletopPaneHeight = tabletopPaneHeight,
@@ -856,7 +914,7 @@ private fun SleepTimerChip(remainingSeconds: Int) {
     PlayerStatusChip {
         Icon(
             imageVector = Icons.Rounded.Bedtime,
-            contentDescription = "Sleep timer active",
+            contentDescription = stringResource(CommonR.string.player_sleepTimer_active),
             tint = PlayerChrome.Paper,
             modifier = Modifier.size(14.dp),
         )
@@ -883,46 +941,57 @@ private fun PlayerStatusChip(content: @Composable RowScope.() -> Unit) {
  * The small line above the title: "MOVIE · 2026", or "SEVERANCE · S2:E4" for
  * an episode, whose title is then the episode's own.
  */
+@Composable
 internal fun playerEyebrow(state: PlayerViewModel.PlayerUiState): String {
     val series = state.seriesTitle?.takeIf { it.isNotBlank() }
     if (series != null) {
         val code = if (state.seasonNumber != null && state.episodeNumber != null) {
-            "S${state.seasonNumber}:E${state.episodeNumber}"
+            stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.codeNumber(state.seasonNumber), LocaleFormat.codeNumber(state.episodeNumber))
         } else {
             null
         }
         return listOfNotNull(series, code).joinToString(" · ")
     }
     val kind = when {
-        state.contentType == "movie" -> "Movie"
+        state.contentType == "movie" -> stringResource(CommonR.string.player_eyebrow_movie)
         else -> null
     }
     return listOfNotNull(kind, state.subtitle.takeIf { it.isNotBlank() }).joinToString(" · ")
 }
 
 /** The value on the Audio & Subtitles pill: the subtitle language when one is on. */
+@Composable
 internal fun playerTracksValue(state: PlayerViewModel.PlayerUiState): String? =
     if (state.selectedSubtitleIndex >= 0) {
-        subtitleTrackShortLabel(state.subtitleTracks.getOrNull(state.selectedSubtitleIndex), state.selectedSubtitleIndex)
+        subtitleTrackShortLabel(
+            state.subtitleTracks.getOrNull(state.selectedSubtitleIndex),
+            state.selectedSubtitleIndex,
+            trackLabelStrings(),
+        )
     } else {
         null
     }
 
 /** "Large · White · Box" for the settings menu's Subtitle style row. */
+@Composable
 internal fun subtitleStyleSummary(appearance: org.siloserver.silo.model.settings.SubtitleAppearance): String {
-    val size = when (appearance.fontSize) {
-        org.siloserver.silo.model.settings.SubtitleFontSizePreset.Small -> "Small"
-        org.siloserver.silo.model.settings.SubtitleFontSizePreset.Medium -> "Medium"
-        org.siloserver.silo.model.settings.SubtitleFontSizePreset.Large -> "Large"
-        org.siloserver.silo.model.settings.SubtitleFontSizePreset.XLarge -> "Extra large"
-        else -> "Largest"
-    }
-    val background = when (appearance.backgroundStyle) {
-        org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Box -> "Box"
-        org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Shadow -> "Shadow"
-        org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Outline -> "Outline"
-        else -> "No background"
-    }
+    val size = stringResource(
+        when (appearance.fontSize) {
+            org.siloserver.silo.model.settings.SubtitleFontSizePreset.Small -> CommonR.string.player_subtitles_size_small
+            org.siloserver.silo.model.settings.SubtitleFontSizePreset.Medium -> CommonR.string.player_subtitles_size_medium
+            org.siloserver.silo.model.settings.SubtitleFontSizePreset.Large -> CommonR.string.player_subtitles_size_large
+            org.siloserver.silo.model.settings.SubtitleFontSizePreset.XLarge -> CommonR.string.player_subtitles_size_extraLarge
+            else -> CommonR.string.player_subtitles_size_largest
+        },
+    )
+    val background = stringResource(
+        when (appearance.backgroundStyle) {
+            org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Box -> CommonR.string.player_subtitles_background_box
+            org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Shadow -> CommonR.string.player_subtitles_background_shadow
+            org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Outline -> CommonR.string.player_subtitles_background_outline
+            else -> CommonR.string.player_hud_subtitleBackgroundNone
+        },
+    )
     return "$size · $background"
 }
 
@@ -941,10 +1010,11 @@ internal fun previousMobileVideoGravity(current: String): String = when (current
     else -> "fit"
 }
 
-internal fun mobileVideoGravityLabel(value: String): String = when (value) {
-    "fill" -> "Fill"
-    "stretch" -> "Stretch"
-    else -> "Fit"
+@androidx.annotation.StringRes
+internal fun mobileVideoGravityLabel(value: String): Int = when (value) {
+    "fill" -> CommonR.string.player_aspect_fill
+    "stretch" -> CommonR.string.player_aspect_stretch
+    else -> CommonR.string.player_aspect_fit
 }
 
 /**
@@ -952,33 +1022,39 @@ internal fun mobileVideoGravityLabel(value: String): String = when (value) {
  * and tracks sheets show when opened, so the menu can state the current pick
  * without the user having to open anything.
  */
+@Composable
 internal fun playerVersionLabel(
     versions: List<org.siloserver.silo.model.catalog.FileVersion>,
     selectedIndex: Int,
 ): String {
-    val version = versions.getOrNull(selectedIndex) ?: return "Auto"
+    val version = versions.getOrNull(selectedIndex) ?: return stringResource(CommonR.string.player_versions_auto)
+    val unknownResolution = stringResource(CommonR.string.player_versions_unknownResolution)
     return buildString {
         version.editionLabel?.let { append(it).append(" · ") }
-        append(version.resolution ?: "Unknown")
+        append(version.resolution ?: unknownResolution)
         if (version.hdr) append(" HDR")
     }
 }
 
+@Composable
 internal fun playerAudioLabel(
     tracks: List<org.siloserver.silo.model.catalog.AudioTrack>,
     selectedIndex: Int,
 ): String {
-    val track = tracks.getOrNull(selectedIndex) ?: return "Default"
+    val track = tracks.getOrNull(selectedIndex) ?: return stringResource(CommonR.string.player_tracks_audioDefault)
     // Language first, not title: a container's audio title is often the full
     // codec string ("ATSC A/52B (AC-3, E-AC-3)") and swamps the row.
-    val presentation = audioTrackPresentation(track, selectedIndex)
-    return listOfNotNull(presentation.title, audioChannelsDisplayName(track.channels)).joinToString(" · ")
+    val strings = trackLabelStrings()
+    val presentation = audioTrackPresentation(track, selectedIndex, strings)
+    return listOfNotNull(presentation.title, audioChannelsDisplayName(track.channels, strings)).joinToString(" · ")
 }
 
+@Composable
 internal fun playerSubtitleLabel(
     tracks: List<org.siloserver.silo.model.playback.PlayerSubtitleInfo>,
     selectedIndex: Int,
 ): String {
-    if (selectedIndex < 0) return "Off"
-    return subtitleTrackShortLabel(tracks.getOrNull(selectedIndex), selectedIndex) ?: "Off"
+    val off = stringResource(CommonR.string.player_tracks_subtitlesOff)
+    if (selectedIndex < 0) return off
+    return subtitleTrackShortLabel(tracks.getOrNull(selectedIndex), selectedIndex, trackLabelStrings()) ?: off
 }
