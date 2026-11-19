@@ -1676,6 +1676,23 @@ fun TvAppNavigation(
                 onBoxSetMovie = { movieContentId, boxSetLibraryId ->
                     navController.navigateToTvItemDetail(movieContentId, libraryId = boxSetLibraryId.toIntOrNull())
                 },
+                onOpenCollection = { card ->
+                    val collectionLibraryId = card.libraryIdInt
+                    if (card.isUserCollection) {
+                        navController.navigate(TvRoute.CollectionDetail(card.id, card.title).route) { launchSingleTop = true }
+                    } else if (collectionLibraryId != null) {
+                        // The page has no library type to hand; "mixed" offers
+                        // every sort and filter, as a scoped collection does.
+                        navController.navigate(
+                            TvRoute.LibraryCollectionDetail(
+                                collectionLibraryId, card.id, card.title, "mixed", "library_collection", null,
+                            ).route,
+                        ) { launchSingleTop = true }
+                    }
+                },
+                onCollectionItem = { itemContentId, collectionLibraryId ->
+                    navController.navigateToTvItemDetail(itemContentId, libraryId = collectionLibraryId ?: libraryId)
+                },
             )
         }
 

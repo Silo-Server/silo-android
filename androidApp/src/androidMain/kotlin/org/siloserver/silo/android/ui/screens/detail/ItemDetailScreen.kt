@@ -194,6 +194,10 @@ fun ItemDetailScreen(
     onBoxSetClick: (boxSetId: String, libraryId: String) -> Unit = { _, _ -> },
     /** Opens a movie from a box set row, scoped to the box set's library. */
     onBoxSetMovieClick: (contentId: String, libraryId: String) -> Unit,
+    /** Opens a collection from the collections row. */
+    onCollectionClick: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit = {},
+    /** Opens a title from a collection's preview, scoped to the collection's library when it has one. */
+    onCollectionItemClick: (contentId: String, libraryId: Int?) -> Unit = { _, _ -> },
     viewModel: ItemDetailViewModel,
     modifier: Modifier = Modifier,
 ) {
@@ -772,6 +776,9 @@ fun ItemDetailScreen(
                             translation = translationSlot,
                             detail = detail,
                             similarItems = state.similarItems,
+                            collectionsRow = state.collectionsRow,
+                            onCollectionClick = onCollectionClick,
+                            onCollectionItemClick = { item, card -> onCollectionItemClick(item.contentId, card.libraryIdInt) },
                             seasons = state.seasons,
                             selectedSeasonNumber = state.selectedSeasonNumber,
                             episodes = state.episodes,
@@ -1031,6 +1038,9 @@ fun ItemDetailScreen(
                             boxSet = state.boxSet,
                             onOpenBoxSet = { boxSet -> onBoxSetClick(boxSet.id, boxSet.libraryId) },
                             onBoxSetMovieClick = onBoxSetMovieClick,
+                            collectionsRow = state.collectionsRow,
+                            onCollectionClick = onCollectionClick,
+                            onCollectionItemClick = { item, card -> onCollectionItemClick(item.contentId, card.libraryIdInt) },
                             portraitArtwork = portraitArtwork,
                             isFavorite = state.isFavorite,
                             isInWatchlist = state.isInWatchlist,

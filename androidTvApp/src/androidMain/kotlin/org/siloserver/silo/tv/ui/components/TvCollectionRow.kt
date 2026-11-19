@@ -138,6 +138,8 @@ internal fun TvCollectionRow(
     restoreFocusIndex: Int = -1,
     restoreFocusRequester: FocusRequester? = null,
     restoreFocusRequest: Int = 0,
+    /** Off where the host draws its own heading, as a title page does. */
+    showHeader: Boolean = true,
 ) {
     if (collections.isEmpty()) return
     val rowState = rememberLazyListState()
@@ -161,10 +163,12 @@ internal fun TvCollectionRow(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        TvSectionHeader(
-            title = title,
-            modifier = Modifier.padding(start = startPadding, end = endPadding),
-        )
+        if (showHeader) {
+            TvSectionHeader(
+                title = title,
+                modifier = Modifier.padding(start = startPadding, end = endPadding),
+            )
+        }
         TvRailScrollBehavior {
             LazyRow(
                 state = rowState,

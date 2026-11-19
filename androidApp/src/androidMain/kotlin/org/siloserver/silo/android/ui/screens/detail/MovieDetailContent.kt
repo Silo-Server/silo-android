@@ -74,6 +74,10 @@ fun MovieDetailContent(
     boxSet: org.siloserver.silo.model.catalog.CatalogBoxSetDetail? = null,
     onOpenBoxSet: (org.siloserver.silo.model.catalog.CatalogBoxSet) -> Unit = {},
     onBoxSetMovieClick: (contentId: String, libraryId: String) -> Unit = { _, _ -> },
+    /** The collections row; null shows none. */
+    collectionsRow: org.siloserver.silo.viewmodel.ItemCollectionsRow? = null,
+    onCollectionClick: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit = {},
+    onCollectionItemClick: (org.siloserver.silo.model.catalog.BrowseItem, org.siloserver.silo.model.section.SectionCollectionCard) -> Unit = { _, _ -> },
     isFavorite: Boolean,
     isInWatchlist: Boolean,
     selectedVersionIndex: Int,
@@ -359,6 +363,17 @@ fun MovieDetailContent(
                     currentContentId = detail.contentId,
                     onOpenBoxSet = onOpenBoxSet,
                     onMovieClick = onBoxSetMovieClick,
+                )
+            }
+        }
+
+        // The collections holding the movie, below the box set row (web).
+        if (collectionsRow != null) {
+            item(contentType = "detail-collections") {
+                ItemCollectionsRail(
+                    row = collectionsRow,
+                    onCollectionClick = onCollectionClick,
+                    onItemClick = onCollectionItemClick,
                 )
             }
         }

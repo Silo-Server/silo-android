@@ -259,6 +259,10 @@ fun TvItemDetailScreen(
     onOpenBoxSet: (boxSetId: String, libraryId: String) -> Unit = { _, _ -> },
     /** Opens a movie from a box set row, scoped to the box set's library. */
     onBoxSetMovie: (contentId: String, libraryId: String) -> Unit = { contentId, _ -> onItemDetail(contentId) },
+    /** Opens a collection from the collections row. */
+    onOpenCollection: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit = {},
+    /** Opens a title from a collection's preview, scoped to the collection's library when it has one. */
+    onCollectionItem: (contentId: String, libraryId: Int?) -> Unit = { contentId, _ -> onItemDetail(contentId) },
     // Plays the first pick of a shuffle started from the More menu.
     onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvItemDetailViewModel = koinViewModel(
@@ -409,6 +413,8 @@ fun TvItemDetailScreen(
             onOpenPerson = onOpenPerson,
             onOpenBoxSet = onOpenBoxSet,
             onBoxSetMovie = onBoxSetMovie,
+            onOpenCollection = onOpenCollection,
+            onCollectionItem = onCollectionItem,
             shuffleLauncher = shuffleLauncher,
         )
     }
@@ -433,6 +439,8 @@ private fun TvDetailContent(
     onOpenPerson: (personId: Long) -> Unit,
     onOpenBoxSet: (boxSetId: String, libraryId: String) -> Unit,
     onBoxSetMovie: (contentId: String, libraryId: String) -> Unit,
+    onOpenCollection: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit,
+    onCollectionItem: (contentId: String, libraryId: Int?) -> Unit,
     shuffleLauncher: org.siloserver.silo.common.ui.ShuffleLauncher,
 ) {
     val resources = localizedResources()
@@ -708,6 +716,13 @@ private fun TvDetailContent(
     val hasEpisodeNavAbove = showsEpisodeRail || showsSeasonChips
     val showsBoxSetRow = !isAudiobook && detail.type == "movie" && state.boxSet != null && state.boxSetItems.isNotEmpty()
     val showsCastSection = !isAudiobook && detail.cast.isNotEmpty()
+    // The collections row: below Cast & Crew on a series page, below the box
+    // set row on a movie page (web).
+    val collectionsRow = state.collectionsRow.takeIf {
+        !isAudiobook && (it !is org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview || state.collectionPreviewItems.isNotEmpty())
+    }
+    val showsSeriesCollectionsRow = collectionsRow != null && detail.type == "series"
+    val showsMovieCollectionsRow = collectionsRow != null && detail.type == "movie"
     val showsTrailersSection = !isAudiobook && trailerEntries.isNotEmpty()
     val showsSimilarRail = !isAudiobook && detail.type != "episode" && state.moreLikeThis.isNotEmpty()
     val showsDetailsSection = !isAudiobook && remember(detail) { detail.hasTvDetailFacts() }
@@ -1371,6 +1386,32 @@ private fun TvDetailContent(
                             }
                         }
 
+                        if (showsSeriesCollectionsRow) {
+                            TvItemCollectionsRowSection(
+                                row = collectionsRow!!,
+                                previewItems = state.collectionPreviewItems,
+                                onCollectionClick = { card ->
+                                    pendingCastFocusIndex = -1
+                                    pendingSimilarContentId = null
+                                    onOpenCollection(card)
+                                },
+                                onItemClick = { clickedContentId, card ->
+                                    pendingCastFocusIndex = -1
+                                    pendingSimilarContentId = null
+                                    onCollectionItem(clickedContentId, card.libraryIdInt)
+                                },
+                                onReturnToHero = if (!hasEpisodeNavAbove && !showsCastSection) returnToHero else null,
+                                modifier = Modifier
+                                    .onFocusChanged { focusState ->
+                                        if (focusState.hasFocus && isSeriesDetail) {
+                                            seriesPrimaryFocusGeneration += 1
+                                            seriesPrimaryViewportActive.value = false
+                                        }
+                                    }
+                                    .detailBodySectionAnchor(listState, coroutineScope),
+                            )
+                        }
+
                         if (showsTrailersSection) {
                             TvDetailTrailersSection(
                                 entries = trailerEntries,
@@ -1389,7 +1430,7 @@ private fun TvDetailContent(
                                         0.0,
                                     )
                                 },
-                                onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection) {
+                                onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection && !showsSeriesCollectionsRow) {
                                     returnToHero
                                 } else {
                                     null
@@ -1465,6 +1506,32 @@ private fun TvDetailContent(
                             )
                         }
 
+                        if (showsMovieCollectionsRow) {
+                            TvItemCollectionsRowSection(
+                                row = collectionsRow!!,
+                                previewItems = state.collectionPreviewItems,
+                                onCollectionClick = { card ->
+                                    pendingCastFocusIndex = -1
+                                    pendingSimilarContentId = null
+                                    onOpenCollection(card)
+                                },
+                                onItemClick = { clickedContentId, card ->
+                                    pendingCastFocusIndex = -1
+                                    pendingSimilarContentId = null
+                                    onCollectionItem(clickedContentId, card.libraryIdInt)
+                                },
+                                onReturnToHero = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) returnToHero else null,
+                                modifier = Modifier
+                                    .onFocusChanged { focusState ->
+                                        if (focusState.hasFocus && isSeriesDetail) {
+                                            seriesPrimaryFocusGeneration += 1
+                                            seriesPrimaryViewportActive.value = false
+                                        }
+                                    }
+                                    .detailBodySectionAnchor(listState, coroutineScope),
+                            )
+                        }
+
                         if (showsSimilarRail) {
                             // tvOS `TVSimilarRail`: an editorial detail section
                             // header (Recommended / More Like This) over a bare
@@ -1534,7 +1601,7 @@ private fun TvDetailContent(
                                     horizontalPadding = TvDetailHorizontalInset,
                                     rowTopPadding = 0.dp,
                                     firstItemFocusRequester = firstSimilarFocus,
-                                    onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) {
+                                    onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow && collectionsRow == null) {
                                         returnToHero
                                     } else {
                                         null
@@ -1542,7 +1609,7 @@ private fun TvDetailContent(
                                     // When Similar is the first body rail (movie with no
                                     // episode rail, cast, trailers or box set), Up returns to the hero
                                     // Play button instead of relying on geometry.
-                                    upFocusRequester = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) {
+                                    upFocusRequester = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow && collectionsRow == null) {
                                         playFocus
                                     } else {
                                         null

@@ -2059,6 +2059,12 @@ fun AppNavigation(
                 onBoxSetMovieClick = { contentId, boxSetLibraryId ->
                     navController.navigate(Route.ItemDetail(contentId, libraryId = boxSetLibraryId.toIntOrNull()).route)
                 },
+                onCollectionClick = { card ->
+                    sectionCollectionCardRoute(card)?.let { navController.navigate(it) }
+                },
+                onCollectionItemClick = { contentId, collectionLibraryId ->
+                    navController.navigate(Route.ItemDetail(contentId, libraryId = collectionLibraryId ?: libraryId).route)
+                },
                 viewModel = detailViewModel,
             )
             }

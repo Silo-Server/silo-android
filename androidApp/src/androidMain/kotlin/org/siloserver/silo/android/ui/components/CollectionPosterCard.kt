@@ -23,7 +23,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import org.koin.compose.koinInject
+import org.siloserver.silo.network.ServerRegistry
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -127,6 +131,32 @@ internal fun CollectionPosterCard(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+/**
+ * The name of the profile that made a personal collection, when another
+ * profile of the account made it, for a card's "by Name" line (web
+ * `CollectionPosterCard`). The names come from the account's cached profile
+ * list; an unknown name, or any other card, answers null.
+ */
+@Composable
+internal fun rememberCollectionOwnerName(activeProfileId: String? = null): (SectionCollectionCard) -> String? {
+    val serverRegistry: ServerRegistry = koinInject()
+    val activeAccount by serverRegistry.activeAccount.collectAsState()
+    val activeEntry by serverRegistry.activeEntry.collectAsState()
+    val viewerId = activeEntry?.profileId ?: activeProfileId
+    val profileNames = remember(activeAccount) {
+        activeAccount?.cachedProfiles.orEmpty()
+            .filter { it.name.isNotBlank() }
+            .associate { it.id to it.name }
+    }
+    return remember(viewerId, profileNames) {
+        { card ->
+            card.creatorProfileId
+                ?.takeIf { card.isUserCollection && viewerId != null && it != viewerId }
+                ?.let { profileNames[it] }
+        }
     }
 }
 
