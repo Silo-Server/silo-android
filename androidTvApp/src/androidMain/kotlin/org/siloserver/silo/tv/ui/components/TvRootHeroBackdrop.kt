@@ -9,7 +9,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -18,7 +20,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.BlendMode
@@ -28,6 +32,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -130,7 +135,9 @@ fun TvRootHeroBackdrop(
             )
         }
 
-        if (hasTintOnlyWash || hasEmptyWash) {
+        // The grain breaks up 8-bit steps in the dark ramp. Behind art too:
+        // GPU gradient dithering is not guaranteed on older TV releases.
+        if (isVisible || hasTintOnlyWash || hasEmptyWash) {
             DitheredWashOverlay(
                 alpha = if (hasEmptyWash) EmptyWashDitherAlpha else TintOnlyDitherAlpha,
                 modifier = Modifier.fillMaxSize(),
@@ -155,22 +162,56 @@ fun TvRootHeroBackdrop(
                     // A departing item follows the current preferences too.
                     else -> value.underPrefs(spoilerPrefs)
                 }
-                if (art?.heroBackdropUrl != null) {
-                    CornerAnchoredArt(
-                        url = art.heroBackdropUrl,
-                        thumbhash = art.heroBackdropThumbhash,
-                    )
-                } else {
-                    Box(modifier = Modifier.fillMaxSize())
-                }
+                if (art != null) HeroArt(art) else Box(modifier = Modifier.fillMaxSize())
             }
-        } else if (content?.heroBackdropUrl != null) {
-            CornerAnchoredArt(
-                url = content.heroBackdropUrl,
-                thumbhash = content.heroBackdropThumbhash,
-            )
+        } else if (content != null) {
+            HeroArt(content)
         }
 
+    }
+}
+
+@Composable
+private fun HeroArt(content: TvMarqueeContent) {
+    val url = content.heroBackdropUrl
+    val aspect = content.coverAspect
+    when {
+        url == null -> Box(modifier = Modifier.fillMaxSize())
+        aspect != null -> FramedCover(
+            url = url,
+            thumbhash = content.heroBackdropThumbhash,
+            aspect = aspect,
+            // The card's poster, so the glow stays put when the cover
+            // upgrades to the detail poster; blurred, the two look the same.
+            glowUrl = content.posterUrl ?: url,
+        )
+        else -> CornerAnchoredArt(url = url, thumbhash = content.heroBackdropThumbhash)
+    }
+}
+
+/**
+ * A cover standing in for a missing backdrop, drawn whole and sharp at a size
+ * its artwork can carry (tvOS `coverImage`): top-right, between the top menu
+ * and the rows, over a soft glow of itself and a drop shadow.
+ */
+@Composable
+private fun FramedCover(url: String, thumbhash: String?, aspect: Float, glowUrl: String) {
+    val shape = RoundedCornerShape(CoverCornerRadius)
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
+        ThumbhashImage(
+            url = url,
+            thumbhash = thumbhash,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            // As for the backdrop, the feed owns the one shared crossfade.
+            crossfadeMillis = 0,
+            modifier = Modifier
+                .padding(top = CoverTopInset, end = CoverTrailingInset)
+                .size(width = TvHeroCoverHeight * aspect, height = TvHeroCoverHeight)
+                .coverGlow(glowUrl, aspect)
+                .shadow(CoverShadowElevation, shape)
+                .clip(shape),
+        )
     }
 }
 
@@ -266,6 +307,15 @@ fun TvRootHeroBackdrop(
 
 private const val ArtWidthFraction = 0.64f
 private const val ArtHeightFraction = 0.70f
+/**
+ * A framed cover's height and insets: tvOS's 380 / 170 / 150 pt on the
+ * 960 × 540 dp canvas, between the top menu and the row band.
+ */
+internal val TvHeroCoverHeight = 190.dp
+private val CoverTopInset = 85.dp
+private val CoverTrailingInset = 75.dp
+private val CoverCornerRadius = 7.dp
+private val CoverShadowElevation = 18.dp
 private const val TintOnlyDitherAlpha = 0.28f
 private const val EmptyWashDitherAlpha = 0.34f
 
