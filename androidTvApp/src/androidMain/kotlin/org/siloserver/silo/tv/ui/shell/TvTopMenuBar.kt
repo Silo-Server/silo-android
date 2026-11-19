@@ -179,7 +179,7 @@ fun TvTopMenuBar(
     onEnterProfileMenu: () -> Unit,
     onMoveDown: () -> Unit,
     isMenuFocused: Boolean,
-    onMenuFocusChange: (Boolean) -> Unit,
+    onMenuFocusChange: (focused: Boolean, focusedPanel: TvTopMenuPanel?) -> Unit,
     isFocusSuppressed: Boolean,
     focusRequest: Int,
     focusRequestTarget: TvTopMenuPanel? = null,
@@ -334,7 +334,7 @@ fun TvTopMenuBar(
     }
 
     LaunchedEffect(focusedButton) {
-        onMenuFocusChange(focusedButton != null)
+        onMenuFocusChange(focusedButton != null, panelForFocus(focusedButton))
     }
 
     // Dedicated focus path for closing the profile dropdown: return focus to the
