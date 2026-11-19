@@ -945,6 +945,27 @@ internal fun libassOverlayRectInCanvas(
     )
 }
 
+/**
+ * The part of the libass overlay that stays visible, in the overlay's own
+ * coordinates, or null when all of it does.
+ *
+ * While the TV's controls are up they pad the canvas's bottom so Media3's
+ * cues rise above them. The overlay keeps the video's frame instead (see
+ * [libassOverlayRectInCanvas]), so what it would draw under the controls is
+ * hidden, and only that: its other edges reach past the canvas on purpose.
+ * [overlayRect] is in the canvas's coordinates.
+ */
+internal fun libassOverlayClipInOverlay(
+    overlayRect: SubtitleVideoRect,
+    canvasHeight: Int,
+    canvasPaddingBottom: Int,
+): SubtitleVideoRect? {
+    if (canvasPaddingBottom <= 0) return null
+    val visibleHeight = canvasHeight - canvasPaddingBottom - overlayRect.top
+    if (visibleHeight >= overlayRect.height) return null
+    return SubtitleVideoRect(left = 0, top = 0, width = overlayRect.width, height = visibleHeight.coerceAtLeast(0))
+}
+
 /** True when this overlay rect, in the canvas's coordinates, reaches outside the canvas. */
 private fun SubtitleVideoRect.overflows(canvasWidth: Int, canvasHeight: Int): Boolean =
     left < 0 || top < 0 || left + width > canvasWidth || top + height > canvasHeight
@@ -1461,6 +1482,7 @@ private class SubtitleVideoRectSync(
             setContentFrameClipping(clipped = true)
             setCanvasClipping(subtitleView, clipped = true)
             libassBridge?.placeOverlay(0, 0, 0, 0)
+            libassBridge?.clipOverlay(-1, -1)
             applyBottomPadding(
                 subtitleView = subtitleView,
                 position = position,
@@ -1515,8 +1537,14 @@ private class SubtitleVideoRectSync(
         setCanvasClipping(subtitleView, clipped = !overlayOverflows)
         if (overlayRect == null) {
             libassBridge?.placeOverlay(0, 0, 0, 0)
+            libassBridge?.clipOverlay(-1, -1)
         } else {
             libassBridge?.placeOverlay(overlayRect.left, overlayRect.top, overlayRect.width, overlayRect.height)
+            // With the canvas's padding clip off, hide only what the TV's
+            // controls lift would have hidden. A padding change re-lays out
+            // the frame, which runs this again.
+            val clip = libassOverlayClipInOverlay(overlayRect, rect.height, subtitleView.paddingBottom)
+            libassBridge?.clipOverlay(clip?.width ?: -1, clip?.height ?: -1)
         }
         applyLayoutParams(
             subtitleView = subtitleView,
@@ -1573,6 +1601,10 @@ private class SubtitleVideoRectSync(
      */
     private fun setCanvasClipping(subtitleView: SubtitleView, clipped: Boolean) {
         if (subtitleView.clipChildren != clipped) subtitleView.clipChildren = clipped
+        // A padded canvas (the TV lifts cues over its controls with bottom
+        // padding) also clips children to the padded area on every side, which
+        // would cut the overlay at the title-safe inset again.
+        if (subtitleView.clipToPadding != clipped) subtitleView.clipToPadding = clipped
     }
 
     /**

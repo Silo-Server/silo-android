@@ -51,4 +51,25 @@ class TitleSafeInsetTest {
             assertEquals(case.name, case.expected, libassOverlayRectInCanvas(case.video, case.canvas))
         }
     }
+
+    /**
+     * While the TV's controls are up they pad the canvas's bottom so text cues
+     * rise above them. The full-video ASS overlay cannot rise, so only what
+     * lies below that line is hidden; its left, right and top edges stay
+     * visible. Result in the overlay's own coordinates, null for no clip.
+     */
+    @Test
+    fun theControlsLiftHidesOnlyTheAssOverlayBelowIt() {
+        val titleSafeOverlay = SubtitleVideoRect(left = -96, top = -54, width = 1920, height = 1080)
+        data class Case(val name: String, val overlay: SubtitleVideoRect, val canvasHeight: Int, val paddingBottom: Int, val expected: SubtitleVideoRect?)
+        val cases = listOf(
+            Case("controls hidden", titleSafeOverlay, 972, 0, null),
+            Case("controls lift the title-safe canvas", titleSafeOverlay, 972, 378,
+                SubtitleVideoRect(left = 0, top = 0, width = 1920, height = 648)),
+            Case("lift line below the video", SubtitleVideoRect(left = 0, top = 0, width = 1920, height = 800), 940, 100, null),
+        )
+        for (case in cases) {
+            assertEquals(case.name, case.expected, libassOverlayClipInOverlay(case.overlay, case.canvasHeight, case.paddingBottom))
+        }
+    }
 }

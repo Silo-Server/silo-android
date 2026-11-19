@@ -2,6 +2,7 @@ package org.siloserver.silo.libass;
 
 import android.net.Uri;
 import android.os.Build;
+import android.graphics.Rect;
 import android.os.Handler;
 import android.view.Gravity;
 import android.view.View;
@@ -340,6 +341,21 @@ public final class LibassBridge {
         params.topMargin = targetTop;
         params.gravity = Gravity.TOP | Gravity.START;
         overlay.setLayoutParams(params);
+    }
+
+    /**
+     * Shows only the top {@code width} x {@code height} of the overlay, in its
+     * own coordinates, or all of it again when either value is negative. A
+     * placed overlay reaches past its host, so the host's padding clip is off,
+     * and this keeps the overlay out from under whatever that padding makes
+     * room for (the TV's playback controls).
+     */
+    public void clipOverlay(int width, int height) {
+        AssSubtitleView overlay = overlayRef.get();
+        if (overlay == null) return;
+        Rect target = width < 0 || height < 0 ? null : new Rect(0, 0, width, height);
+        Rect current = overlay.getClipBounds();
+        if (target == null ? current != null : !target.equals(current)) overlay.setClipBounds(target);
     }
 
     /** Removes the view that still points at the retiring handler. */
