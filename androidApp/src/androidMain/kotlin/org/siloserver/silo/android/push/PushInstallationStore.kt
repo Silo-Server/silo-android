@@ -47,13 +47,19 @@ internal data class PushInstallation(
     val loginSessionBound: Boolean = false,
     /** When a saved server that is not active was last asked about binding. */
     val bindingCheckedAtMs: Long = 0,
+    /**
+     * The server refused this record's rebinding for good, and it went back to the
+     * registration it held. The next ordinary registration binds it instead.
+     */
+    val rebindRefused: Boolean = false,
 ) {
     /**
      * A settled registration still without [loginSessionBound]. Never one the server
-     * refused, one being removed, or one whose login is on its way out.
+     * refused, one whose rebinding it refused, one being removed, or one whose login
+     * is on its way out.
      */
     val needsLoginSessionBinding: Boolean
-        get() = !loginSessionBound && acknowledged && refusal == null && !ownerLeaving && intent.registration != null
+        get() = !loginSessionBound && !rebindRefused && acknowledged && refusal == null && !ownerLeaving && intent.registration != null
 
     /** At most daily, whatever the last answer was; a clock set back only asks sooner. */
     fun bindingCheckDue(nowMs: Long): Boolean =

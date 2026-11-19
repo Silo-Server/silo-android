@@ -216,6 +216,23 @@ class AndroidPushRegistrarTest {
         registrar().registerIfAvailable()
         assertEquals(listOf(1L),generations)
     }
+    @Test fun aRefusedRebindKeepsTheRegistrationTheServerStillHolds()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        failCode=403; registrar().registerIfAvailable(); failCode=null
+        val record=store.entries.single()
+        assertEquals(1L,record.generation); assertTrue(record.acknowledged); assertTrue(record.deliversPushes)
+        registrar().registerIfAvailable(); assertEquals(listOf(1L,2L),generations)
+        // Sign-out still removes it, above the generation the refused rebind used.
+        assertIs<ApiResult.Success<Unit>>(registrar().unregisterDevice("server").result)
+        assertEquals(listOf(1L,2L,2L),generations)
+    }
+    @Test fun aRebindRefusedWithAnExpiredTokenIsAskedAgain()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        failCode=401; registrar().registerIfAvailable(); failCode=null
+        assertTrue(store.entries.single().deliversPushes)
+        registrar().registerIfAvailable()
+        assertEquals(listOf(1L,2L,2L),generations); assertTrue(store.entries.single().let { it.acknowledged && it.loginSessionBound })
+    }
     @Test fun aRefusedRegistrationIsNotRebound()=runTest {
         failCode=409; registrar().registerToken(token); failCode=null; upgradedFromOlderApp()
         registrar().registerIfAvailable(); assertEquals(listOf(1L),generations)

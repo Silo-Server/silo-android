@@ -607,8 +607,16 @@ class AndroidPushRegistrar internal constructor(
             when (result) {
                 is ApiResult.Success -> settle { it.copy(acknowledged = true, receipt = result.data, ownerLeaving = false, retirement = null) }
                 is ApiResult.Error -> if (result.code in setOf(401, 403, 409, 422)) {
-                    // No generation rebase or replacement secret after a definite refusal.
-                    settle { it.copy(refusal = "push_registration_refused") }
+                    if (rebinding) {
+                        // The server refused the rebinding before applying it and still
+                        // delivers the registration it replaced, so the record goes back
+                        // to that one: still read, still removed at sign-out. A 401 may
+                        // only be a token that expired meanwhile, so that one is asked again.
+                        settle { stored -> previous.copy(ownerLeaving = stored.ownerLeaving, rebindRefused = result.code != 401) }
+                    } else {
+                        // No generation rebase or replacement secret after a definite refusal.
+                        settle { it.copy(refusal = "push_registration_refused") }
+                    }
                 }
                 is ApiResult.NetworkError -> Unit // Exact persisted intent is the only retry candidate.
             }
