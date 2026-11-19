@@ -67,6 +67,25 @@ class MembershipActionsRetryTest {
         assertTrue(actions.confirmed(intent))
     }
 
+    @Test fun cancelledRestoreReleasesWitnessesItAlreadyClaimed() = runTest {
+        val port = object : MembershipPort by FakePort(confirmOnRetry = 1) {
+            val authority = DurableLoginAuthority("login", AuthScopeSnapshot("s", "p", "https://example.invalid", null))
+            val commands = listOf("a", "b").mapIndexed { index, item ->
+                MembershipPort.Command(index + 1L, authority, item, MembershipPort.Kind.FAVORITE, true)
+            }
+            override suspend fun captureAuthority() = authority
+            override suspend fun pending(authority: DurableLoginAuthority, limit: Int) = commands
+            override suspend fun projection(authority: DurableLoginAuthority, itemId: String, kind: MembershipPort.Kind): MembershipPort.Projection {
+                if (itemId == "b") kotlinx.coroutines.awaitCancellation() // The host leaves composition mid-scan.
+                return MembershipPort.Projection(1, true, MembershipPort.Disposition.NEEDS_RECONCILIATION)
+            }
+        }
+        val actions = MembershipActions(port, DefaultIdentityTransitionBarrier())
+        val restoring = launch { actions.restorePending() }; runCurrent()
+        restoring.cancel(); restoring.join()
+        assertEquals(false, actions.actions.value[MembershipActions.Key("a", MembershipPort.Kind.FAVORITE)]?.busy)
+    }
+
     private class FakePort(private val confirmOnRetry: Int?) : MembershipPort {
         val authority = DurableLoginAuthority("login", AuthScopeSnapshot("s", "p", "https://example.invalid", null))
         var sends = 0; var retries = 0

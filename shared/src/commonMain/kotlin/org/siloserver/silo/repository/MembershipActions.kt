@@ -170,28 +170,28 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
         val pending = activePort.pending(authority)
         if (generation.value != authority.scope.identityGeneration) return
         val unresolved = mutableListOf<Pair<Intent, MembershipPort.Command>>()
-        for (command in pending) {
-            val key = Key(command.itemId, command.kind)
-            val projection = activePort.projection(authority, command.itemId, command.kind) ?: continue
-            if (projection.commandId != command.id || generation.value != authority.scope.identityGeneration) continue
-            val intent = Intent(key, command.present, generation.value, kotlin.random.Random.nextLong())
-            // READY commands belong to the sync worker; earlier unconfirmed ones get one retry here.
-            // The restored witness stays busy until that retry ends so perform can't run beside it.
-            val retry = projection.disposition != null
-            mutableActions.update { states ->
-                if (states.containsKey(key)) {
-                    val existing = states.getValue(key)
-                    if (existing.command == null && !existing.busy && existing.completion != null &&
-                        existing.intent.present == command.present && existing.intent.generation == authority.scope.identityGeneration) {
-                        states + (key to existing.copy(command = command))
-                    } else states
-                } else states + (key to Action(intent, command,
-                    MembershipPort.Completion(projection.disposition ?: MembershipPort.Disposition.NEEDS_RECONCILIATION, false), busy = retry))
-            }
-            if (retry && mutableActions.value[key]?.intent == intent) unresolved += intent to command
-        }
         var next = 0
         try {
+            for (command in pending) {
+                val key = Key(command.itemId, command.kind)
+                val projection = activePort.projection(authority, command.itemId, command.kind) ?: continue
+                if (projection.commandId != command.id || generation.value != authority.scope.identityGeneration) continue
+                val intent = Intent(key, command.present, generation.value, kotlin.random.Random.nextLong())
+                // READY commands belong to the sync worker; earlier unconfirmed ones get one retry here.
+                // The restored witness stays busy until that retry ends so perform can't run beside it.
+                val retry = projection.disposition != null
+                mutableActions.update { states ->
+                    if (states.containsKey(key)) {
+                        val existing = states.getValue(key)
+                        if (existing.command == null && !existing.busy && existing.completion != null &&
+                            existing.intent.present == command.present && existing.intent.generation == authority.scope.identityGeneration) {
+                            states + (key to existing.copy(command = command))
+                        } else states
+                    } else states + (key to Action(intent, command,
+                        MembershipPort.Completion(projection.disposition ?: MembershipPort.Disposition.NEEDS_RECONCILIATION, false), busy = retry))
+                }
+                if (retry && mutableActions.value[key]?.intent == intent) unresolved += intent to command
+            }
             while (next < unresolved.size) {
                 val (intent, command) = unresolved[next++]
                 if (!current(intent)) continue
@@ -204,7 +204,7 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
                 } finally { update(intent) { it.copy(busy = false) } }
             }
         } finally {
-            // Release restored witnesses a cancelled pass never reached.
+            // Release restored witnesses a cancelled scan or retry pass never reached.
             for (index in next until unresolved.size) update(unresolved[index].first) { it.copy(busy = false) }
         }
         val retained = activePort.hasLegacyQuarantine()

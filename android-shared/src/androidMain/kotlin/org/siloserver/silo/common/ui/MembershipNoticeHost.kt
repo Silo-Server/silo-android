@@ -73,7 +73,7 @@ fun MembershipNoticeHost(
         val (intent, action) = shown
         show(unconfirmedNotice(action, onDismiss = { raised = raised - intent }) {
             raised = raised - intent
-            // Reads first, then resends only if the server still differs.
+            // Retries a recorded command (read first, resend only on mismatch), or sends it.
             scope.launch { actions.perform(intent) }
         })
     } else if (legacy) {
