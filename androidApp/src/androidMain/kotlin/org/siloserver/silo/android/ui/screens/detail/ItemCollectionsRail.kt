@@ -4,17 +4,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.CardStyle
-import org.siloserver.silo.android.ui.components.CollectionPosterCard
+import org.siloserver.silo.android.ui.components.CollectionPosterRow
 import org.siloserver.silo.android.ui.components.ExploreAllCard
 import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.android.ui.components.rememberCollectionOwnerName
@@ -81,24 +79,18 @@ internal fun ItemCollectionsRail(
                 }
             }
             is ItemCollectionsRow.AlsoIn -> {
-                SectionHeader(title = stringResource(CommonR.string.detail_alsoIn))
+                val title = stringResource(CommonR.string.detail_alsoIn)
+                SectionHeader(title = title)
                 val ownerName = rememberCollectionOwnerName()
-                val cards = remember(row.cards) { row.cards.distinctBy { it.rowKey } }
-                ItemCollectionsLazyRow {
-                    items(cards, key = { it.rowKey }, contentType = { "collection-poster" }) { card ->
-                        val collection = remember(card) { card.toLibraryCollection() }
-                        CollectionPosterCard(
-                            collection = collection,
-                            showItemCount = true,
-                            onClick = { onCollectionClick(card) },
-                            secondaryText = ownerName(card)?.let {
-                                stringResourceWithNames(CommonR.string.collections_posterCard_byOwner, it)
-                            },
-                            exactCount = true,
-                            modifier = Modifier.width(cardWidth),
-                        )
-                    }
-                }
+                CollectionPosterRow(
+                    title = title,
+                    cards = row.cards,
+                    onCardClick = onCollectionClick,
+                    byline = { card ->
+                        ownerName(card)?.let { stringResourceWithNames(CommonR.string.collections_posterCard_byOwner, it) }
+                    },
+                    showHeader = false,
+                )
             }
         }
     }

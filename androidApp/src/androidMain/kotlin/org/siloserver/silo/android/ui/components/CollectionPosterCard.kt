@@ -177,11 +177,13 @@ internal fun CollectionPosterRow(
     byline: @Composable (SectionCollectionCard) -> String?,
     modifier: Modifier = Modifier,
     showCounts: Boolean = true,
+    /** Off where the host draws its own heading, as a title page does. */
+    showHeader: Boolean = true,
 ) {
     val uniqueCards = remember(cards) { cards.distinctBy { it.rowKey } }
     val cardWidth = 120.dp * LocalCardPresentation.current.posterSize.posterScale
     Column(modifier = modifier) {
-        MediaRowHeader(title = title)
+        if (showHeader) MediaRowHeader(title = title)
         // Same gesture handling as MediaRow: a stricter slop for the row's
         // scroll, the stock one for the cards' taps.
         val baseViewConfiguration = LocalViewConfiguration.current

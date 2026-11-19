@@ -2063,7 +2063,7 @@ fun AppNavigation(
                     sectionCollectionCardRoute(card)?.let { navController.navigate(it) }
                 },
                 onCollectionItemClick = { contentId, collectionLibraryId ->
-                    navController.navigate(Route.ItemDetail(contentId, libraryId = collectionLibraryId ?: libraryId).route)
+                    navController.navigate(Route.ItemDetail(contentId, libraryId = collectionLibraryId).route)
                 },
                 viewModel = detailViewModel,
             )

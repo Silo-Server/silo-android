@@ -112,4 +112,18 @@ class TvMediaTypeFiltersTest {
         assertNull(tvCatalogMediaTypeFor("music"))
         assertNull(tvCatalogMediaTypeFor("ebooks"))
     }
+
+    @Test
+    fun collectionPreviewDropsReadingTitlesAndFallsBackToTheCollectionCard() {
+        val collection = org.siloserver.silo.model.section.SectionCollectionCard(id = "c1", source = "user", title = "Weekend")
+        fun item(id: String, type: String) = BrowseItem(contentId = id, type = type, title = id)
+        val mixed = org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview(
+            collection, listOf(item("m1", "movie"), item("b1", "ebook"), item("s1", "series")),
+        )
+        val shown = mixed.visibleOnTv() as org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview
+        assertEquals(listOf("m1", "s1"), shown.items.map { it.contentId })
+
+        val onlyBooks = org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview(collection, listOf(item("b1", "ebook")))
+        assertEquals(org.siloserver.silo.viewmodel.ItemCollectionsRow.AlsoIn(listOf(collection)), onlyBooks.visibleOnTv())
+    }
 }

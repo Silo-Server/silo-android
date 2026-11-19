@@ -481,6 +481,9 @@ private fun TvDetailContent(
     // row: the pending id then names a card in that row instead, or
     // [BoxSetExploreAllReturnId] for its Explore all card.
     var pendingReturnFromBoxSet by rememberSaveable(detail.contentId) { mutableStateOf(false) }
+    // The same return, from a collection or title opened in the collections
+    // row: the pending id then names that row's card by its return key.
+    var pendingReturnFromCollections by rememberSaveable(detail.contentId) { mutableStateOf(false) }
     val similarReturnFocus = remember { FocusRequester() }
     val similarRestoreFocused = remember { mutableStateOf(false) }
     // Bumped once the target resolves, so the row scrolls its own LazyRow to
@@ -491,6 +494,8 @@ private fun TvDetailContent(
     // has loaded and becomes correct if the order changed.
     val pendingSimilarIndex = pendingSimilarContentId?.let { pendingId ->
         when {
+            pendingReturnFromCollections ->
+                state.collectionsRow?.returnIndex(state.collectionPreviewItems, pendingId) ?: -1
             // Explore all follows the box set's movies.
             pendingReturnFromBoxSet && pendingId == BoxSetExploreAllReturnId ->
                 state.boxSetItems.size.takeIf { state.boxSetItems.isNotEmpty() } ?: -1
@@ -498,8 +503,9 @@ private fun TvDetailContent(
             else -> state.moreLikeThis.indexOfFirst { it.contentId == pendingId }
         }
     } ?: -1
-    val similarRestoreIndex = if (pendingReturnFromBoxSet) -1 else pendingSimilarIndex
-    val boxSetRestoreIndex = if (pendingReturnFromBoxSet) pendingSimilarIndex else -1
+    val similarRestoreIndex = if (pendingReturnFromBoxSet || pendingReturnFromCollections) -1 else pendingSimilarIndex
+    val boxSetRestoreIndex = if (pendingReturnFromBoxSet && !pendingReturnFromCollections) pendingSimilarIndex else -1
+    val collectionsRestoreIndex = if (pendingReturnFromCollections) pendingSimilarIndex else -1
     // Entering the box set row lands on the movie on screen until the row
     // remembers a card of its own.
     val boxSetCurrentFocus = remember { FocusRequester() }
@@ -975,6 +981,55 @@ private fun TvDetailContent(
         }
     }
 
+    // The collections row, placed below Cast & Crew on a series page and
+    // below the box set row on a movie page. Opening a card records it, so
+    // Back lands on that card again, as the box set and More Like This rows do.
+    val collectionsSection: @Composable (onReturnToHero: (() -> Boolean)?) -> Unit = { onReturnToHero ->
+        val openFromCollections: (String) -> Unit = { returnKey ->
+            pendingCastFocusIndex = -1
+            pendingSimilarGeneration += 1
+            pendingReturnFromBoxSet = false
+            pendingReturnFromCollections = true
+            pendingSimilarContentId = returnKey
+            similarRestoreFocused.value = false
+        }
+        TvItemCollectionsRowSection(
+            row = collectionsRow!!,
+            previewItems = state.collectionPreviewItems,
+            onCollectionClick = { card ->
+                openFromCollections(
+                    if (collectionsRow is org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview) {
+                        TvCollectionsExploreAllReturnKey
+                    } else {
+                        card.rowKey
+                    },
+                )
+                onOpenCollection(card)
+            },
+            onItemClick = { clickedContentId, card ->
+                openFromCollections(clickedContentId)
+                onCollectionItem(clickedContentId, card.libraryIdInt)
+            },
+            onReturnToHero = onReturnToHero,
+            restoreFocusIndex = collectionsRestoreIndex,
+            restoreFocusRequester = similarReturnFocus.takeIf { collectionsRestoreIndex >= 0 },
+            restoreFocusRequest = similarRestoreRequest.takeIf { collectionsRestoreIndex >= 0 } ?: 0,
+            onCardFocused = { returnKey ->
+                if (pendingReturnFromCollections && returnKey == pendingSimilarContentId) {
+                    similarRestoreFocused.value = true
+                }
+            },
+            modifier = Modifier
+                .onFocusChanged { focusState ->
+                    if (focusState.hasFocus && isSeriesDetail) {
+                        seriesPrimaryFocusGeneration += 1
+                        seriesPrimaryViewportActive.value = false
+                    }
+                }
+                .detailBodySectionAnchor(listState, coroutineScope),
+        )
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1387,29 +1442,7 @@ private fun TvDetailContent(
                         }
 
                         if (showsSeriesCollectionsRow) {
-                            TvItemCollectionsRowSection(
-                                row = collectionsRow!!,
-                                previewItems = state.collectionPreviewItems,
-                                onCollectionClick = { card ->
-                                    pendingCastFocusIndex = -1
-                                    pendingSimilarContentId = null
-                                    onOpenCollection(card)
-                                },
-                                onItemClick = { clickedContentId, card ->
-                                    pendingCastFocusIndex = -1
-                                    pendingSimilarContentId = null
-                                    onCollectionItem(clickedContentId, card.libraryIdInt)
-                                },
-                                onReturnToHero = if (!hasEpisodeNavAbove && !showsCastSection) returnToHero else null,
-                                modifier = Modifier
-                                    .onFocusChanged { focusState ->
-                                        if (focusState.hasFocus && isSeriesDetail) {
-                                            seriesPrimaryFocusGeneration += 1
-                                            seriesPrimaryViewportActive.value = false
-                                        }
-                                    }
-                                    .detailBodySectionAnchor(listState, coroutineScope),
-                            )
+                            collectionsSection(if (!hasEpisodeNavAbove && !showsCastSection) returnToHero else null)
                         }
 
                         if (showsTrailersSection) {
@@ -1457,6 +1490,7 @@ private fun TvDetailContent(
                                     pendingCastFocusIndex = -1
                                     pendingSimilarGeneration += 1
                                     pendingReturnFromBoxSet = true
+                                    pendingReturnFromCollections = false
                                     pendingSimilarContentId = BoxSetExploreAllReturnId
                                     similarRestoreFocused.value = false
                                     onOpenBoxSet(boxSet.id, boxSet.libraryId)
@@ -1474,6 +1508,7 @@ private fun TvDetailContent(
                                         pendingCastFocusIndex = -1
                                         pendingSimilarGeneration += 1
                                         pendingReturnFromBoxSet = true
+                                        pendingReturnFromCollections = false
                                         pendingSimilarContentId = clickedContentId
                                         similarRestoreFocused.value = false
                                         onBoxSetMovie(clickedContentId, boxSet.libraryId)
@@ -1507,29 +1542,7 @@ private fun TvDetailContent(
                         }
 
                         if (showsMovieCollectionsRow) {
-                            TvItemCollectionsRowSection(
-                                row = collectionsRow!!,
-                                previewItems = state.collectionPreviewItems,
-                                onCollectionClick = { card ->
-                                    pendingCastFocusIndex = -1
-                                    pendingSimilarContentId = null
-                                    onOpenCollection(card)
-                                },
-                                onItemClick = { clickedContentId, card ->
-                                    pendingCastFocusIndex = -1
-                                    pendingSimilarContentId = null
-                                    onCollectionItem(clickedContentId, card.libraryIdInt)
-                                },
-                                onReturnToHero = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) returnToHero else null,
-                                modifier = Modifier
-                                    .onFocusChanged { focusState ->
-                                        if (focusState.hasFocus && isSeriesDetail) {
-                                            seriesPrimaryFocusGeneration += 1
-                                            seriesPrimaryViewportActive.value = false
-                                        }
-                                    }
-                                    .detailBodySectionAnchor(listState, coroutineScope),
-                            )
+                            collectionsSection(if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) returnToHero else null)
                         }
 
                         if (showsSimilarRail) {
@@ -1562,6 +1575,7 @@ private fun TvDetailContent(
                                         pendingCastFocusIndex = -1
                                         pendingSimilarGeneration += 1
                                         pendingReturnFromBoxSet = false
+                                        pendingReturnFromCollections = false
                                         pendingSimilarContentId = clickedContentId
                                         similarRestoreFocused.value = false
                                         onSimilarItemDetail(clickedContentId)

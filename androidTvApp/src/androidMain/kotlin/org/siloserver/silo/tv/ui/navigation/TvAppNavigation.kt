@@ -1691,7 +1691,7 @@ fun TvAppNavigation(
                     }
                 },
                 onCollectionItem = { itemContentId, collectionLibraryId ->
-                    navController.navigateToTvItemDetail(itemContentId, libraryId = collectionLibraryId ?: libraryId)
+                    navController.navigateToTvItemDetail(itemContentId, libraryId = collectionLibraryId)
                 },
             )
         }

@@ -3060,7 +3060,8 @@ class TvItemDetailViewModel(
             val result = org.siloserver.silo.viewmodel.loadItemCollectionsRow(catalogRepository, detail, libraryId)
             if (run != collectionsGeneration || _uiState.value.detail?.contentId != detail.contentId) return@launch
             if (result !is ApiResult.Success) return@launch
-            val row = result.data
+            // Book titles stay off TV, as in every other row.
+            val row = result.data?.visibleOnTv()
             val previewItems = (row as? org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview)?.items.orEmpty()
                 .map { it.toSectionItem() }
             _uiState.update { it.copy(collectionsRow = row, collectionPreviewItems = previewItems) }
