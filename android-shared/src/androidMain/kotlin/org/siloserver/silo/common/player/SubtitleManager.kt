@@ -923,6 +923,33 @@ internal fun subtitleCanvasRectFor(
 }
 
 /**
+ * Where the libass overlay goes inside the caption canvas: over [videoRect],
+ * the whole displayed video, in [canvasRect]'s own coordinates, or null when
+ * the canvas already is the video and the overlay simply fills it.
+ *
+ * The canvas is laid out for Media3's cues and takes insets they need (TV
+ * title safe area, a detected letterbox, the Bottom preset's reach into the
+ * bar). libass renders ASS in the script's PlayRes space scaled to its frame,
+ * with the script's own margins, so it needs the video's frame, not the
+ * canvas: inheriting the title-safe inset cut off signs authored near the
+ * frame edges. Both rects are in the content frame's space.
+ */
+internal fun libassOverlayRectInCanvas(
+    videoRect: SubtitleVideoRect,
+    canvasRect: SubtitleVideoRect,
+): SubtitleVideoRect? {
+    if (videoRect == canvasRect || videoRect.width <= 0 || videoRect.height <= 0) return null
+    return videoRect.copy(
+        left = videoRect.left - canvasRect.left,
+        top = videoRect.top - canvasRect.top,
+    )
+}
+
+/** True when this overlay rect, in the canvas's coordinates, reaches outside the canvas. */
+private fun SubtitleVideoRect.overflows(canvasWidth: Int, canvasHeight: Int): Boolean =
+    left < 0 || top < 0 || left + width > canvasWidth || top + height > canvasHeight
+
+/**
  * The bottom padding fraction for a canvas that may extend past the picture.
  *
  * Media3 reads the fraction against the SubtitleView's own height, so the
@@ -1432,7 +1459,8 @@ private class SubtitleVideoRectSync(
                 gravity = gravity,
             )
             setContentFrameClipping(clipped = true)
-            libassBridge?.constrainOverlayHeight(0)
+            setCanvasClipping(subtitleView, clipped = true)
+            libassBridge?.placeOverlay(0, 0, 0, 0)
             applyBottomPadding(
                 subtitleView = subtitleView,
                 position = position,
@@ -1460,27 +1488,36 @@ private class SubtitleVideoRectSync(
             videoPixelWidthHeightRatio = videoSize.pixelWidthHeightRatio,
             resizeMode = resizeMode,
         )
-        val pictureRect = selectSubtitleCanvasRect(
+        val videoRect = selectSubtitleCanvasRect(
             contentFrameRect = playerView.contentFrameSubtitleRect(),
             displayedVideoRect = displayedVideoRect,
-        ).insetByLetterbox(letterbox).insetByTitleSafe(titleSafeFraction)
+        )
+        val pictureRect = videoRect.insetByLetterbox(letterbox).insetByTitleSafe(titleSafeFraction)
         val rect = subtitleCanvasRectFor(
             position = position,
             pictureRect = pictureRect,
             playerBottomInParentSpace = playerBottomInParentSpace,
         )
-        // Only a canvas that actually reaches past the frame needs the frame to
-        // stop clipping, and only while it does: extending back over the
-        // title-safe bottom inset stays inside the frame and changes nothing.
-        // The canvas never leaves the PlayerView, so the frame is the one
-        // ancestor in the way.
-        setContentFrameClipping(clipped = rect.top + rect.height <= parentHeight)
-        // libass scales the script to the frame it is given, so the ASS overlay
-        // must NOT follow the canvas into the bar — authored typesetting keeps
-        // the picture on every preset.
-        libassBridge?.constrainOverlayHeight(
-            if (rect.height > pictureRect.height) pictureRect.height else 0,
-        )
+        // The ASS overlay covers the whole video, not the canvas; see
+        // libassOverlayRectInCanvas. Where that reaches outside the canvas
+        // (the title-safe inset), the canvas must not clip it, and neither may
+        // the frame, which clips the canvas's drawing to the canvas's bounds.
+        val overlayRect = libassBridge
+            ?.takeIf(LibassBridge::isRenderingSupported)
+            ?.let { libassOverlayRectInCanvas(videoRect = videoRect, canvasRect = rect) }
+        val overlayOverflows = overlayRect?.overflows(rect.width, rect.height) == true
+        // Otherwise only a canvas that actually reaches past the frame needs
+        // the frame to stop clipping, and only while it does: extending back
+        // over the title-safe bottom inset stays inside the frame and changes
+        // nothing. The canvas never leaves the PlayerView, so the frame is the
+        // one ancestor in the way.
+        setContentFrameClipping(clipped = rect.top + rect.height <= parentHeight && !overlayOverflows)
+        setCanvasClipping(subtitleView, clipped = !overlayOverflows)
+        if (overlayRect == null) {
+            libassBridge?.placeOverlay(0, 0, 0, 0)
+        } else {
+            libassBridge?.placeOverlay(overlayRect.left, overlayRect.top, overlayRect.width, overlayRect.height)
+        }
         applyLayoutParams(
             subtitleView = subtitleView,
             width = rect.width,
@@ -1527,6 +1564,15 @@ private class SubtitleVideoRectSync(
         )
         subtitleView.setBottomPaddingFraction(fraction)
         canvasBottomPaddingFraction = fraction
+    }
+
+    /**
+     * Lets the ASS overlay draw outside the caption canvas while it covers
+     * video the canvas leaves out. Media3's own cue output stays inside the
+     * canvas either way, so only the overlay can use it.
+     */
+    private fun setCanvasClipping(subtitleView: SubtitleView, clipped: Boolean) {
+        if (subtitleView.clipChildren != clipped) subtitleView.clipChildren = clipped
     }
 
     /**

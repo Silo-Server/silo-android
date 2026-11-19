@@ -25,4 +25,30 @@ class TitleSafeInsetTest {
         val rect = SubtitleVideoRect(left = 0, top = 0, width = 100, height = 100)
         assertEquals(rect, rect.insetByTitleSafe(0.6f))
     }
+
+    /**
+     * libass places ASS events in the script's own PlayRes space, scaled to
+     * the overlay it draws on, so the overlay must cover the whole video
+     * whatever insets the text-cue canvas takes. Rects are in the content
+     * frame's space; the result is in the canvas's.
+     */
+    @Test
+    fun theAssOverlayCoversTheWholeVideoWhateverTheCanvasInsets() {
+        val video = SubtitleVideoRect(left = 0, top = 0, width = 1920, height = 1080)
+        val letterboxed = SubtitleVideoRect(left = 0, top = 140, width = 1920, height = 800)
+        data class Case(val name: String, val video: SubtitleVideoRect, val canvas: SubtitleVideoRect, val expected: SubtitleVideoRect?)
+        val cases = listOf(
+            Case("TV title-safe canvas", video, video.insetByTitleSafe(0.05f),
+                SubtitleVideoRect(left = -96, top = -54, width = 1920, height = 1080)),
+            Case("Bottom canvas reaching into the bar", letterboxed, letterboxed.copy(height = 940),
+                SubtitleVideoRect(left = 0, top = 0, width = 1920, height = 800)),
+            Case("title-safe Bottom canvas reaching into the bar", letterboxed,
+                letterboxed.insetByTitleSafe(0.05f).let { it.copy(height = 1080 - it.top) },
+                SubtitleVideoRect(left = -96, top = -40, width = 1920, height = 800)),
+            Case("canvas is the video", video, video, null),
+        )
+        for (case in cases) {
+            assertEquals(case.name, case.expected, libassOverlayRectInCanvas(case.video, case.canvas))
+        }
+    }
 }

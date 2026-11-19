@@ -3,6 +3,7 @@ package org.siloserver.silo.libass;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -297,31 +298,47 @@ public final class LibassBridge {
     }
 
     /**
-     * Keeps the libass overlay on the PICTURE when its host canvas reaches past
-     * it.
+     * Places the libass overlay over the whole video, in its host's space.
      *
      * The overlay is normally MATCH_PARENT of the SubtitleView, and libass
      * scales the script to the frame it is handed
-     * ({@link #syncOverlayFrameSize()}). Silo's screen-anchored "Bottom"
-     * subtitle preset extends that canvas down into the letterbox bar, which
-     * an overlay that simply followed it would answer by stretching the
-     * author's typesetting into the bar as well. ASS keeps its authored
-     * placement on every preset, so the overlay stays the picture's height and
-     * the canvas grows underneath it. The host lays children out from its top,
-     * which the canvas shares with the picture, so the height is the whole
-     * correction.
+     * ({@link #syncOverlayFrameSize()}). That canvas is laid out for Media3's
+     * text cues, so it can differ from the video: a TV insets it to the title
+     * safe area, a detected letterbox narrows it to the picture, and the
+     * screen-anchored "Bottom" preset extends it into the bar below. An overlay
+     * that followed it would cut off signs authored near the frame edges and
+     * squeeze or stretch the author's typesetting. ASS positions its events in
+     * the script's own PlayRes space and keeps its own margins, so the overlay
+     * takes the video's rectangle instead, which may start above and left of
+     * the host and reach past it. The host must then not clip its children.
      *
-     * @param heightPx the picture's height inside the host, or any
-     *                 non-positive value to restore the full host.
+     * @param left   the video's left edge relative to the host's
+     * @param top    the video's top edge relative to the host's
+     * @param width  the video's width, or any non-positive value to fill the
+     *               host again
+     * @param height the video's height
      */
-    public void constrainOverlayHeight(int heightPx) {
+    public void placeOverlay(int left, int top, int width, int height) {
         AssSubtitleView overlay = overlayRef.get();
         if (overlay == null) return;
-        ViewGroup.LayoutParams params = overlay.getLayoutParams();
-        if (params == null) return;
-        int target = heightPx > 0 ? heightPx : ViewGroup.LayoutParams.MATCH_PARENT;
-        if (params.height == target) return;
-        params.height = target;
+        if (!(overlay.getLayoutParams() instanceof FrameLayout.LayoutParams)) return;
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) overlay.getLayoutParams();
+        boolean fill = width <= 0 || height <= 0;
+        int targetWidth = fill ? ViewGroup.LayoutParams.MATCH_PARENT : width;
+        int targetHeight = fill ? ViewGroup.LayoutParams.MATCH_PARENT : height;
+        // FrameLayout places a child at its padding plus the margin.
+        ViewGroup host = overlay.getParent() instanceof ViewGroup ? (ViewGroup) overlay.getParent() : null;
+        int targetLeft = fill || host == null ? 0 : left - host.getPaddingLeft();
+        int targetTop = fill || host == null ? 0 : top - host.getPaddingTop();
+        if (params.width == targetWidth && params.height == targetHeight
+                && params.leftMargin == targetLeft && params.topMargin == targetTop) {
+            return;
+        }
+        params.width = targetWidth;
+        params.height = targetHeight;
+        params.leftMargin = targetLeft;
+        params.topMargin = targetTop;
+        params.gravity = Gravity.TOP | Gravity.START;
         overlay.setLayoutParams(params);
     }
 
