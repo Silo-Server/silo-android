@@ -1175,6 +1175,8 @@ class DiagnosticsBundleBuilderTest {
             "progressive direct-play retry (StreamResetException CANCEL, try 1, retry_delay_ms=1000)",
             "progressive direct-play retry exhausted (ProtocolException, try 12)",
             "session ended remotely (http 410)",
+            "media load error (progressive_live unknown, ERROR_CODE_IO_NETWORK_CONNECTION_FAILED, " +
+                "HttpDataSourceException, SSLHandshakeException, CertificateException)",
         )
         val logs = messages.joinToString(separator = "\n", postfix = "\n") { message ->
             """{"ts":"2026-08-11T00:00:00Z","run":"run-1","lvl":"E","cat":"playback","tag":"Media3Analytics",""" +

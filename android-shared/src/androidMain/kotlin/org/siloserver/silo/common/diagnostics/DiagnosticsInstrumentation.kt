@@ -292,14 +292,12 @@ data class DiagnosticsPlayerErrorDetail(
     val decoder: String? = null,
     val sampleMimeType: String? = null,
     val formatSupport: String? = null,
+    /** Simple class names of the whole bounded cause chain, outermost first. */
+    val causeClasses: List<String> = listOfNotNull(causeClass, rootCauseClass),
 ) {
-    internal fun messageCodes(): String = listOfNotNull(
-        errorCodeName,
-        httpStatus?.let { "http $it" },
-        renderer,
-        causeClass,
-        rootCauseClass,
-    ).joinToString(", ")
+    internal fun messageCodes(): String = (
+        listOfNotNull(errorCodeName, httpStatus?.let { "http $it" }, renderer) + causeClasses
+        ).joinToString(", ")
 
     internal fun attributes(): Map<String, SiloLogAttribute> = buildMap {
         put("error_code", SiloLogAttribute.Integer(errorCode.toLong()))
@@ -324,15 +322,14 @@ data class DiagnosticsLoadErrorDetail(
     val errorClass: String,
     val rootCauseClass: String? = null,
     val wasCanceled: Boolean,
+    /** Simple class names of the whole bounded cause chain, starting with [errorClass]. */
+    val causeClasses: List<String> = listOfNotNull(errorClass, rootCauseClass),
 ) {
-    internal fun messageCodes(): String = listOfNotNull(
-        "$dataType $trackType",
-        errorCodeName,
-        httpStatus?.let { "http $it" },
-        errorClass,
-        rootCauseClass,
-        "canceled".takeIf { wasCanceled },
-    ).joinToString(", ")
+    internal fun messageCodes(): String = (
+        listOfNotNull("$dataType $trackType", errorCodeName, httpStatus?.let { "http $it" }) +
+            causeClasses +
+            listOfNotNull("canceled".takeIf { wasCanceled })
+        ).joinToString(", ")
 
     internal fun attributes(): Map<String, SiloLogAttribute> = buildMap {
         put("data_type", SiloLogAttribute.Text(dataType))

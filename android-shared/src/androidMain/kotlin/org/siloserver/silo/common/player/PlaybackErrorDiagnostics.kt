@@ -34,6 +34,7 @@ internal fun PlaybackException.toDiagnosticsDetail(): DiagnosticsPlayerErrorDeta
         decoder = decoderInit?.codecInfo?.name ?: decoderFailure?.codecInfo?.name,
         sampleMimeType = rendererError?.rendererFormat?.sampleMimeType ?: decoderInit?.mimeType,
         formatSupport = rendererError?.let { C.getFormatSupportString(it.rendererFormatSupport) },
+        causeClasses = chain.map { it.diagnosticsClassName() },
     )
 }
 
@@ -53,6 +54,7 @@ internal fun mediaLoadErrorDiagnosticsDetail(
         errorClass = error.diagnosticsClassName(),
         rootCauseClass = chain.rootCauseClassName(),
         wasCanceled = wasCanceled,
+        causeClasses = chain.map { it.diagnosticsClassName() },
     )
 }
 
@@ -82,7 +84,9 @@ private fun Int.dataTypeName(): String = when (this) {
     C.DATA_TYPE_DRM -> "drm"
     C.DATA_TYPE_TIME_SYNCHRONIZATION -> "time_sync"
     C.DATA_TYPE_AD -> "ad"
-    C.DATA_TYPE_MEDIA_PROGRESSIVE_LIVE -> "media_progressive_live"
+    // Not "media_progressive_live": the hosted sanitizer reads `media_` plus
+    // eight or more characters as a private media id.
+    C.DATA_TYPE_MEDIA_PROGRESSIVE_LIVE -> "progressive_live"
     C.DATA_TYPE_STEERING_MANIFEST -> "steering_manifest"
     C.DATA_TYPE_UNKNOWN -> "unknown"
     else -> "custom"

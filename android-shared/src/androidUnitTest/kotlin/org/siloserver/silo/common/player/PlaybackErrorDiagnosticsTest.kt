@@ -16,7 +16,9 @@ import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import java.io.IOException
 import java.net.SocketTimeoutException
+import java.security.cert.CertificateException
 import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -202,6 +204,35 @@ class PlaybackErrorDiagnosticsTest {
             json.message(),
         )
         assertEquals("ERROR_CODE_IO_NETWORK_CONNECTION_FAILED", json.attrs().text("error_name"))
+        assertNoPrivateStreamDetail(line)
+    }
+
+    @Test
+    fun loadErrorKeepsEveryClassInTheCauseChain() {
+        SiloLog.installSink { lines += it }
+        val error = HttpDataSource.HttpDataSourceException(
+            SSLHandshakeException("handshake failed for $STREAM_URL").apply {
+                initCause(CertificateException("bad cert for $STREAM_URL"))
+            },
+            DataSpec(Uri.parse(STREAM_URL)),
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+            HttpDataSource.HttpDataSourceException.TYPE_OPEN,
+        )
+
+        DiagnosticsPlaybackLogger.loadError(
+            mediaLoadErrorDiagnosticsDetail(
+                MediaLoadData(C.DATA_TYPE_MEDIA_PROGRESSIVE_LIVE),
+                error,
+                wasCanceled = false,
+            ),
+        )
+
+        val line = lines.single()
+        assertEquals(
+            "media load error (progressive_live unknown, ERROR_CODE_IO_NETWORK_CONNECTION_FAILED, " +
+                "HttpDataSourceException, SSLHandshakeException, CertificateException)",
+            Json.parseToJsonElement(line).jsonObject.message(),
+        )
         assertNoPrivateStreamDetail(line)
     }
 
