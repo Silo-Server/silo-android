@@ -24,17 +24,19 @@ object NextUpChoice {
     fun selected(enabled: Boolean, seconds: Int): Int? = if (enabled) seconds.coerceAtLeast(0) else null
 
     /**
-     * Off leaves the seconds alone. A time writes both keys where the server
-     * stores Off, so the picker's choice is this device's whole choice: one
-     * inherited half would follow a later profile change to Off. Where the
-     * server lacks the key, only a saved Off is turned back on.
+     * Off leaves the seconds alone. A time writes both keys, so the picker's
+     * choice is this device's whole choice: one inherited half would follow a
+     * later profile change to Off, including one the server reports only after
+     * its manifest is read. The flusher holds the key while the manifest is
+     * unknown and drops it for a server that lacks it, so that server is never
+     * sent it.
      */
-    suspend fun apply(store: PlayerSettingsStore, choice: Int?, currentlyEnabled: Boolean, offSupported: Boolean) {
+    suspend fun apply(store: PlayerSettingsStore, choice: Int?) {
         if (choice == null) {
             store.setNextUpEnabled(false)
             return
         }
-        if (offSupported || !currentlyEnabled) store.setNextUpEnabled(true)
+        store.setNextUpEnabled(true)
         store.setNextUpPromptSeconds(choice)
     }
 }

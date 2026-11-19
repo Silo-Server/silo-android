@@ -5423,7 +5423,10 @@ class TvPlayerViewModel(
             // overlay the viewer opened stays up, without a countdown.
             if (videoEnded) {
                 if (_uiState.value.showNextUp) {
-                    _uiState.update { it.copy(nextUpVideoEnded = true) }
+                    // A countdown left from before Off arrived must not advance.
+                    nextUpCountdownJob?.cancel()
+                    nextUpCountdownJob = null
+                    _uiState.update { it.copy(nextUpVideoEnded = true, nextUpCountdownSeconds = null) }
                 } else {
                     _closeAtEndRequests.tryEmit(Unit)
                 }

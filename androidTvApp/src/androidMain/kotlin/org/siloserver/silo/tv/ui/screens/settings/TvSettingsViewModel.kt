@@ -864,10 +864,7 @@ class TvSettingsViewModel(
 
     /** A Show Next Up choice: seconds before the end, or null for Off. */
     fun onNextUpChoice(choice: Int?) {
-        val state = _uiState.value
-        viewModelScope.launch {
-            NextUpChoice.apply(playerSettingsStore, choice, state.nextUpEnabled, state.nextUpOffSupported)
-        }
+        viewModelScope.launch { NextUpChoice.apply(playerSettingsStore, choice) }
     }
 
     /**
