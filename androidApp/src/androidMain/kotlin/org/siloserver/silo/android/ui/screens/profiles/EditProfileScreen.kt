@@ -171,6 +171,16 @@ fun EditProfileScreen(
                     onRetryLibraries = viewModel::loadLibraries,
                 )
 
+                if (state.requestsAllowedSupported) {
+                    Spacer(modifier = Modifier.height(24.dp))
+                    SwitchRow(
+                        label = stringResource(CommonR.string.newProfile_requestsAllowed),
+                        checked = state.access.requestsAllowed,
+                        onCheckedChange = viewModel::onRequestsAllowedToggled,
+                        subtitle = stringResource(CommonR.string.newProfile_requestsAllowedHelp),
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // -- PIN --

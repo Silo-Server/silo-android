@@ -35,6 +35,11 @@ data class TvCreateProfileUiState(
     val pinEnabled: Boolean = false,
     val pin: String = "",
     val subtitleMode: String? = null,
+    /**
+     * The server takes `requests_allowed`, so the form shows the switch and
+     * sends it. Null until the household list has been read.
+     */
+    val requestsAllowedSupported: Boolean? = null,
     val isLoading: Boolean = false,
     val error: UiText? = null,
     val createSuccess: Boolean = false,
@@ -52,12 +57,16 @@ class TvCreateProfileViewModel(
     private var existingProfiles: List<Profile> = emptyList()
 
     init {
-        viewModelScope.launch {
-            (profileRepository.listProfiles() as? ApiResult.Success)?.let {
-                existingProfiles = it.data
-            }
-        }
+        viewModelScope.launch { loadHousehold() }
         loadLibraries()
+    }
+
+    /** Returns whether the server takes `requests_allowed`, or null when the read failed. */
+    private suspend fun loadHousehold(): Boolean? {
+        val result = profileRepository.listHousehold() as? ApiResult.Success ?: return null
+        existingProfiles = result.data.profiles
+        _uiState.update { it.copy(requestsAllowedSupported = result.data.requestsAllowedSupported) }
+        return result.data.requestsAllowedSupported
     }
 
     fun onNameChanged(value: String) {
@@ -115,6 +124,10 @@ class TvCreateProfileViewModel(
         _uiState.update { it.copy(access = it.access.withContentRating(rating)) }
     }
 
+    fun onRequestsAllowedToggled(allowed: Boolean) {
+        _uiState.update { it.copy(access = it.access.withRequestsAllowed(allowed)) }
+    }
+
     fun onLibraryRestrictionsToggled(enabled: Boolean) {
         _uiState.update { it.copy(access = it.access.withLibraryRestrictions(enabled), error = null) }
     }
@@ -164,12 +177,22 @@ class TvCreateProfileViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
+            // Without the support answer a Child Profile would be created with
+            // requests allowed, the server's default.
+            val requestsAllowedSupported = current.requestsAllowedSupported ?: loadHousehold()
+            if (requestsAllowedSupported == null) {
+                _uiState.update {
+                    it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_network))
+                }
+                return@launch
+            }
+
             val request = CreateProfileRequest(
                 name = current.name,
                 avatar = current.effectiveAvatarRef(),
                 pin = if (current.pinEnabled) current.pin else null,
                 subtitleMode = current.subtitleMode,
-            ).withAccessLimits(current.access)
+            ).withAccessLimits(current.access, requestsAllowedSupported)
 
             when (val result = profileRepository.createProfile(request)) {
                 is ApiResult.Success -> {

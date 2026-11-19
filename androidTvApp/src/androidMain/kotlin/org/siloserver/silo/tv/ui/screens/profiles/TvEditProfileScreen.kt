@@ -65,6 +65,7 @@ fun TvEditProfileScreen(
             pin = state.pin,
             qualityPreference = state.qualityPreference,
             subtitleMode = state.subtitleMode,
+            requestsAllowedSupported = state.requestsAllowedSupported,
             pinHelper = stringResource(CommonR.string.profiles_edit_pinHintTv),
             submitLabel = stringResource(CommonR.string.profiles_edit_save),
             isSubmitting = state.isSaving,
@@ -85,6 +86,7 @@ fun TvEditProfileScreen(
             onPinChanged = viewModel::onPinChanged,
             onQualitySelected = viewModel::onQualitySelected,
             onSubtitleModeSelected = viewModel::onSubtitleModeSelected,
+            onRequestsAllowedToggled = viewModel::onRequestsAllowedToggled,
             onSubmit = viewModel::onSaveClick,
         ),
     )

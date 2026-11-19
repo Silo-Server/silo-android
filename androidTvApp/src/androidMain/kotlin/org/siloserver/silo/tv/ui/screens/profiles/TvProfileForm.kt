@@ -126,6 +126,8 @@ data class TvProfileFormState(
     val pin: String,
     val qualityPreference: String?,
     val subtitleMode: String?,
+    /** The Allow requests switch appears only when the server takes `requests_allowed`. */
+    val requestsAllowedSupported: Boolean = false,
     val pinHelper: String,
     val submitLabel: String,
     val isSubmitting: Boolean,
@@ -147,6 +149,7 @@ data class TvProfileFormCallbacks(
     val onPinChanged: (String) -> Unit,
     val onQualitySelected: (String) -> Unit,
     val onSubtitleModeSelected: (String) -> Unit,
+    val onRequestsAllowedToggled: (Boolean) -> Unit = {},
     val onSubmit: () -> Unit,
     val onCancel: (() -> Unit)? = null,
 )
@@ -168,13 +171,15 @@ fun TvProfileForm(
     val nameFocusRequester = remember { FocusRequester() }
     val pinFocusRequester = remember { FocusRequester() }
     val childFocusRequester = remember { FocusRequester() }
+    val requestsFocusRequester = remember { FocusRequester() }
     val submitFocusRequester = remember { FocusRequester() }
     val access = state.access
     val accessFocus = rememberTvProfileAccessFocus(
         access = access,
         libraries = state.libraries,
         childFocusRequester = childFocusRequester,
-        submitFocusRequester = submitFocusRequester,
+        // The Allow requests switch, when shown, sits between the limits and submit.
+        submitFocusRequester = if (state.requestsAllowedSupported) requestsFocusRequester else submitFocusRequester,
     )
     val formScrollState = rememberScrollState()
     var editingTextField by remember { mutableStateOf<ProfileTextField?>(null) }
@@ -421,6 +426,21 @@ fun TvProfileForm(
                             callbacks = callbacks,
                         )
 
+                        if (state.requestsAllowedSupported) {
+                            TvSwitchRow(
+                                title = stringResource(CommonR.string.newProfile_requestsAllowed),
+                                subtitle = stringResource(CommonR.string.newProfile_requestsAllowedHelp),
+                                isOn = access.requestsAllowed,
+                                onToggle = { callbacks.onRequestsAllowedToggled(!access.requestsAllowed) },
+                                modifier = Modifier
+                                    .focusRequester(requestsFocusRequester)
+                                    .focusProperties {
+                                        up = accessFocus.beforeSubmit
+                                        down = submitFocusRequester
+                                    },
+                            )
+                        }
+
                         val errorText = state.error
                             ?: stringResource(CommonR.string.profiles_error_enterName).takeIf { blankNameError }
                         if (errorText != null) {
@@ -436,7 +456,7 @@ fun TvProfileForm(
                             icon = Icons.Filled.Check,
                             variant = TvPillVariant.Filled,
                             focusRequester = submitFocusRequester,
-                            upFocusRequester = accessFocus.beforeSubmit,
+                            upFocusRequester = if (state.requestsAllowedSupported) requestsFocusRequester else accessFocus.beforeSubmit,
                             onClick = {
                                 when {
                                     state.isSubmitting -> Unit

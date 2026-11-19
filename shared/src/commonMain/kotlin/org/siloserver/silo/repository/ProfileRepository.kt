@@ -3,6 +3,7 @@ package org.siloserver.silo.repository
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.profile.CreateProfileRequest
 import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.model.profile.ProfilesResponse
 import org.siloserver.silo.model.profile.UpdateProfileRequest
 import org.siloserver.silo.model.profile.VerifyPinResponse
 import org.siloserver.silo.network.ApiResult
@@ -43,7 +44,15 @@ open class ProfileRepository(
      * profile limit, which arrives with the list (the profile menu's row
      * reads it).
      */
-    open suspend fun listProfiles(): ApiResult<List<Profile>> {
+    open suspend fun listProfiles(): ApiResult<List<Profile>> =
+        listHousehold().map { it.profiles }
+
+    /**
+     * The profiles plus the server's household flags, for the profile
+     * editors: they show and send `requests_allowed` only when
+     * [ProfilesResponse.requestsAllowedSupported].
+     */
+    open suspend fun listHousehold(): ApiResult<ProfilesResponse> {
         val accountId = serverRegistry?.activeAccountId?.value
         // A remote-playback handoff identity lists its own profile with no
         // limit; that is not the open account's answer.
@@ -52,7 +61,7 @@ open class ProfileRepository(
         if (result is ApiResult.Success && !handoff && !tokenManager.hasTemporaryScope()) {
             rememberProfileLimit(accountId, result.data.maxProfiles)
         }
-        return result.map { it.profiles }
+        return result
     }
 
     /** Stores [maxProfiles] for [accountId] while it is still the open account. */

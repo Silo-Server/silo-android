@@ -40,6 +40,8 @@ data class EditProfileUiState(
     val language: String? = null,
     val subtitleLanguage: String? = null,
     val subtitleMode: String? = null,
+    /** The server takes `requests_allowed`, so the form shows the switch and sends it. */
+    val requestsAllowedSupported: Boolean = false,
     val isLoading: Boolean = false,
     val isSaving: Boolean = false,
     val error: UiText? = null,
@@ -77,10 +79,10 @@ class EditProfileViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, profileId = profileId) }
 
-            when (val result = profileRepository.listProfiles()) {
+            when (val result = profileRepository.listHousehold()) {
                 is ApiResult.Success -> {
-                    existingProfiles = result.data
-                    val profile = result.data.find { it.id == profileId }
+                    existingProfiles = result.data.profiles
+                    val profile = result.data.profiles.find { it.id == profileId }
                     if (profile != null) {
                         loadedHasPin = profile.hasPin
                         loadedAccess = ProfileAccessLimits.of(profile)
@@ -96,6 +98,7 @@ class EditProfileViewModel(
                                 language = profile.language,
                                 subtitleLanguage = profile.subtitleLanguage,
                                 subtitleMode = profile.subtitleMode,
+                                requestsAllowedSupported = result.data.requestsAllowedSupported,
                             )
                         }
                     } else {
@@ -144,6 +147,10 @@ class EditProfileViewModel(
 
     fun onContentRatingSelected(rating: String?) {
         _uiState.update { it.copy(access = it.access.withContentRating(rating)) }
+    }
+
+    fun onRequestsAllowedToggled(allowed: Boolean) {
+        _uiState.update { it.copy(access = it.access.withRequestsAllowed(allowed)) }
     }
 
     fun onLibraryRestrictionsToggled(enabled: Boolean) {
@@ -228,7 +235,12 @@ class EditProfileViewModel(
                 language = current.language,
                 subtitleLanguage = current.subtitleLanguage,
                 subtitleMode = current.subtitleMode,
-            ).withAccessLimits(current.access, loadedAccess, current.libraries.ids)
+            ).withAccessLimits(
+                current.access,
+                loadedAccess,
+                current.libraries.ids,
+                requestsAllowedSupported = current.requestsAllowedSupported,
+            )
 
             when (val result = profileRepository.updateProfile(current.profileId, request)) {
                 is ApiResult.Success -> {

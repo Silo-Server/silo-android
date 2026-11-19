@@ -23,7 +23,7 @@ import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_TEXT
 
 /**
  * Mirrors the phone app's `EditProfileViewModel`. Loads an existing profile by
- * id (via [ProfileRepository.listProfiles], since the repo exposes no
+ * id (via [ProfileRepository.listHousehold], since the repo exposes no
  * getProfile(id)) and saves through [ProfileRepository.updateProfile].
  */
 data class TvEditProfileUiState(
@@ -41,6 +41,8 @@ data class TvEditProfileUiState(
     val pin: String = "",
     val qualityPreference: String? = null,
     val subtitleMode: String? = null,
+    /** The server takes `requests_allowed`, so the form shows the switch and sends it. */
+    val requestsAllowedSupported: Boolean = false,
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val error: UiText? = null,
@@ -78,10 +80,10 @@ class TvEditProfileViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
-            when (val result = profileRepository.listProfiles()) {
+            when (val result = profileRepository.listHousehold()) {
                 is ApiResult.Success -> {
-                    existingProfiles = result.data
-                    val profile = result.data.find { it.id == profileId }
+                    existingProfiles = result.data.profiles
+                    val profile = result.data.profiles.find { it.id == profileId }
                     if (profile != null) {
                         loadedHasPin = profile.hasPin
                         loadedAccess = ProfileAccessLimits.of(profile)
@@ -98,6 +100,7 @@ class TvEditProfileViewModel(
                                 pinEnabled = profile.hasPin,
                                 qualityPreference = profile.qualityPreference,
                                 subtitleMode = profile.subtitleMode,
+                                requestsAllowedSupported = result.data.requestsAllowedSupported,
                             )
                         }
                     } else {
@@ -180,6 +183,10 @@ class TvEditProfileViewModel(
         _uiState.update { it.copy(access = it.access.withContentRating(rating)) }
     }
 
+    fun onRequestsAllowedToggled(allowed: Boolean) {
+        _uiState.update { it.copy(access = it.access.withRequestsAllowed(allowed)) }
+    }
+
     fun onLibraryRestrictionsToggled(enabled: Boolean) {
         _uiState.update { it.copy(access = it.access.withLibraryRestrictions(enabled), error = null) }
     }
@@ -252,7 +259,12 @@ class TvEditProfileViewModel(
                 pin = pinValue,
                 qualityPreference = current.qualityPreference,
                 subtitleMode = current.subtitleMode,
-            ).withAccessLimits(current.access, loadedAccess, current.libraries.ids)
+            ).withAccessLimits(
+                current.access,
+                loadedAccess,
+                current.libraries.ids,
+                requestsAllowedSupported = current.requestsAllowedSupported,
+            )
 
             when (val result = profileRepository.updateProfile(current.profileId, request)) {
                 is ApiResult.Success -> {
