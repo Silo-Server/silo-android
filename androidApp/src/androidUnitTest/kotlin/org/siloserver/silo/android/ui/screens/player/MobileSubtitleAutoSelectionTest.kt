@@ -27,6 +27,9 @@ class MobileSubtitleAutoSelectionTest {
         // A saved burn-in whose index now holds another track is not that row.
         val reindexed = listOf(rows[1].copy(index = 0))
         assertEquals(null, resolveMobileSubtitleOrdinal(burnedIn, reindexed))
+        // The same track at another index is still that row.
+        val moved = listOf(rows[1].copy(index = 0), rows[0].copy(index = 1))
+        assertEquals(1, resolveMobileSubtitleOrdinal(burnedIn, moved))
     }
 
     @Test

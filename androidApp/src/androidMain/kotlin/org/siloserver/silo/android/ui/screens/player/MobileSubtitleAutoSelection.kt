@@ -88,8 +88,11 @@ internal fun resolveMobileSubtitleOrdinal(
     val typedMatches = subtitles.indices.filter { index ->
         val rowIdentity = mobileSubtitleIdentity(subtitles[index])
         val rowMedia = rowIdentity.subtitleMediaIdentityOrNull() ?: return@filter false
-        identity::class == rowIdentity::class &&
-            rowMedia.matchesSubtitleMediaIdentity(targetMedia)
+        // A saved burn-in of a sidecar pick (deliveredAs) still names that
+        // sidecar row when the row has moved to another index.
+        val compatibleKind = identity::class == rowIdentity::class ||
+            identity is SubtitleIdentity.ServerBurnIn && rowIdentity is SubtitleIdentity.ServerSidecar
+        compatibleKind && rowMedia.matchesSubtitleMediaIdentity(targetMedia)
     }
     return typedMatches.singleOrNull()
 }
