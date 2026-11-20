@@ -1,8 +1,8 @@
 package org.siloserver.silo.libass;
 
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
-import android.graphics.Rect;
 import android.os.Handler;
 import android.view.Gravity;
 import android.view.View;
@@ -318,11 +318,13 @@ public final class LibassBridge {
      * @param width  the video's width, or any non-positive value to fill the
      *               host again
      * @param height the video's height
+     * @return whether the overlay's layout params changed, so its host has to
+     *         lay it out again
      */
-    public void placeOverlay(int left, int top, int width, int height) {
+    public boolean placeOverlay(int left, int top, int width, int height) {
         AssSubtitleView overlay = overlayRef.get();
-        if (overlay == null) return;
-        if (!(overlay.getLayoutParams() instanceof FrameLayout.LayoutParams)) return;
+        if (overlay == null) return false;
+        if (!(overlay.getLayoutParams() instanceof FrameLayout.LayoutParams)) return false;
         FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) overlay.getLayoutParams();
         boolean fill = width <= 0 || height <= 0;
         int targetWidth = fill ? ViewGroup.LayoutParams.MATCH_PARENT : width;
@@ -331,31 +333,47 @@ public final class LibassBridge {
         ViewGroup host = overlay.getParent() instanceof ViewGroup ? (ViewGroup) overlay.getParent() : null;
         int targetLeft = fill || host == null ? 0 : left - host.getPaddingLeft();
         int targetTop = fill || host == null ? 0 : top - host.getPaddingTop();
+        int targetGravity = Gravity.TOP | Gravity.LEFT;
         if (params.width == targetWidth && params.height == targetHeight
-                && params.leftMargin == targetLeft && params.topMargin == targetTop) {
-            return;
+                && params.leftMargin == targetLeft && params.topMargin == targetTop
+                && params.gravity == targetGravity) {
+            return false;
         }
         params.width = targetWidth;
         params.height = targetHeight;
         params.leftMargin = targetLeft;
         params.topMargin = targetTop;
-        params.gravity = Gravity.TOP | Gravity.START;
+        // LEFT, not START: the margins are physical offsets from the video.
+        params.gravity = targetGravity;
         overlay.setLayoutParams(params);
+        return true;
     }
 
     /**
-     * Shows only the top {@code width} x {@code height} of the overlay, in its
-     * own coordinates, or all of it again when either value is negative. A
-     * placed overlay reaches past its host, so the host's padding clip is off,
-     * and this keeps the overlay out from under whatever that padding makes
-     * room for (the TV's playback controls).
+     * Shows only the top {@code visibleHeight} pixels of the overlay, or all
+     * of it again when the value is negative. A placed overlay reaches past
+     * its host, so the host's padding clip is off, and this keeps the overlay
+     * out from under whatever the host's bottom padding makes room for (the
+     * TV's playback controls).
      */
-    public void clipOverlay(int width, int height) {
+    public void clipOverlayBelow(int visibleHeight) {
         AssSubtitleView overlay = overlayRef.get();
         if (overlay == null) return;
-        Rect target = width < 0 || height < 0 ? null : new Rect(0, 0, width, height);
+        // The width is unbounded: the overlay may not have been laid out at its
+        // new size yet, and only the bottom edge is clipped.
+        Rect target = visibleHeight < 0 ? null : new Rect(0, 0, Integer.MAX_VALUE, visibleHeight);
         Rect current = overlay.getClipBounds();
         if (target == null ? current != null : !target.equals(current)) overlay.setClipBounds(target);
+    }
+
+    /**
+     * Lays the overlay over its whole host again, unclipped.
+     *
+     * @return whether the overlay's layout params changed
+     */
+    public boolean fillHost() {
+        clipOverlayBelow(-1);
+        return placeOverlay(0, 0, 0, 0);
     }
 
     /** Removes the view that still points at the retiring handler. */
