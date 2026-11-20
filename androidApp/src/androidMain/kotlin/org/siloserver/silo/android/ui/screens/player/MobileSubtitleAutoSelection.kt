@@ -10,6 +10,7 @@ import org.siloserver.silo.model.playback.resolveAutoSubtitle
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.toAutoSubtitleCandidate
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
 import org.siloserver.silo.playback.hasPositiveSubtitleDiscriminator
 import org.siloserver.silo.playback.matchesSubtitleMediaIdentity
@@ -74,6 +75,13 @@ internal fun resolveMobileSubtitleOrdinal(
     }
     if (exactMatches.size == 1) return exactMatches.single()
     if (exactMatches.size > 1) return null
+    // A sidecar pick the server can only burn in commits as burn-in of that
+    // same server track; the row the viewer picked is still the sidecar row.
+    if (identity is SubtitleIdentity.ServerBurnIn) {
+        subtitles.indices.singleOrNull { index ->
+            mobileSubtitleIdentity(subtitles[index]).playsAs(identity)
+        }?.let { return it }
+    }
 
     val targetMedia = identity.subtitleMediaIdentityOrNull() ?: return null
     if (!targetMedia.hasPositiveSubtitleDiscriminator()) return null
