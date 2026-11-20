@@ -139,11 +139,25 @@ class HomeScreenV2Test {
         reportAccessChange(); advanceTimeBy(5_000); runCurrent()
         language.changed(); runCurrent()
         assertEquals(1, listReads, "a hidden Home must not re-read")
-        title = "New"; vm.onShown(); vm.runPendingRealtimeRefresh(); runCurrent()
+        title = "New"; vm.onShown(); runCurrent()
         assertEquals(2, listReads)
         assertEquals("New", vm.uiState.value.sections.single().items.single().title)
         vm.runPendingRealtimeRefresh(); runCurrent()
         assertEquals(2, listReads, "the deferred refresh runs once")
+    }
+
+    @Test fun realtimeRetryRecoversTransientFallbackWithoutAnotherSignal() = scenario { vm ->
+        runCurrent()
+        unresolved = true
+        failFallback = true
+        title = "New"
+        vm.refreshFromRealtime(); runCurrent()
+        assertEquals(1, fallbackReads)
+        assertEquals("Old", vm.uiState.value.sections.single().items.single().title)
+        failFallback = false
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(2, fallbackReads)
+        assertEquals("New", vm.uiState.value.sections.single().items.single().title)
     }
 
     @Test fun shownHomeRefreshesLiveAndStopsWhenHidden() = scenario { vm ->
@@ -153,8 +167,8 @@ class HomeScreenV2Test {
         vm.onHidden()
         reportAccessChange(); advanceTimeBy(5_000); runCurrent()
         assertEquals(2, listReads)
-        // The resume refresh covers the update that waited.
-        vm.onShown(); vm.refreshFromRealtime(); runCurrent()
+        // Showing Home covers the update that waited.
+        vm.onShown(); runCurrent()
         assertEquals(3, listReads)
         vm.runPendingRealtimeRefresh(); runCurrent()
         assertEquals(3, listReads)

@@ -151,14 +151,16 @@ class HomeViewModel(
 
     /**
      * Home's rows are on screen. A refresh that waited while they were hidden
-     * runs on [runPendingRealtimeRefresh] or the next [refreshFromRealtime].
+     * runs now unless TV is still restoring focus and will explicitly drain it.
      */
-    fun onShown(refreshOnResume: Boolean = false) {
+    fun onShown(refreshOnResume: Boolean = false, deferPendingRefresh: Boolean = false) {
         val returning = hasBeenShown
         shown = true
         hasBeenShown = true
         if (refreshOnResume && (returning || !_uiState.value.isLoading)) {
             refreshFromRealtime()
+        } else if (!deferPendingRefresh) {
+            runPendingRealtimeRefresh()
         }
     }
 
@@ -443,6 +445,7 @@ class HomeViewModel(
                     outcome = if (fullyResolved) HomeLoadOutcome.SUCCESS else HomeLoadOutcome.PARTIAL,
                     sections = resolved,
                 )
+                if (hydration.hasTransientFailure) onTransientFailure()
                 _uiState.update {
                     // Only replace what's shown when the fetch fully resolved (or there
                     // was nothing yet) — a partial refresh must not clobber a good Home.
@@ -492,7 +495,7 @@ class HomeViewModel(
                     )
                 }
                 report(HomeLoadOutcome.API_ERROR)
-                if (result.code == 408 || result.code == 429 || result.code in 500..599) onTransientFailure()
+                if (result.isTransientHomeReadFailure()) onTransientFailure()
             }
             is ApiResult.NetworkError -> {
                 if (!mayPublish(owner, generation)) {
