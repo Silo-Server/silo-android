@@ -1484,6 +1484,7 @@ private class SubtitleVideoRectSync(
                     playerBottomInParentSpace > parentHeight
                 )
         ) {
+            val overlayMoved = libassBridge?.fillHost() == true
             applyLayoutParams(
                 subtitleView = subtitleView,
                 width = FrameLayout.LayoutParams.MATCH_PARENT,
@@ -1491,10 +1492,10 @@ private class SubtitleVideoRectSync(
                 leftMargin = 0,
                 topMargin = 0,
                 gravity = gravity,
+                childrenChanged = overlayMoved,
             )
             setContentFrameClipping(clipped = true)
             setCanvasClipping(subtitleView, clipped = true)
-            libassBridge?.fillHost()
             applyBottomPadding(
                 subtitleView = subtitleView,
                 position = position,
