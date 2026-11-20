@@ -41,8 +41,10 @@ import org.siloserver.silo.model.playback.SubtitleTransitionEvent
 import org.siloserver.silo.model.playback.SubtitleTransitionState
 import org.siloserver.silo.model.playback.UpdateAudioPreference
 import org.siloserver.silo.model.playback.UpdateQualityPreference
+import org.siloserver.silo.model.playback.deliveredAs
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.isServerPick
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.reduceSubtitleTransition
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
@@ -705,7 +707,7 @@ internal class TvSubtitleTransactionAdapter(
      * re-selecting what is already on would arm a pointless remount.
      */
     fun selectAuto(identity: SubtitleIdentity) {
-        if (identity == transition.committed.identity && !hasActiveTransaction) {
+        if (identity.playsAs(transition.committed.identity) && !hasActiveTransaction) {
             SubDiag.log("ADAPTER selectAuto NOOP $identity")
             return
         }
@@ -2786,7 +2788,7 @@ private fun TvStagedSubtitleCandidate.authoritativeValidatedState(
     val committedIdentity = if (requested.identity.isClientOwnedSubtitle()) {
         validated.committed.identity
     } else {
-        selectedSubtitleIdentity ?: validated.committed.identity
+        (selectedSubtitleIdentity ?: validated.committed.identity).deliveredAs(subtitleMode)
     }
     return validated.copy(
         committed = validated.committed.copy(
@@ -2825,6 +2827,12 @@ private fun TvStagedSubtitleCandidate.validationFailure(
     is SubtitleIdentity.ServerSidecar -> when {
         selectedSubtitleIndex != identity.serverIndex ->
             TvSubtitleFailure.SubtitleNotSelected.english
+        // The server burns in a track it will not hand the client as a
+        // sidecar (an ASS track on an HLS transcode, which declares no
+        // attached-font support). The replan has already switched the
+        // session's transcode, so this is the requested track and the only
+        // answer it will give.
+        subtitleMode == PlaybackSubtitleModeV3.BURN_IN -> null
         subtitleMode != PlaybackSubtitleModeV3.RENDER &&
             subtitleMode != PlaybackSubtitleModeV3.CONVERT ->
             TvSubtitleFailure.SidecarNotRendered.english
@@ -2834,9 +2842,12 @@ private fun TvStagedSubtitleCandidate.validationFailure(
     is SubtitleIdentity.ServerBurnIn -> when {
         selectedSubtitleIndex != identity.serverIndex ->
             TvSubtitleFailure.SubtitleNotSelected.english
-        subtitleMode != PlaybackSubtitleModeV3.BURN_IN ->
-            TvSubtitleFailure.NotBurnedIn.english
-        else -> null
+        subtitleMode == PlaybackSubtitleModeV3.BURN_IN -> null
+        // A sidecar pick committed as burn-in comes back as a sidecar once a
+        // later replan (quality, audio, output route) leaves the transcode.
+        hasSidecar &&
+            (subtitleMode == PlaybackSubtitleModeV3.RENDER || subtitleMode == PlaybackSubtitleModeV3.CONVERT) -> null
+        else -> TvSubtitleFailure.NotBurnedIn.english
     }
     is SubtitleIdentity.Embedded -> if (
         selectedSubtitleIndex == identity.serverIndex &&

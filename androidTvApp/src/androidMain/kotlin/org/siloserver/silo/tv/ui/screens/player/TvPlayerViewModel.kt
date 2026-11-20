@@ -142,6 +142,7 @@ import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleCho
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.model.playback.videoQualityPreference
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.playback.ADMIN_ENDED_PLAYBACK_NOTICE
 import org.siloserver.silo.playback.PlaybackMarkersUpdate
 import org.siloserver.silo.playback.PlaybackSubtitleReady
@@ -6117,7 +6118,7 @@ class TvPlayerViewModel(
         // clear would disable this safety net for the rest of the session.
         if (autoSubtitleSelectionInFlight &&
             state.pendingSubtitleIdentity == null &&
-            state.committedSubtitleIdentity == autoSelectedSubtitleIdentity
+            autoSelectedSubtitleIdentity?.playsAs(state.committedSubtitleIdentity) == true
         ) {
             autoSubtitleSelectionInFlight = false
         }
@@ -6291,7 +6292,7 @@ class TvPlayerViewModel(
             owner = trackChoiceOwner,
             identity = identity,
         )
-        if (state.pendingSubtitleIdentity == null && state.committedSubtitleIdentity == identity) {
+        if (state.pendingSubtitleIdentity == null && identity.playsAs(state.committedSubtitleIdentity)) {
             stagedSubtitleWrite.set(null)
             saveSeriesSubtitle(write)
         } else {
@@ -6384,7 +6385,7 @@ class TvPlayerViewModel(
     /** Sends the staged picks [committed] made final; each goes out once. */
     private fun sendCommittedSeriesWrites(committed: org.siloserver.silo.model.playback.CommittedSubtitle) {
         stagedSubtitleWrite.get()
-            ?.takeIf { it.identity == committed.identity && stagedSubtitleWrite.compareAndSet(it, null) }
+            ?.takeIf { it.identity.playsAs(committed.identity) && stagedSubtitleWrite.compareAndSet(it, null) }
             ?.let(::saveSeriesSubtitle)
         if (committed.audioPreferenceSpecified) {
             val state = _uiState.value
