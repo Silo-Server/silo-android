@@ -124,9 +124,13 @@ class PushRegistrationApiTest {
         })
         try {
             val api=DefaultPushRegistrationApi(client, tokens, ApiV2Gate.Unrestricted)
-            assertEquals(true,assertIs<ApiResult.Success<Boolean>>(api.available(owner)).data)
-            body=body.replace("true","false"); assertEquals(false,assertIs<ApiResult.Success<Boolean>>(api.available(owner)).data)
-            body="{}"; assertEquals(false,assertIs<ApiResult.Success<Boolean>>(api.available(owner)).data)
+            assertEquals(PushRegistrationCapability(true,false),assertIs<ApiResult.Success<PushRegistrationCapability>>(api.capability(owner)).data,"a server that predates binding")
+            val advertised=body.replace("}",""","binds_login_session":true}""")
+            body=advertised; assertEquals(PushRegistrationCapability(true,true),assertIs<ApiResult.Success<PushRegistrationCapability>>(api.capability(owner)).data)
+            body=advertised.replace("""binds_login_session":true""","""binds_login_session":false"""); assertFalse(assertIs<ApiResult.Success<PushRegistrationCapability>>(api.capability(owner)).data.bindsLoginSession)
+            body=advertised.replace("""binds_login_session":true""","""binds_login_session":"true""""); assertFalse(assertIs<ApiResult.Success<PushRegistrationCapability>>(api.capability(owner)).data.bindsLoginSession)
+            body=body.replace("true","false"); assertFalse(assertIs<ApiResult.Success<PushRegistrationCapability>>(api.capability(owner)).data.registrationAvailable)
+            body="{}"; assertEquals(PushRegistrationCapability(false,false),assertIs<ApiResult.Success<PushRegistrationCapability>>(api.capability(owner)).data)
         } finally { client.close() }
     }
 }
