@@ -268,17 +268,20 @@ class AndroidPlayerSettingsStore(
         }
 
     /**
-     * Whether the active server's manifest defines
-     * `playback.buffering_quality_mode`: null until its manifest is read.
+     * Whether the active server's manifest defines [key], one of
+     * [PlaybackSettingsKeys.ManifestDetectedKeys]: null until its manifest is read.
      */
-    private val bufferingQualityModeDefined: Flow<Boolean?> =
+    private fun manifestDefines(key: String): Flow<Boolean?> =
         if (contractRevision == null) {
             flowOf(true)
         } else {
             combine(currentScopeFlow, contractRevision.known) { scope, _ ->
-                scope?.let { contractRevision.stores(it.serverUrl, PlaybackSettingsKeys.BufferingQualityMode) }
+                scope?.let { contractRevision.stores(it.serverUrl, key) }
             }.distinctUntilChanged()
         }
+
+    private val bufferingQualityModeDefined: Flow<Boolean?> =
+        manifestDefines(PlaybackSettingsKeys.BufferingQualityMode)
 
     // No legacy boolean behind this one: an absent or unknown value is the
     // contract default. Until the server's manifest is read, the last mode
@@ -296,6 +299,21 @@ class AndroidPlayerSettingsStore(
 
     override val bufferingQualityModeSupportedFlow: Flow<Boolean> =
         bufferingQualityModeDefined.map { it == true }.distinctUntilChanged()
+
+    private val nextUpEnabledDefined: Flow<Boolean?> =
+        manifestDefines(PlaybackSettingsKeys.NextUpEnabled)
+
+    // As with the buffering mode: until the manifest is read the last choice
+    // seen applies, and a server without the setting keeps Next Up on.
+    override val nextUpEnabledFlow: Flow<Boolean> =
+        combine(
+            profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.NextUpEnabled, true) },
+            nextUpEnabledDefined,
+        ) { enabled, defined -> enabled || defined == false }
+            .distinctUntilChanged()
+
+    override val nextUpEnabledSupportedFlow: Flow<Boolean> =
+        nextUpEnabledDefined.map { it == true }.distinctUntilChanged()
 
     // ---- Booleans ------------------------------------------------------
     override val autoSkipCreditsFlow: Flow<Boolean> =
@@ -525,22 +543,10 @@ class AndroidPlayerSettingsStore(
 
     /**
      * Settings offers this only while the server's manifest defines the key
-     * ([bufferingQualityModeSupportedFlow]). Like [setCellularQuality] it is
-     * marked unconfirmed, so a write the flusher held while the manifest was
-     * unknown is sent again by the first refresh rather than replaced with
-     * the server's default.
+     * ([bufferingQualityModeSupportedFlow]); [writeString] marks it unconfirmed.
      */
-    override suspend fun setBufferingQualityMode(value: BufferingQualityMode) {
-        val key = PlaybackSettingsKeys.BufferingQualityMode
-        withScope { scope, store ->
-            store.edit {
-                it[stringPreferencesKey(scope.keyPrefix + key)] = value.wireValue
-                markDeviceOverride(it, scope, key)
-                it[unconfirmedKeysKey(scope)] = it[unconfirmedKeysKey(scope)].orEmpty() + key
-            }
-            serverSettingsFlusher.enqueue(scope.profileId, key, value.wireValue, scope.serverUrl, scope.authority)
-        }
-    }
+    override suspend fun setBufferingQualityMode(value: BufferingQualityMode) =
+        writeString(PlaybackSettingsKeys.BufferingQualityMode, value.wireValue)
 
     override suspend fun setAutoSkipCredits(value: Boolean) =
         writeBool(PlaybackSettingsKeys.AutoSkipCredits, value)
@@ -676,6 +682,9 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun setNextUpPromptSeconds(value: Int) =
         writeInt(PlaybackSettingsKeys.NextUpPromptSeconds, value.coerceIn(0, 120))
+
+    override suspend fun setNextUpEnabled(value: Boolean) =
+        writeBool(PlaybackSettingsKeys.NextUpEnabled, value)
 
     override suspend fun setResumeRewindSeconds(value: Int) =
         writeIntLocal(PlaybackSettingsKeys.ResumeRewindSeconds, value.coerceIn(0, 30))
@@ -1240,6 +1249,7 @@ class AndroidPlayerSettingsStore(
             store.edit {
                 it[booleanPreferencesKey(scope.keyPrefix + key)] = value
                 markDeviceOverride(it, scope, key)
+                markUnconfirmedIfManifestDetected(it, scope, key)
             }
             serverSettingsFlusher.enqueue(scope.profileId, key, value.toString(), scope.serverUrl, scope.authority)
         }
@@ -1284,6 +1294,7 @@ class AndroidPlayerSettingsStore(
             store.edit {
                 it[stringPreferencesKey(scope.keyPrefix + key)] = value
                 markDeviceOverride(it, scope, key)
+                markUnconfirmedIfManifestDetected(it, scope, key)
             }
             serverSettingsFlusher.enqueue(scope.profileId, key, value, scope.serverUrl, scope.authority)
         }
@@ -1329,6 +1340,22 @@ class AndroidPlayerSettingsStore(
 
     private fun deviceOverridesKey(scope: Scope): Preferences.Key<Set<String>> =
         stringSetPreferencesKey(scope.keyPrefix + DEVICE_OVERRIDE_KEYS)
+
+    /**
+     * A key the server may not store yet ([PlaybackSettingsKeys.ManifestDetectedKeys])
+     * stays unconfirmed, like the cellular pair, so a write the flusher held while
+     * the manifest was unknown is sent again by the first refresh rather than
+     * replaced with the server's default.
+     */
+    private fun markUnconfirmedIfManifestDetected(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        scope: Scope,
+        key: String,
+    ) {
+        if (key in PlaybackSettingsKeys.ManifestDetectedKeys) {
+            prefs[unconfirmedKeysKey(scope)] = prefs[unconfirmedKeysKey(scope)].orEmpty() + key
+        }
+    }
 
     private fun unconfirmedKeysKey(scope: Scope): Preferences.Key<Set<String>> =
         stringSetPreferencesKey(scope.keyPrefix + UNCONFIRMED_GATED_KEYS)

@@ -94,6 +94,7 @@ import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.domain.player.MarkerKind
 import org.siloserver.silo.domain.player.MarkerTimeline
+import org.siloserver.silo.domain.player.NextUpPrompt
 import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -703,7 +704,7 @@ class PlayerViewModel(
         val awaitingFirstFrame: Boolean
             get() = startedContentId != contentId
 
-        /** The marker occurrences the skip controls and Up Next read. */
+        /** The marker occurrences the skip controls read. */
         val markerTimeline: MarkerTimeline by lazy {
             MarkerTimeline.resolve(markerSegments, intro = intro, credits = credits, recap = recap, preview = preview)
         }
@@ -1038,10 +1039,20 @@ class PlayerViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, IntroSkipMode.Default)
     val autoPlayNextEnabled: StateFlow<Boolean> = playerSettingsStore.autoPlayNextFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
-    // Seconds before end to surface the Up Next card when no credits marker
-    // exists (0 = only at end). Credits marker wins when present.
+    // Seconds before the end of the file to surface Up Next (0 = only at end).
     private val nextUpPromptSeconds: StateFlow<Int> = playerSettingsStore.nextUpPromptSecondsFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 30)
+    // Show Next Up: Off means no card, and the player closes at the end.
+    private val nextUpEnabled: StateFlow<Boolean> = playerSettingsStore.nextUpEnabledFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    private val _closeAtEndRequests = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    /** PlayerScreen leaves the player the way Back does: playback ended with Next Up off. */
+    val closeAtEndRequests: kotlinx.coroutines.flow.SharedFlow<Unit> = _closeAtEndRequests.asSharedFlow()
 
     /**
      * Video relative-seek intervals every phone surface uses (buttons,
@@ -1073,7 +1084,7 @@ class PlayerViewModel(
     // same VM persists across episodes and the guard accumulates the streak.
     // The guard reads the threshold lazily so a settings change applies live.
     private val autoPlayGuard = AutoPlayGuard(threshold = { passOutThreshold.value })
-    // Once-per-episode guard for the credits/ended trigger; reset on each load.
+    // Once-per-episode guard for the before-end/ended trigger; reset on each load.
     private var autoAdvanceHandled = false
     // End point fired before the next episode resolved — remember it (and the
     // strongest videoEnded flag seen) so resolveNextEpisode can commit the card.
@@ -3311,22 +3322,16 @@ class PlayerViewModel(
             )
         }
 
-        // F2: surface the Up Next card when playback CROSSES the credits point
-        // (only on the before->after transition, so resuming inside the credits
-        // doesn't instantly trigger it). Without a credits marker, fall back to
-        // crossing (duration - nextUpPromptSeconds); 0 = only at end (iOS parity).
-        if (!seekWasActive) {
-            val creditsStart = _uiState.value.markerTimeline.upNextCreditsStart()
-            if (creditsStart != null) {
-                if (previousPosition < creditsStart && positionSec >= creditsStart) onApproachingEnd()
-            } else {
-                val promptSeconds = nextUpPromptSeconds.value
-                val duration = _uiState.value.duration
-                if (promptSeconds > 0 && duration > 0) {
-                    val promptStart = duration - promptSeconds
-                    if (previousPosition < promptStart && positionSec >= promptStart) onApproachingEnd()
-                }
-            }
+        // Surface Up Next when playback crosses the chosen point before the end
+        // of the file. Only the crossing counts, so resuming or seeking past it
+        // doesn't open the card; the stream ending still does.
+        if (
+            !seekWasActive &&
+            NextUpPrompt.crossesPromptPoint(
+                previousPosition, positionSec, _uiState.value.duration, nextUpPromptSeconds.value,
+            )
+        ) {
+            onApproachingEnd()
         }
 
         // Forward to the lifecycle so its 10s reporter has a fresh sample.
@@ -4835,8 +4840,8 @@ class PlayerViewModel(
 
     /**
      * Adopt the playing file's marker ranges (a `markers_updated` event or a
-     * reconcile read). The intro auto-skip observer and the credits-based F2
-     * trigger read these from UiState, so updating them takes effect
+     * reconcile read). The intro auto-skip observer and the skip controls
+     * read these from UiState, so updating them takes effect
      * immediately. Passing `null` clears a marker the server says no longer
      * applies.
      */
@@ -6191,7 +6196,7 @@ class PlayerViewModel(
                 it.copy(nextEpisode = info)
             }
             if (_uiState.value.contentId != forContentId) return@launch
-            // If the credits/end point already fired while we were still
+            // If the before-end/end point already fired while we were still
             // resolving, the card couldn't arm — commit it now with the
             // strongest video-ended flag observed.
             if (!autoAdvanceHandled) {
@@ -6203,12 +6208,12 @@ class PlayerViewModel(
     }
 
     /**
-     * Credits reached (primary) or stream ended (fallback) — surface the Up Next
-     * card. When auto-play is on and the consecutive-auto-advance streak is
+     * The Next Up point before the end was crossed, or the stream ended —
+     * surface the Up Next card. When auto-play is on and the consecutive-auto-advance streak is
      * below the pass-out threshold, the card runs a countdown that plays the
      * next episode at zero. Once the streak hits the threshold (or auto-play is
      * off), the card shows WITHOUT a countdown so the user must explicitly
-     * choose (the pass-out gate). The credits prompt is once per episode;
+     * choose (the pass-out gate). The before-end prompt is once per episode;
      * a dismissed card reopens when playback ends.
      *
      * [videoEnded] is true on STATE_ENDED — the card reads "Playing Next"; a
@@ -6228,10 +6233,15 @@ class PlayerViewModel(
                 shuffleRefreshedForPostRoll = true
                 refreshShuffleNext()
             }
+        } else if (!nextUpEnabled.value) {
+            // Next Up off: nothing before the end, and the player closes at the
+            // end. A shuffle still moves on; the viewer asked for one.
+            if (videoEnded) _closeAtEndRequests.tryEmit(Unit)
+            return
         }
         if (autoAdvanceHandled) {
             if (videoEnded) {
-                // Keep Watching dismisses the credits prompt, but finishing the
+                // Keep Watching dismisses the before-end prompt, but finishing the
                 // episode must still offer Play Now without restarting its timer.
                 _uiState.update { it.copy(showUpNext = true, upNextVideoEnded = true) }
             }
@@ -6291,7 +6301,7 @@ class PlayerViewModel(
             // Two anchors (iOS parity — silo-apple's PlayerViewModel derives the
             // countdown from movieTime and only auto-plays once playback truly
             // ends):
-            //  - Card committed BEFORE the end (credits / prompt crossing): the
+            //  - Card committed BEFORE the end (before-end crossing): the
             //    countdown mirrors the remaining playback time, so it freezes on
             //    pause, grows on a backward seek, and the advance fires only when
             //    the player reports STATE_ENDED — never truncating the tail of an
@@ -6337,7 +6347,7 @@ class PlayerViewModel(
 
     /**
      * Up Next dismiss — cancel the countdown and stay on the current playback.
-     * Suppress further credits prompts; playback end still reopens the card.
+     * Suppress further before-end prompts; playback end still reopens the card.
      */
     fun dismissUpNext() {
         if (nextUpTransitionGate.isActive) return

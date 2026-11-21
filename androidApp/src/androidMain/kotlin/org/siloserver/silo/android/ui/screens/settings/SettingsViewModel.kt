@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.android.auth.SignOutTeardown
+import org.siloserver.silo.common.settings.NextUpChoice
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.CardPresentationUiState
@@ -130,6 +131,9 @@ data class SettingsUiState(
     // many seconds before the end to surface the card (0 = only at end).
     val autoPlayNext: Boolean = true,
     val nextUpPromptSeconds: Int = 30,
+    // Show Next Up Off (`playback.next_up_enabled`), offered while the server stores it.
+    val nextUpEnabled: Boolean = true,
+    val nextUpOffSupported: Boolean = false,
     /**
      * Keys this device holds its own value for. A profile-layered control
      * whose key is absent shows "Use profile setting" as its choice.
@@ -339,6 +343,12 @@ class SettingsViewModel(
             _uiState.update { it.copy(bufferingQualityModeSupported = supported) }
         }.launchIn(viewModelScope)
         combine(
+            playerSettingsStore.nextUpEnabledFlow,
+            playerSettingsStore.nextUpEnabledSupportedFlow,
+        ) { enabled, supported ->
+            _uiState.update { it.copy(nextUpEnabled = enabled, nextUpOffSupported = supported) }
+        }.launchIn(viewModelScope)
+        combine(
             playerSettingsStore.cellularPreferredQualityFlow,
             playerSettingsStore.cellularMaxBitrateKbpsFlow,
         ) { resolution, bitrate -> resolution to bitrate }.onEach { (resolution, bitrate) ->
@@ -439,8 +449,9 @@ class SettingsViewModel(
         viewModelScope.launch { playerSettingsStore.setAutoPlayNext(value) }
     }
 
-    fun setNextUpPromptSeconds(value: Int) {
-        viewModelScope.launch { playerSettingsStore.setNextUpPromptSeconds(value) }
+    /** A Show Next Up choice: seconds before the end, or null for Off. */
+    fun setNextUpChoice(choice: Int?) {
+        viewModelScope.launch { NextUpChoice.apply(playerSettingsStore, choice) }
     }
 
     fun setPassOutThreshold(value: Int) {

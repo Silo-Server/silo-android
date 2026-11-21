@@ -24,7 +24,7 @@ data class SettingPresentation(
 )
 
 object SettingKeys {
-    const val REVISION = 28
+    const val REVISION = 30
 
     /** Blur unwatched episode images */
     const val CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES = "catalog.hide_unwatched_episode_images"
@@ -72,6 +72,8 @@ object SettingKeys {
     const val PLAYBACK_INTRO_SKIP_MODE = "playback.intro_skip_mode"
     /** Maximum bitrate */
     const val PLAYBACK_MAX_BITRATE_KBPS = "playback.max_bitrate_kbps"
+    /** Show Next Up */
+    const val PLAYBACK_NEXT_UP_ENABLED = "playback.next_up_enabled"
     /** Next up prompt */
     const val PLAYBACK_NEXT_UP_PROMPT_SECONDS = "playback.next_up_prompt_seconds"
     /** Preferred quality */
@@ -202,6 +204,7 @@ object SettingKeys {
         PLAYBACK_CELLULAR_PREFERRED_QUALITY,
         PLAYBACK_INTRO_SKIP_MODE,
         PLAYBACK_MAX_BITRATE_KBPS,
+        PLAYBACK_NEXT_UP_ENABLED,
         PLAYBACK_NEXT_UP_PROMPT_SECONDS,
         PLAYBACK_PREFERRED_QUALITY,
         PLAYBACK_SHOW_FORCED_SUBTITLES,
@@ -286,6 +289,7 @@ object SettingKeys {
         PLAYBACK_AUTO_SKIP_CREDITS,
         PLAYBACK_AUTO_SKIP_INTRO,
         PLAYBACK_AUTO_SKIP_RECAP,
+        PLAYBACK_NEXT_UP_ENABLED,
         PLAYBACK_SHOW_FORCED_SUBTITLES,
         PLAYBACK_SHOW_MARKER_CONFIDENCE,
         PLAYBACK_SHOW_MARKER_SOURCE,

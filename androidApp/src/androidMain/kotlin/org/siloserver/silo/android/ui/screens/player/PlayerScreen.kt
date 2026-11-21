@@ -690,6 +690,17 @@ fun PlayerScreen(
     // resolves when the service binds. We hold the controller in a compose
     // state so downstream effects can re-run once it's ready.
     var mediaController by remember { mutableStateOf<MediaController?>(null) }
+    // With Next Up off, the end of playback leaves the player like Back. The
+    // position ticker stops in the background, so report the end position
+    // first; the exit saves the last reported one.
+    LaunchedEffect(Unit) {
+        viewModel.closeAtEndRequests.collect {
+            mediaController?.takeIf { it.mediaItemCount > 0 }?.let { controller ->
+                viewModel.onPositionChanged(controller.currentPosition, controller.duration)
+            }
+            exitPlayer()
+        }
+    }
     val playWhenReadyReconciliationGate = remember(mediaController, roomId) {
         PlayWhenReadyReconciliationGate()
     }

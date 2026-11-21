@@ -61,6 +61,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.common.settings.NextUpChoice
+import org.siloserver.silo.common.settings.nextUpChoiceLabel
 import org.siloserver.silo.common.i18n.AppLanguageStore
 import org.siloserver.silo.common.i18n.appLanguageOptions
 import org.siloserver.silo.common.i18n.displayUppercase
@@ -93,7 +95,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -325,7 +326,7 @@ fun TvSettingsScreen(
         onTrueBlackBarsChanged = viewModel::onTrueBlackBarsChanged,
         onResumeRewindSecondsChanged = viewModel::onResumeRewindSecondsChanged,
         onPassOutThresholdChanged = viewModel::onPassOutThresholdChanged,
-        onNextUpPromptSecondsChanged = viewModel::onNextUpPromptSecondsChanged,
+        onNextUpChoice = viewModel::onNextUpChoice,
         onResetPlaybackOverrides = viewModel::resetPlaybackOverrides,
         onUseProfileSetting = viewModel::onUseProfileSetting,
         seekIntervals = viewModel.seekIntervals,
@@ -480,7 +481,7 @@ private fun SettingsSplitLayout(
     onTrueBlackBarsChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
-    onNextUpPromptSecondsChanged: (Int) -> Unit,
+    onNextUpChoice: (Int?) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
     onUseProfileSetting: (String) -> Unit,
     seekIntervals: SeekIntervalSettingsModel? = null,
@@ -568,7 +569,7 @@ private fun SettingsSplitLayout(
             onTrueBlackBarsChanged = onTrueBlackBarsChanged,
             onResumeRewindSecondsChanged = onResumeRewindSecondsChanged,
             onPassOutThresholdChanged = onPassOutThresholdChanged,
-            onNextUpPromptSecondsChanged = onNextUpPromptSecondsChanged,
+            onNextUpChoice = onNextUpChoice,
             onResetPlaybackOverrides = onResetPlaybackOverrides,
             onUseProfileSetting = onUseProfileSetting,
             seekIntervals = seekIntervals,
@@ -859,7 +860,7 @@ private fun SettingsDetailPane(
     onTrueBlackBarsChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
-    onNextUpPromptSecondsChanged: (Int) -> Unit,
+    onNextUpChoice: (Int?) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
     onUseProfileSetting: (String) -> Unit,
     seekIntervals: SeekIntervalSettingsModel? = null,
@@ -922,7 +923,7 @@ private fun SettingsDetailPane(
             onTrueBlackBarsChanged = onTrueBlackBarsChanged,
                 onResumeRewindSecondsChanged = onResumeRewindSecondsChanged,
                 onPassOutThresholdChanged = onPassOutThresholdChanged,
-                onNextUpPromptSecondsChanged = onNextUpPromptSecondsChanged,
+                onNextUpChoice = onNextUpChoice,
                 onResetPlaybackOverrides = onResetPlaybackOverrides,
                 onUseProfileSetting = onUseProfileSetting,
                 seekIntervals = seekIntervals,
@@ -1226,7 +1227,7 @@ private fun TvPlaybackSettingsPane(
     onTrueBlackBarsChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
-    onNextUpPromptSecondsChanged: (Int) -> Unit,
+    onNextUpChoice: (Int?) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
     /** Receives the key of the control going back to the profile's value. */
     onUseProfileSetting: (String) -> Unit,
@@ -1393,7 +1394,7 @@ private fun TvPlaybackSettingsPane(
                 }
                 SettingsValueRow(
                     label = stringResource(CommonR.string.settings_nextUp_title),
-                    value = nextUpPromptLabel(state.nextUpPromptSeconds),
+                    value = nextUpChoiceLabel(NextUpChoice.selected(state.nextUpEnabled, state.nextUpPromptSeconds)),
                     onClick = { activePicker = PlaybackPicker.NextUpPrompt },
                 )
                 // Three-way, not a switch: the schema's recommended control
@@ -1563,8 +1564,10 @@ private fun TvPlaybackSettingsPane(
         PlaybackPicker.NextUpPrompt -> {
             val (options, selectedId) = profileLayered(
                 PlaybackSettingsKeys.NextUpPromptSeconds,
-                NextUpPromptOptions.map { PickerOption(it.toString(), nextUpPromptLabel(it)) },
-                state.nextUpPromptSeconds.toString(),
+                NextUpChoice.options(state.nextUpOffSupported, state.nextUpEnabled).map {
+                    PickerOption(it?.toString() ?: NextUpOffId, nextUpChoiceLabel(it))
+                },
+                NextUpChoice.selected(state.nextUpEnabled, state.nextUpPromptSeconds)?.toString() ?: NextUpOffId,
             )
             TvSettingsPickerSheet(
                 title = stringResource(CommonR.string.settings_nextUp_title),
@@ -1574,7 +1577,7 @@ private fun TvPlaybackSettingsPane(
                     if (id == UseProfileSettingId) {
                         onUseProfileSetting(PlaybackSettingsKeys.NextUpPromptSeconds)
                     } else {
-                        id.toIntOrNull()?.let(onNextUpPromptSecondsChanged)
+                        if (id == NextUpOffId) onNextUpChoice(null) else id.toIntOrNull()?.let(onNextUpChoice)
                     }
                     activePicker = null
                 },
@@ -3070,8 +3073,8 @@ private fun invertedRowBorder() = ClickableSurfaceDefaults.border(
 private val ResumeRewindOptions = listOf(0, 3, 5, 7, 10, 15, 20, 30)
 private val PassOutThresholdOptions = listOf(0, 2, 3, 4, 5)
 
-// Up-Next prompt timing (seconds before end; 0 = at end). Mirrors tvOS.
-private val NextUpPromptOptions = listOf(0, 10, 30, 60, 120)
+/** The Show Next Up picker's id for Off; the other choices use their seconds. */
+private const val NextUpOffId = "off"
 
 @Composable
 private fun resumeRewindLabel(seconds: Int): String =
@@ -3080,13 +3083,6 @@ private fun resumeRewindLabel(seconds: Int): String =
 @Composable
 private fun passOutThresholdLabel(count: Int): String =
     if (count <= 0) stringResource(CommonR.string.settings_off) else "$count"
-
-@Composable
-private fun nextUpPromptLabel(seconds: Int): String = when {
-    seconds <= 0 -> stringResource(CommonR.string.settings_nextUp_atEnd)
-    seconds < 60 -> pluralStringResource(CommonR.plurals.settings_nextUp_secondsBeforeEnd, seconds, seconds)
-    else -> (seconds / 60).let { pluralStringResource(CommonR.plurals.settings_nextUp_minutesBeforeEnd, it, it) }
-}
 
 /**
  * "Theme Music" and "Loop Theme Music", as the web app's device settings offer
