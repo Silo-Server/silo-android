@@ -56,6 +56,9 @@ class InPlacePlanAdoptionTest {
     @Test fun nativeSelectableRowsAreExactNativeIdentitiesThatKeepTheirFallbackUrl() {
         val rows = original.toSessionResponse("s1", "profile", 42).subtitleUrls!!
         assertEquals(listOf("3", "4", null), rows.map { it.nativeContainerTrackId })
+        // Every embedded row names its track in the file the player plays,
+        // switchable or not, so the menu can tell that track is the row.
+        assertEquals(listOf("3", "4", "5"), rows.map { it.sourceContainerTrackId })
         assertEquals(original.subtitle.inventory.map { it.url }, rows.map { it.url })
         val other = assertIs<SubtitleIdentity.Embedded>(playbackSubtitleIdentity(rows[1]))
         assertEquals("4", other.containerTrackId)
@@ -86,6 +89,8 @@ class InPlacePlanAdoptionTest {
         )
         assertEquals(listOf("", ""), rows.map { it.url })
         assertEquals(listOf(null, null), rows.map { it.nativeContainerTrackId })
+        // A server-made stream renumbers its tracks: the file's IDs name nothing in it.
+        assertEquals(listOf(null, null), rows.map { it.sourceContainerTrackId })
         val identity = assertIs<SubtitleIdentity.Embedded>(playbackSubtitleIdentity(rows[1]))
         assertEquals("subs:Track 1", identity.hlsRendition?.media3TrackId)
         // A single-rendition plan lists no others: their sidecars stay.

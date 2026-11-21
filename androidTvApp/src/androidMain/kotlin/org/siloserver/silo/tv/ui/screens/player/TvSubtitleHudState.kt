@@ -5,6 +5,7 @@ import android.content.res.Resources
 import androidx.annotation.StringRes
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.player.trackIdDenotes
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
@@ -18,7 +19,20 @@ internal data class TvSubtitleHudOption(
     val label: String,
     /** No route can show this server track: listed, never selectable. */
     val unplayable: Boolean = false,
-)
+    /** The file's track Media3 lists for this server row, which the menu does not list again. */
+    val sourceTrackId: String? = null,
+) {
+    /**
+     * Whether this row is what [committed] plays, including the file's track
+     * it stands for, mounted as a player track (a choice saved from before
+     * that track stopped being listed apart from its row).
+     */
+    fun plays(committed: SubtitleIdentity): Boolean =
+        identity == committed ||
+            sourceTrackId != null &&
+            committed is SubtitleIdentity.LocalMedia3 &&
+            trackIdDenotes(committed.media.trackId, sourceTrackId)
+}
 
 internal data class TvSubtitleHudRow(
     val stableId: String,
@@ -122,7 +136,7 @@ internal fun buildTvSubtitleHudPresentation(
         .mapTo(mutableSetOf(), TvSubtitleHudOption::stableId)
     val resolvedFocus = focusedStableId
         ?.takeIf(optionIds::contains)
-        ?: options.firstOrNull { it.identity == committedIdentity && !it.unplayable }?.stableId
+        ?: options.firstOrNull { it.plays(committedIdentity) && !it.unplayable }?.stableId
         ?: options.firstOrNull { !it.unplayable }?.stableId
     return TvSubtitleHudPresentation(
         rows = options.map { option ->
@@ -132,7 +146,7 @@ internal fun buildTvSubtitleHudPresentation(
                 stableId = option.stableId,
                 identity = option.identity,
                 label = option.label,
-                checked = option.identity == committedIdentity,
+                checked = option.plays(committedIdentity),
                 applying = applying,
                 focused = option.stableId == resolvedFocus,
                 unplayable = option.unplayable,
@@ -153,10 +167,17 @@ internal fun buildTvSubtitleHudOptions(
     resources: Resources,
 ): List<TvSubtitleHudOption> {
     val mountedTrackIndexes = resolvedMountedSubtitleTrackIndexes(subtitleTracks, subtitleUrls)
+    // A server row the player cannot mount locally (a sidecar row for an
+    // embedded track) still names the original file's track that Media3 lists,
+    // so that track is the row, not another choice.
+    val sourceTrackIds = subtitleUrls.mapNotNull(PlayerSubtitleInfo::menuSourceTrackId)
     val playerOnlyTracks = if (subtitleUrls.isEmpty()) {
         subtitleTracks
     } else {
-        subtitleTracks.filterNot { it.index in mountedTrackIndexes }
+        subtitleTracks.filterNot { track ->
+            track.index in mountedTrackIndexes ||
+                sourceTrackIds.any { trackIdDenotes(track.trackId, it) }
+        }
     }
     return buildList {
         add(tvSubtitleHudOption(SubtitleIdentity.Off, resources.getString(CommonR.string.player_tracks_subtitlesOff)))
@@ -166,6 +187,7 @@ internal fun buildTvSubtitleHudOptions(
                     tvSubtitleIdentity(row),
                     subtitleChoiceLabel(row, position, resources),
                     unplayable = row.unplayable,
+                    sourceTrackId = row.menuSourceTrackId(),
                 ),
             )
         }
@@ -182,13 +204,22 @@ internal fun buildTvSubtitleHudOptions(
     }.distinctBy(TvSubtitleHudOption::stableId)
 }
 
+/**
+ * The file's track this row stands for in the menu. An unplayable row cannot be
+ * picked, so its track stays listed on its own as the only way to show it.
+ */
+private fun PlayerSubtitleInfo.menuSourceTrackId(): String? =
+    sourceContainerTrackId.takeUnless { unplayable }
+
 private fun tvSubtitleHudOption(
     identity: SubtitleIdentity,
     label: String,
     unplayable: Boolean = false,
+    sourceTrackId: String? = null,
 ): TvSubtitleHudOption = TvSubtitleHudOption(
     stableId = tvSubtitleOptionStableId(identity),
     identity = identity,
     label = label,
     unplayable = unplayable,
+    sourceTrackId = sourceTrackId,
 )
