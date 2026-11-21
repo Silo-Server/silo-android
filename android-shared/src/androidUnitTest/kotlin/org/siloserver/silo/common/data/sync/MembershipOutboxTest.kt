@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.data.sync
 
+import org.siloserver.silo.common.data.db.entity.MembershipProjectionEntity
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 
 import androidx.room.Room
@@ -77,6 +78,88 @@ class MembershipOutboxTest {
         assertEquals(MembershipOutbox.Resolution.NOT_CLAIMED, box.send(id, authority).resolution)
         assertEquals(MembershipOutbox.Resolution.RECONCILED, box.reconcile(id, authority).resolution)
         assertEquals(listOf(HttpMethod.Delete, HttpMethod.Get), methods); assertNull(dao.getById(id))
+    }
+
+    @Test fun retryReadsFirstAndResendsOnlyWhileServerDiffers() = runTest {
+        val methods = mutableListOf<HttpMethod>()
+        val box = outbox(MockEngine { request ->
+            methods += request.method
+            when {
+                request.method == HttpMethod.Get -> respond("", HttpStatusCode.NotFound)
+                methods.size == 1 -> respond("", HttpStatusCode.ServiceUnavailable)
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        })
+        val id = box.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, true)
+        assertEquals(MembershipOutbox.Resolution.NEEDS_RECONCILIATION, box.send(id, authority).resolution)
+        val result = box.retry(id, authority)
+        assertEquals(MembershipOutbox.Resolution.ACKNOWLEDGED, result.resolution); assertTrue(result.mayPublish)
+        assertEquals(listOf(HttpMethod.Put, HttpMethod.Get, HttpMethod.Put), methods); assertNull(dao.getById(id))
+    }
+
+    @Test fun retryDropsSupersededCommandWithoutSending() = runTest {
+        val methods = mutableListOf<HttpMethod>()
+        val box = outbox(MockEngine { request ->
+            methods += request.method
+            respond("", if (request.method == HttpMethod.Get) HttpStatusCode.NotFound else HttpStatusCode.ServiceUnavailable)
+        })
+        val old = box.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, true)
+        box.send(old, authority)
+        val newer = box.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, false)
+        assertEquals(MembershipOutbox.Resolution.NOT_CLAIMED, box.retry(old, authority).resolution)
+        assertEquals(listOf(HttpMethod.Put), methods)
+        assertNull(dao.getById(old)); assertEquals(MembershipOutbox.READY, dao.getById(newer)?.state)
+    }
+
+    @Test fun retryNeverOverwritesANewerChoiceThatLandedDuringItsRead() = runTest {
+        val methods = mutableListOf<HttpMethod>()
+        val reading = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val box = outbox(MockEngine { request ->
+            methods += request.method
+            when (request.method) {
+                HttpMethod.Get -> { reading.complete(Unit); release.await(); respond("", HttpStatusCode.NotFound) }
+                HttpMethod.Put -> respond("", HttpStatusCode.ServiceUnavailable)
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        })
+        val old = box.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, true)
+        box.send(old, authority)
+        val retrying = async { box.retry(old, authority) }; reading.await()
+        val newer = box.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, false)
+        assertEquals(MembershipOutbox.Resolution.ACKNOWLEDGED, box.send(newer, authority).resolution)
+        release.complete(Unit)
+        assertEquals(MembershipOutbox.Resolution.NOT_CLAIMED, retrying.await().resolution)
+        assertEquals(listOf(HttpMethod.Put, HttpMethod.Get, HttpMethod.Delete), methods); assertNull(dao.getById(old))
+    }
+
+    @Test fun retryNeverResendsAfterANewerChoiceWasAcknowledgedAndDeleted() = runTest {
+        val methods = mutableListOf<HttpMethod>()
+        val reading = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val box = outbox(MockEngine { request ->
+            methods += request.method
+            when (request.method) {
+                HttpMethod.Get -> { reading.complete(Unit); release.await(); respond("", HttpStatusCode.NotFound) }
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        })
+        val old = box.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, true)
+        assertEquals(1, dao.claimMembership(old, authority.key, "worker", "process-one")) // The worker is sending it.
+        val newer = box.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, false)
+        db.membershipProjectionDao().put(MembershipProjectionEntity(authority.key, "item", "FAVORITE", newer, false, null))
+        dao.transitionMembership(old, "worker", authority.key, MembershipOutbox.SENDING, MembershipOutbox.RECONCILE) // The worker's send fails.
+        val retrying = async { box.retry(old, authority) }; reading.await()
+        assertEquals(MembershipOutbox.Resolution.ACKNOWLEDGED, box.send(newer, authority).resolution)
+        release.complete(Unit)
+        assertNotEquals(MembershipOutbox.Resolution.ACKNOWLEDGED, retrying.await().resolution)
+        assertEquals(listOf(HttpMethod.Get, HttpMethod.Delete), methods)
+    }
+
+    @Test fun retryOfACommandThatWasNeverSentSendsIt() = runTest {
+        val methods = mutableListOf<HttpMethod>()
+        val box = outbox(MockEngine { request -> methods += request.method; respond("", HttpStatusCode.NoContent) })
+        val id = box.enqueue(authority, "item", MembershipOutbox.ListKind.WATCHLIST, true) // Cancelled before send.
+        assertEquals(MembershipOutbox.Resolution.ACKNOWLEDGED, box.retry(id, authority).resolution)
+        assertEquals(listOf(HttpMethod.Put), methods); assertNull(dao.getById(id))
     }
 
     @Test fun abandonedClaimSurvivesRestartAsReconciliationAndMismatchPauses() = runTest {

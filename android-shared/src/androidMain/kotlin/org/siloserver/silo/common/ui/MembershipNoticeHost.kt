@@ -30,7 +30,6 @@ import org.siloserver.silo.repository.port.MembershipPort
 data class MembershipNotice(
     val title: String,
     val message: String,
-    /** "Check Status" once a command was recorded, otherwise "Try Again". */
     val actionLabel: String,
     val onAction: () -> Unit,
     val onDismiss: () -> Unit,
@@ -74,9 +73,8 @@ fun MembershipNoticeHost(
         val (intent, action) = shown
         show(unconfirmedNotice(action, onDismiss = { raised = raised - intent }) {
             raised = raised - intent
-            scope.launch {
-                if (action.command != null) actions.checkStatus(intent) else actions.perform(intent)
-            }
+            // Retries a recorded command (read first, resend only on mismatch), or sends it.
+            scope.launch { actions.perform(intent) }
         })
     } else if (legacy) {
         LegacyMembershipBanner(onDismiss = actions::dismissLegacyNotice, modifier = legacyModifier)
@@ -91,7 +89,6 @@ private fun unconfirmedNotice(
 ): MembershipNotice {
     val favorite = action.intent.key.kind == MembershipPort.Kind.FAVORITE
     val adding = action.intent.present
-    val recorded = action.command != null
     if (action.completion?.disposition == MembershipPort.Disposition.PAUSED) {
         return MembershipNotice(
             title = stringResource(R.string.shell_membership_notSaved_title),
@@ -103,7 +100,7 @@ private fun unconfirmedNotice(
                     else -> R.string.shell_membership_notSaved_removeWatchlist
                 },
             ),
-            actionLabel = stringResource(R.string.shell_membership_checkStatus),
+            actionLabel = stringResource(R.string.shell_membership_tryAgain),
             onAction = onAction,
             onDismiss = onDismiss,
         )
@@ -116,15 +113,14 @@ private fun unconfirmedNotice(
             else -> R.string.shell_membership_notConfirmed_removeWatchlist
         },
     )
-    val next = stringResource(
-        if (recorded) R.string.shell_membership_notConfirmed_checkLater else R.string.shell_membership_notConfirmed_retryLater,
-    )
     return MembershipNotice(
         title = stringResource(R.string.shell_membership_notConfirmed_title),
-        message = stringResource(R.string.shell_membership_notConfirmed_message, unconfirmed, next),
-        actionLabel = stringResource(
-            if (recorded) R.string.shell_membership_checkStatus else R.string.shell_membership_tryAgain,
+        message = stringResource(
+            R.string.shell_membership_notConfirmed_message,
+            unconfirmed,
+            stringResource(R.string.shell_membership_notConfirmed_retryLater),
         ),
+        actionLabel = stringResource(R.string.shell_membership_tryAgain),
         onAction = onAction,
         onDismiss = onDismiss,
     )

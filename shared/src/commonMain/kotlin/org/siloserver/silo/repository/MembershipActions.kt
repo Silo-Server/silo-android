@@ -5,6 +5,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -34,22 +35,25 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
     private val mutableUnconfirmedAttempts = MutableSharedFlow<Intent>(extraBufferCapacity = 16)
 
     /**
-     * The viewer's own attempts ([perform], [checkStatus]) that finished without
-     * confirmation, including one whose caller was cancelled. Commands restored by
+     * The viewer's own attempts ([perform]) still unconfirmed after their automatic
+     * retries, including one whose caller was cancelled. Commands restored by
      * [restorePending] never appear here, so a notice raised from this flow answers
      * something the viewer just did. NOT_CLAIMED is left out: another sender owns the
      * command and its result arrives through [restorePending].
      */
     val unconfirmedAttempts: SharedFlow<Intent> = mutableUnconfirmedAttempts.asSharedFlow()
 
+    /** Restored commands whose one automatic retry hasn't started yet; a cancelled restore resumes them. */
+    private val unretriedRestores = MutableStateFlow<Set<Long>>(emptySet())
+
     init {
-        identity.installGate { mutableActions.value = emptyMap(); mutableLegacyNotice.value = false }
+        identity.installGate { mutableActions.value = emptyMap(); unretriedRestores.value = emptySet(); mutableLegacyNotice.value = false }
     }
 
     fun begin(itemId: String, kind: MembershipPort.Kind, present: Boolean): Intent {
         val key = Key(itemId, kind)
         val previous = mutableActions.value[key]
-        // Repeating an unresolved choice checks it; it never blindly repeats that mutation.
+        // Repeating an unresolved choice retries it, which reads before resending.
         if (previous != null && current(previous.intent) && !previous.confirmed && previous.completion?.disposition != MembershipPort.Disposition.PAUSED && previous.intent.present == present) {
             return previous.intent
         }
@@ -70,47 +74,44 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
         val prior = mutableActions.value[intent.key] ?: return
         if (prior.busy || prior.confirmed) return
         update(intent) { it.copy(busy = true) }
+        var command = prior.command
         try {
             val activePort = checkNotNull(port) { "Membership storage is unavailable" }
             val authority = checkNotNull(activePort.captureAuthority()) { "Sign in to change membership" }
             if (!current(intent) || authority.scope.identityGeneration != intent.generation) return
-            val existing = prior.command
-            val command = existing ?: withContext(NonCancellable) {
+            val recorded = command ?: withContext(NonCancellable) {
                 // Preserve the exact durable witness if cancellation arrives after Room commits.
                 activePort.record(authority, intent.key.itemId, intent.key.kind, intent.present).also { recorded ->
+                    command = recorded
                     update(intent) { it.copy(command = recorded) }
                 }
             }
             coroutineContext.ensureActive()
-            val completion = if (existing == null) activePort.send(command) else activePort.reconcile(command)
-            update(intent) { it.copy(completion = completion, busy = false) }
+            complete(intent, if (prior.command == null) activePort.send(recorded) else activePort.retry(recorded))
         } catch (cancelled: CancellationException) {
-            update(intent) { it.copy(busy = false, completion = MembershipPort.Completion(MembershipPort.Disposition.NEEDS_RECONCILIATION, false)) }
-            reportIfUnconfirmed(intent)
+            complete(intent, UNCONFIRMED)
             throw cancelled
         } catch (_: Throwable) {
-            update(intent) { it.copy(busy = false, completion = MembershipPort.Completion(MembershipPort.Disposition.NEEDS_RECONCILIATION, false)) }
+            complete(intent, UNCONFIRMED)
         } finally {
-            update(intent) { it.copy(busy = false) }
+            // Finish the change even if the screen that started it closes.
+            withContext(NonCancellable) {
+                command?.let { recover(intent, it) }
+                update(intent) { it.copy(busy = false) }
+                reportIfUnconfirmed(intent)
+            }
         }
-        reportIfUnconfirmed(intent)
     }
 
-    /** Explicit recovery never submits a mutation, including a not-yet-sent command. */
-    suspend fun checkStatus(intent: Intent) {
-        val command = mutableActions.value[intent.key]?.takeIf { current(intent) && !it.busy }?.command ?: return
+    /** Retries an unconfirmed command after each delay until it is confirmed or settled otherwise. */
+    private suspend fun recover(intent: Intent, command: MembershipPort.Command) {
         val activePort = port ?: return
-        update(intent) { it.copy(busy = true) }
-        try {
-            val completion = activePort.reconcile(command)
-            update(intent) { it.copy(completion = completion, busy = false) }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            update(intent) { it.copy(completion = MembershipPort.Completion(MembershipPort.Disposition.NEEDS_RECONCILIATION, false)) }
-        } finally { update(intent) { it.copy(busy = false) } }
-        restorePending()
-        reportIfUnconfirmed(intent)
+        for (delayMs in RETRY_DELAYS_MS) {
+            if (!needsRetry(intent)) return
+            delay(delayMs)
+            if (!current(intent)) return
+            complete(intent, try { activePort.retry(command) } catch (_: Exception) { UNCONFIRMED })
+        }
     }
 
     private fun reportIfUnconfirmed(intent: Intent) {
@@ -120,6 +121,12 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
             mutableUnconfirmedAttempts.tryEmit(intent)
         }
     }
+
+    private fun needsRetry(intent: Intent) = current(intent) &&
+        mutableActions.value[intent.key]?.completion?.disposition == MembershipPort.Disposition.NEEDS_RECONCILIATION
+
+    private fun complete(intent: Intent, completion: MembershipPort.Completion) =
+        update(intent) { it.copy(completion = completion) }
 
     suspend fun read(itemId: String, kind: MembershipPort.Kind): ApiResult<Boolean> {
         val activePort = port ?: return ApiResult.Error(0, "unavailable", "Membership storage is unavailable")
@@ -147,7 +154,7 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
         port?.changes?.collect { restorePending() }
     }
 
-    /** Restore a bounded set of unresolved witnesses; no old login is assigned to a command. */
+    /** Restore and retry a bounded set of unresolved witnesses; no old login is assigned to a command. */
     suspend fun restorePending() {
         val activePort = port ?: return
         val authority = activePort.captureAuthority() ?: return
@@ -165,27 +172,64 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
         }
         val pending = activePort.pending(authority)
         if (generation.value != authority.scope.identityGeneration) return
-        for (command in pending) {
-            val key = Key(command.itemId, command.kind)
-            val projection = activePort.projection(authority, command.itemId, command.kind) ?: continue
-            if (projection.commandId != command.id || generation.value != authority.scope.identityGeneration) continue
-            val intent = Intent(key, command.present, generation.value, kotlin.random.Random.nextLong())
-            mutableActions.update { states ->
-                if (states.containsKey(key)) {
-                    val existing = states.getValue(key)
-                    if (existing.command == null && !existing.busy && existing.completion != null &&
-                        existing.intent.present == command.present && existing.intent.generation == authority.scope.identityGeneration) {
-                        states + (key to existing.copy(command = command))
-                    } else states
-                } else states + (key to Action(intent, command,
-                    MembershipPort.Completion(projection.disposition ?: MembershipPort.Disposition.NEEDS_RECONCILIATION, false)))
+        val unresolved = mutableListOf<Pair<Intent, MembershipPort.Command>>()
+        var next = 0
+        try {
+            for (command in pending) {
+                val key = Key(command.itemId, command.kind)
+                val projection = activePort.projection(authority, command.itemId, command.kind) ?: continue
+                if (projection.commandId != command.id || generation.value != authority.scope.identityGeneration) continue
+                val intent = Intent(key, command.present, generation.value, kotlin.random.Random.nextLong())
+                // READY commands belong to the sync worker; earlier unconfirmed ones get one retry here.
+                // The restored witness stays busy until that retry ends so perform can't run beside it.
+                val retry = projection.disposition != null
+                mutableActions.update { states ->
+                    if (states.containsKey(key)) {
+                        val existing = states.getValue(key)
+                        if (existing.command == null && !existing.busy && existing.completion != null &&
+                            existing.intent.present == command.present && existing.intent.generation == authority.scope.identityGeneration) {
+                            states + (key to existing.copy(command = command))
+                        } else states
+                    } else states + (key to Action(intent, command,
+                        MembershipPort.Completion(projection.disposition ?: MembershipPort.Disposition.NEEDS_RECONCILIATION, false), busy = retry))
+                }
+                if (!retry) continue
+                if (mutableActions.value[key]?.intent == intent) unretriedRestores.update { it + command.id }
+                if (command.id !in unretriedRestores.value) continue
+                // A witness an earlier, cancelled pass restored but never retried gets its retry now.
+                val witness = mutableActions.value[key]?.takeIf { it.command?.id == command.id && current(it.intent) && !it.confirmed } ?: continue
+                if (witness.intent != intent) {
+                    if (witness.busy) continue
+                    update(witness.intent) { it.copy(busy = true) }
+                }
+                unresolved += witness.intent to command
             }
+            while (next < unresolved.size) {
+                val (intent, command) = unresolved[next++]
+                if (!current(intent)) continue
+                unretriedRestores.update { it - command.id }
+                try {
+                    complete(intent, activePort.retry(command))
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    complete(intent, UNCONFIRMED)
+                } finally { update(intent) { it.copy(busy = false) } }
+            }
+        } finally {
+            // Release restored witnesses a cancelled scan or retry pass never reached.
+            for (index in next until unresolved.size) update(unresolved[index].first) { it.copy(busy = false) }
         }
         val retained = activePort.hasLegacyQuarantine()
         if (generation.value == authority.scope.identityGeneration) mutableLegacyNotice.value = retained
     }
 
     fun dismissLegacyNotice() { mutableLegacyNotice.value = false }
+
+    private companion object {
+        val UNCONFIRMED = MembershipPort.Completion(MembershipPort.Disposition.NEEDS_RECONCILIATION, false)
+        val RETRY_DELAYS_MS = listOf(2_000L, 5_000L, 15_000L)
+    }
 
     private fun update(intent: Intent, transform: (Action) -> Action) {
         mutableActions.update { states ->

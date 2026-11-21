@@ -44,11 +44,11 @@ class MembershipV2Api(
         if (scope != null && !scope.stillOwns(tokenManager, OwnerPolicy.IDENTITY)) return identityChanged()
         // No post-guard: do not discard a confirmed old-scope acknowledgement. The
         // caller can resolve its exact recorded command without publishing into the new UI.
+        // PUT and DELETE are idempotent, so a 401 may refresh the token and replay once.
         return ownedV2Call<Unit, Unit>(gate, tokenManager, null, OwnerPolicy.IDENTITY, HttpStatusCode.NoContent, { _ ->
             client.request("/api/v2/$list/${itemId.encodeURLPathPart()}") {
                 method = if (present) HttpMethod.Put else HttpMethod.Delete
                 scope?.let { authScope(it) }
-                singleAttempt()
             }
         }) { }
     }
