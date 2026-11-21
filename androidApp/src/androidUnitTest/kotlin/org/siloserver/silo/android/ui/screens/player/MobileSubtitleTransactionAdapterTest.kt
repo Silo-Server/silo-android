@@ -875,6 +875,49 @@ class MobileSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `sidecar pick the server can only burn in commits as burn-in`() = runTest {
+        // On an HLS transcode the server burns an ASS track in, because that
+        // delivery declares no attached-font support. The replan has already
+        // switched the session's transcode, so refusing it left the old player
+        // on a session that no longer served its segments.
+        val harness = harness(backgroundScope)
+        val assMedia = media(trackId = "file:11:subtitle:4", label = "Full Subs (ASS)", language = "en", codec = "ssa")
+        val requested = SubtitleIdentity.ServerSidecar(4, assMedia)
+
+        harness.adapter.select(requested)
+        runCurrent()
+        harness.port.completeStage(
+            candidate(
+                id = "hls-burn-in",
+                selectedIndex = 4,
+                mode = PlaybackSubtitleModeV3.BURN_IN,
+                hasSidecar = false,
+                selectedSubtitleIdentity = requested,
+            ),
+        )
+        runCurrent()
+
+        assertEquals(emptyList(), harness.port.discarded)
+        assertEquals(listOf("hls-burn-in"), harness.port.committed)
+        assertNull(harness.adapter.snapshot.failureMessage)
+        assertEquals(1, harness.committedPlaybacks.size)
+        assertEquals(SubtitleIdentity.ServerBurnIn(4, assMedia), harness.adapter.snapshot.committedIdentity)
+
+        // A later replan carries the burn-in identity; when it leaves the
+        // transcode the server hands the same track back as a sidecar.
+        harness.adapter.select(SubtitleIdentity.ServerBurnIn(4, assMedia))
+        runCurrent()
+        harness.port.completeStage(
+            candidate(id = "back-to-sidecar", selectedIndex = 4, selectedSubtitleIdentity = requested),
+        )
+        runCurrent()
+
+        assertEquals(emptyList(), harness.port.discarded)
+        assertEquals(listOf("hls-burn-in", "back-to-sidecar"), harness.port.committed)
+        assertNull(harness.adapter.snapshot.failureMessage)
+    }
+
+    @Test
     fun `downloaded and embedded choices persist only after mounted resolver confirms`() = runTest {
         val harness = harness(backgroundScope)
         val downloaded = SubtitleIdentity.Downloaded(

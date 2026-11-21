@@ -8,6 +8,23 @@ import kotlin.test.assertTrue
 
 class SubtitleTransitionTest {
     @Test
+    fun serverTrackCommitsAsWhatThePlanDelivers() {
+        val media = SubtitleMediaIdentity(trackId = "file:11:subtitle:4", label = "Full Subs", codecFamily = "ass")
+        val sidecar = SubtitleIdentity.ServerSidecar(4, media)
+        val burnedIn = SubtitleIdentity.ServerBurnIn(4, media)
+
+        assertEquals(burnedIn, sidecar.deliveredAs(PlaybackSubtitleModeV3.BURN_IN))
+        assertEquals(sidecar, burnedIn.deliveredAs(PlaybackSubtitleModeV3.RENDER))
+        assertEquals(sidecar, burnedIn.deliveredAs(PlaybackSubtitleModeV3.CONVERT))
+        assertEquals(sidecar, sidecar.deliveredAs(PlaybackSubtitleModeV3.RENDER))
+        assertEquals(burnedIn, burnedIn.deliveredAs(PlaybackSubtitleModeV3.OFF))
+
+        assertTrue(sidecar.playsAs(burnedIn))
+        assertTrue(!burnedIn.playsAs(sidecar))
+        assertTrue(!SubtitleIdentity.ServerSidecar(5, media).playsAs(burnedIn))
+    }
+
+    @Test
     fun `A remains committed while B applies then B commits`() {
         val initial = SubtitleTransitionState.committed(serverSidecar(3))
         val applying = reduceSubtitleTransition(initial, SelectSubtitle(serverSidecar(4)))
