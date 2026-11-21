@@ -506,6 +506,21 @@ object OverlayRegistry {
         }
     }
 
+    private const val ATTENTION_ACCENT = "#f59e0b"
+    private const val COMPLETE_ACCENT = "#21c452"
+
+    private fun formatAvailability(have: Int?, total: Int?): UiText? {
+        if (have == null || total == null || total <= 0) return null
+        if (have >= total) return UiText.Raw("Complete")
+        return UiText.Raw("$have/$total")
+    }
+
+    private fun availabilityComplete(data: OverlayData): Boolean {
+        val have = data.availabilityHave
+        val total = data.availabilityTotal
+        return have != null && total != null && total > 0 && have >= total
+    }
+
     /** Web `formatShowStatus`: the known statuses translated, any other value as the API sent it. */
     private fun formatShowStatus(value: String?): UiText? =
         when (val key = showStatusKey(value)) {
@@ -531,6 +546,23 @@ object OverlayRegistry {
             getValue = { formatShowStatus(it.showStatus) },
             getValueKey = { showStatusKey(it.showStatus) },
             valueKeySuggestions = listOf("Returning", "Ended", "Cancelled", "Upcoming"),
+        ),
+        OverlayDef(
+            id = OverlayId.Availability,
+            category = OverlayCategory.Ribbons,
+            label = "Availability",
+            description = "On a series, complete seasons out of seasons that have aired. On a season, episodes in the library out of the season",
+            defaultPosition = OverlayPosition.TopLeft,
+            defaultEnabled = false,
+            iconCapable = true,
+            introducedInManifest = OVERLAY_AVAILABILITY_MANIFEST_REVISION,
+            getValue = { formatAvailability(it.availabilityHave, it.availabilityTotal) },
+            getIcon = { if (availabilityComplete(it)) OverlayIconId.Check else null },
+            getAccent = { data ->
+                if (formatAvailability(data.availabilityHave, data.availabilityTotal) == null) null
+                else if (availabilityComplete(data)) COMPLETE_ACCENT
+                else ATTENTION_ACCENT
+            },
         ),
         OverlayDef(
             id = OverlayId.ImdbTop250,

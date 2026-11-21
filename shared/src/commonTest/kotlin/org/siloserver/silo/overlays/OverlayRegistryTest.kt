@@ -156,7 +156,7 @@ class OverlayRegistryTest {
             "rating_rt" to "left-edge", "rating_rt_audience" to "left-edge", "content_rating" to "bottom-right",
             "year" to "bottom-left", "runtime" to "bottom-left", "original_language" to "bottom-left",
             "studio" to "bottom-right", "network" to "bottom-right", "show_status" to "right-edge",
-            "imdb_top_250" to "right-edge", "rt_certified_fresh" to "right-edge",
+            "availability" to "top-left", "imdb_top_250" to "right-edge", "rt_certified_fresh" to "right-edge",
         )
         assertEquals(expected, OverlayRegistry.all.associate { it.id.raw to it.defaultPosition.raw })
         assertEquals(
@@ -164,7 +164,11 @@ class OverlayRegistryTest {
             OverlayRegistry.all.filter { it.defaultEnabled }.map { it.id }.toSet(),
         )
         assertEquals(26, OverlayRegistry.def(OverlayId.ResolutionHdrAudio)?.introducedInManifest)
-        assertEquals(listOf(OverlayId.ResolutionHdrAudio), OverlayRegistry.all.filter { it.introducedInManifest != null }.map { it.id })
+        assertEquals(OVERLAY_AVAILABILITY_MANIFEST_REVISION, OverlayRegistry.def(OverlayId.Availability)?.introducedInManifest)
+        assertEquals(
+            listOf(OverlayId.ResolutionHdrAudio, OverlayId.Availability),
+            OverlayRegistry.all.filter { it.introducedInManifest != null }.map { it.id },
+        )
     }
 
     @Test
@@ -184,8 +188,8 @@ class OverlayRegistryTest {
                 "release_type" to "REMUX", "edition" to "Director's Cut", "multi_audio" to null, "multi_sub" to null,
                 "rating_imdb" to null, "rating_tmdb" to null, "rating_rt" to null, "rating_rt_audience" to null,
                 "content_rating" to "PG-13", "year" to null, "runtime" to null, "original_language" to "ja",
-                "studio" to "A24", "network" to "HBO", "show_status" to "Returning", "imdb_top_250" to null,
-                "rt_certified_fresh" to null,
+                "studio" to "A24", "network" to "HBO", "show_status" to "Returning", "availability" to null,
+                "imdb_top_250" to null, "rt_certified_fresh" to null,
             ),
             keys,
         )
@@ -230,6 +234,19 @@ class OverlayRegistryTest {
         assertEquals(UiText.Raw("4K HDR10+"), def.getValue(OverlayData(resolution = "2160p", hdr = "HDR10+")))
         assertEquals(UiText.Raw("4K DV"), def.getValue(OverlayData(resolution = "2160p", hdr = "DV HDR10+")))
         assertNull(def.getValue(OverlayData(resolution = "  ")))
+    }
+
+    @Test
+    fun availability_getValue_formatsFractionOrComplete() {
+        val def = OverlayRegistry.def(OverlayId.Availability)!!
+        assertEquals(UiText.Raw("8/10"), def.getValue(OverlayData(availabilityHave = 8, availabilityTotal = 10)))
+        assertEquals(UiText.Raw("Complete"), def.getValue(OverlayData(availabilityHave = 10, availabilityTotal = 10)))
+        assertNull(def.getValue(OverlayData(availabilityHave = 1, availabilityTotal = 0)))
+        assertNull(def.getValue(OverlayData()))
+        assertEquals(OverlayIconId.Check, def.getIcon?.invoke(OverlayData(availabilityHave = 3, availabilityTotal = 3)))
+        assertNull(def.getIcon?.invoke(OverlayData(availabilityHave = 2, availabilityTotal = 3)))
+        assertEquals("#21c452", def.getAccent?.invoke(OverlayData(availabilityHave = 3, availabilityTotal = 3)))
+        assertEquals("#f59e0b", def.getAccent?.invoke(OverlayData(availabilityHave = 2, availabilityTotal = 3)))
     }
 
     @Test

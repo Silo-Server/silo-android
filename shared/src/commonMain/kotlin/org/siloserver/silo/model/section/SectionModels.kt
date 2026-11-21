@@ -2,6 +2,7 @@ package org.siloserver.silo.model.section
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.siloserver.silo.model.catalog.CatalogAvailability
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.catalog.OverlaySummary
 
@@ -28,6 +29,7 @@ data class SectionItem(
     val networks: List<String> = emptyList(),
     @SerialName("show_status") val showStatus: String? = null,
     @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null,
+    val availability: CatalogAvailability? = null,
     val overview: String? = null,
     @SerialName("item_source") val itemSource: String? = null,
     @SerialName("position_seconds") val positionSeconds: Double? = null,
