@@ -3068,14 +3068,15 @@ class TvItemDetailViewModel(
             val loaded = result.data
             // Server collections show only from libraries TV shows, as on
             // Home, so an ebook library's collection stays off TV. The same
-            // list gives each card's library type for its page.
+            // list gives each card's library type for its page. The known
+            // list is enough here, as for the box set row.
             val hasServerCollection = when (loaded) {
                 is org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview -> !loaded.collection.isUserCollection
                 is org.siloserver.silo.viewmodel.ItemCollectionsRow.AlsoIn -> loaded.cards.any { !it.isUserCollection }
                 null -> false
             }
             val shownLibraries = if (hasServerCollection) {
-                when (val libraries = personalDataRepository.listUserLibraries()) {
+                when (val libraries = personalDataRepository.knownUserLibraries()) {
                     is ApiResult.Success -> libraries.data.visibleOnTv()
                     // Unverified cards could be an ebook library's: keep the
                     // row already shown, as any failed read does.
