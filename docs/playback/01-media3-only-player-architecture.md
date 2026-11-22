@@ -289,10 +289,12 @@ A request sends `bandwidth_estimate_kbps` in two cases only:
   connection. Otherwise the stall may be the server producing media slower
   than real time, and the estimate goes without a source, which the server
   plans under but does not learn. The meter counts pauses inside a request,
-  so on progressive delivery a stall the server paced can still read as a
+  including those while a full buffer holds a progressive request open, so on
+  progressive delivery a stall that was not the link's can still read as a
   slow link. Later Auto replans in the same playback keep sending that
-  estimate, without a source, so a failure or track replan does not lift it. The carry ends with **Restore quality**, a
-  quality change the controller did not send, or a new playback attempt.
+  estimate, without a source, so a failure or track replan does not lift it.
+  The carry ends with **Restore quality**, a quality change the controller did
+  not send, or a new playback attempt.
 
 Media3's bandwidth meter is never sent. It times loads that stall on a full
 buffer or wait on a live transcode, so its figure can understate the link and

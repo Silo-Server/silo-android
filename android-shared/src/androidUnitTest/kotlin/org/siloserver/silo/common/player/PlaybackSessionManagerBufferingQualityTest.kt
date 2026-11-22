@@ -94,7 +94,8 @@ class PlaybackSessionManagerBufferingQualityTest {
         capabilityFeatures: List<String>,
         mode: BufferingQualityMode = BufferingQualityMode.Default,
         estimate: Int? = null,
-        playingPlanThroughputKbps: () -> Int? = { null },
+        // A lowering claims a slow link only with a reading to send.
+        playingPlanThroughputKbps: () -> Int? = { 8_806 },
         throughputKbps: () -> Int? = { null },
     ) {
         val probe = Probe(estimate)
@@ -271,6 +272,7 @@ class PlaybackSessionManagerBufferingQualityTest {
 
         assertEquals(2, harness.replanBodies.size)
         assertEquals(harness.replanBodies[0], harness.replanBodies[1])
+        assertEquals(BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER, harness.replanBodies[1].string("bandwidth_estimate_source"))
     }
 
     @Test
@@ -656,7 +658,7 @@ class PlaybackSessionManagerBufferingQualityTest {
 
     @Test
     fun aLoweringReplanCarriesItsOwnStepDownEstimate() = runTest {
-        val harness = Harness(BUFFERING_QUALITY_SERVER, estimate = 48_000, playingPlanThroughputKbps = { 8_806 })
+        val harness = Harness(BUFFERING_QUALITY_SERVER, estimate = 48_000)
         harness.start()
         harness.lower()
         val lowering = harness.replanBodies.single()
