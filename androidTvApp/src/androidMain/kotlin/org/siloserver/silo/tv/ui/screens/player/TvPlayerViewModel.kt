@@ -2259,23 +2259,29 @@ class TvPlayerViewModel(
         } else {
             transportMountSequence + 1L
         }
-        subtitleServerIndexToRestore?.let { serverIndex ->
-            subtitleSnapshotSettlement.reset()
-            // A track the media itself carries (a native track or a rendition)
-            // is restored by its exact identity. After an in-place switch the
-            // reloaded multivariant playlist still marks the original track
-            // DEFAULT, so only the explicit selection puts the viewer's back.
-            val committed = (_uiState.value.committedSubtitleIdentity as? SubtitleIdentity.Embedded)
-                ?.takeIf { it.isServerSelected && it.serverIndex == serverIndex }
-            subtitleRemountReselection.arm(
-                identity = when {
-                    serverIndex == -1 -> SubtitleIdentity.Off
-                    committed != null -> committed
-                    else -> SubtitleIdentity.ServerSidecar(serverIndex)
-                },
-                generation = transportMountSequence,
-            )
-        }
+        subtitleServerIndexToRestore
+            // Nothing to reselect for a burn-in: the remount carries it.
+            ?.takeIf { serverIndex ->
+                (_uiState.value.committedSubtitleIdentity as? SubtitleIdentity.ServerBurnIn)
+                    ?.serverIndex != serverIndex
+            }
+            ?.let { serverIndex ->
+                subtitleSnapshotSettlement.reset()
+                // A track the media itself carries (a native track or a rendition)
+                // is restored by its exact identity. After an in-place switch the
+                // reloaded multivariant playlist still marks the original track
+                // DEFAULT, so only the explicit selection puts the viewer's back.
+                val committed = (_uiState.value.committedSubtitleIdentity as? SubtitleIdentity.Embedded)
+                    ?.takeIf { it.isServerSelected && it.serverIndex == serverIndex }
+                subtitleRemountReselection.arm(
+                    identity = when {
+                        serverIndex == -1 -> SubtitleIdentity.Off
+                        committed != null -> committed
+                        else -> SubtitleIdentity.ServerSidecar(serverIndex)
+                    },
+                    generation = transportMountSequence,
+                )
+            }
         transportMountGate.expect(transportMountSequence)
         nextUpTransitionGate.expectMount(contentId, transportMountSequence)
         return transportMountSequence
@@ -3795,6 +3801,9 @@ class TvPlayerViewModel(
     }
 
     private fun selectedSubtitleTrackIndex(state: UiState): Int? {
+        // A burn-in selects no text track: the captions are in the video, and
+        // the server keeps burning that track in only if it is asked for.
+        (state.committedSubtitleIdentity as? SubtitleIdentity.ServerBurnIn)?.let { return it.serverIndex }
         // Only -1 (Off) when subtitles are GENUINELY off (no track selected).
         val selected = state.subtitleTracks.firstOrNull { it.isSelected } ?: return -1
         // A selected track that maps to a mounted server subtitle resolves to its

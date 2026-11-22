@@ -2254,12 +2254,20 @@ class PlayerViewModel(
             val mountedState = _uiState.value
             // The row says how the track can be fetched; the plan says how it
             // plays. An ASS row on an HLS transcode stays a sidecar row while
-            // the plan burns it in.
+            // the plan burns it in. The mode belongs to the plan's own track
+            // only: an explicit pick resolved to another row keeps its row's
+            // identity.
             val planSubtitleMode = playbackState.playbackPlanV3?.subtitle?.mode
-            val committedIdentity = mountedState.subtitleTracks
-                .getOrNull(mountedState.selectedSubtitleIndex)
+            val planSubtitleIndex = playbackState.playbackPlan?.selectedTracks?.subtitleIndex
+            val committedRow = mountedState.subtitleTracks.getOrNull(mountedState.selectedSubtitleIndex)
+            val committedIdentity = committedRow
                 ?.let(::mobileSubtitleIdentity)
-                ?.let { identity -> planSubtitleMode?.let(identity::deliveredAs) ?: identity }
+                ?.let { identity ->
+                    planSubtitleMode
+                        ?.takeIf { committedRow.index == planSubtitleIndex }
+                        ?.let(identity::deliveredAs)
+                        ?: identity
+                }
                 ?: SubtitleIdentity.Off
             mobileSubtitleTransactions.resetContent(
                 context = mobileSubtitleContext(mountedState),

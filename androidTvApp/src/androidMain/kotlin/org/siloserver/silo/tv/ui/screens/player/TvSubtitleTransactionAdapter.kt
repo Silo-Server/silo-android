@@ -688,12 +688,19 @@ internal class TvSubtitleTransactionAdapter(
 
     fun select(identity: SubtitleIdentity) {
         // The sidecar row whose burn-in already plays: a replan would only
-        // restart the transcode for the same answer.
+        // restart the transcode for the same answer. It is still the viewer's
+        // pick, so it settles a stale failure, outranks a pending refresh and
+        // is saved like any explicit commit.
         if (identity != transition.committed.identity &&
             identity.playsAs(transition.committed.identity) &&
             !hasActiveTransaction
         ) {
             SubDiag.log("ADAPTER select NOOP $identity plays as ${transition.committed.identity}")
+            refreshGeneration += 1
+            subtitleIntentGeneration += 1
+            failureMessage = null
+            context?.let { persist(transition.committed, it) }
+            publish()
             return
         }
         SubDiag.log("ADAPTER select $identity")

@@ -1021,12 +1021,16 @@ class TvSubtitleTransactionAdapterTest {
         )
         runCurrent()
         assertEquals(SubtitleIdentity.ServerBurnIn(4, assMedia), harness.adapter.snapshot.committedIdentity)
+        val persistedBefore = harness.persistence.persisted.size
 
         harness.adapter.select(requested)
         runCurrent()
 
         assertEquals(1, harness.port.requests.size)
         assertNull(harness.adapter.snapshot.pendingIdentity)
+        // Still the viewer's explicit pick: saved like a commit.
+        assertEquals(persistedBefore + 1, harness.persistence.persisted.size)
+        assertEquals(SubtitleIdentity.ServerBurnIn(4, assMedia), harness.persistence.persisted.last().identity)
     }
 
     @Test

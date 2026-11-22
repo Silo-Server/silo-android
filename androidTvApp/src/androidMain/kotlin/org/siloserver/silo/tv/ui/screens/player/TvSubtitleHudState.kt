@@ -132,7 +132,8 @@ internal fun buildTvSubtitleHudPresentation(
         ?: options.firstOrNull { !it.unplayable }?.stableId
     return TvSubtitleHudPresentation(
         rows = options.map { option ->
-            val applying = option.identity == pendingIdentity &&
+            val applying = pendingIdentity != null &&
+                option.identity.playsAs(pendingIdentity) &&
                 !pendingIdentity.playsAs(committedIdentity)
             TvSubtitleHudRow(
                 stableId = option.stableId,
