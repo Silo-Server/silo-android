@@ -8,6 +8,7 @@ import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.player.trackIdDenotes
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.playback.subtitleMediaIdentityOrNull
@@ -28,7 +29,7 @@ internal data class TvSubtitleHudOption(
      * that track stopped being listed apart from its row).
      */
     fun plays(committed: SubtitleIdentity): Boolean =
-        identity == committed ||
+        identity.playsAs(committed) ||
             sourceTrackId != null &&
             committed is SubtitleIdentity.LocalMedia3 &&
             trackIdDenotes(committed.media.trackId, sourceTrackId)
@@ -70,6 +71,11 @@ internal data class TvSubtitleHudPresentation(
     val hudOpen: Boolean,
     val focusedStableId: String?,
     val focusTrapActive: Boolean,
+    /**
+     * What plays. The checked row is the viewer's pick, which differs when the
+     * server burned a sidecar pick in.
+     */
+    val committedIdentity: SubtitleIdentity,
     val onSelect: (SubtitleIdentity) -> Unit = {},
     val onFocused: (String) -> Unit = {},
 )
@@ -140,8 +146,9 @@ internal fun buildTvSubtitleHudPresentation(
         ?: options.firstOrNull { !it.unplayable }?.stableId
     return TvSubtitleHudPresentation(
         rows = options.map { option ->
-            val applying = option.identity == pendingIdentity &&
-                pendingIdentity != committedIdentity
+            val applying = pendingIdentity != null &&
+                option.identity.playsAs(pendingIdentity) &&
+                !pendingIdentity.playsAs(committedIdentity)
             TvSubtitleHudRow(
                 stableId = option.stableId,
                 identity = option.identity,
@@ -156,6 +163,7 @@ internal fun buildTvSubtitleHudPresentation(
         hudOpen = hudOpen,
         focusedStableId = resolvedFocus,
         focusTrapActive = hudOpen,
+        committedIdentity = committedIdentity,
         onSelect = onSelect,
         onFocused = onFocused,
     )

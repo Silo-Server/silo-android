@@ -457,6 +457,36 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun nextUpOpensAtThePromptSecondsBeforeTheFileEndNotAtTheCreditsMarker() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            viewModel.onMediaMountApplied(viewModel.uiState.value.mediaMountGeneration)
+            viewModel.offerNextEpisode()
+            viewModel.mutableUiState().update {
+                it.copy(credits = org.siloserver.silo.model.catalog.TimeRange(1000.0, 1200.0))
+            }
+
+            // The fake settings store chooses 30 seconds before the end.
+            viewModel.onPositionChanged(999_000L, 1_200_000L)
+            viewModel.onPositionChanged(1_001_000L, 1_200_000L)
+            assertFalse(viewModel.uiState.value.showUpNext)
+            viewModel.onPositionChanged(1_169_500L, 1_200_000L)
+            assertFalse(viewModel.uiState.value.showUpNext)
+            viewModel.onPositionChanged(1_170_500L, 1_200_000L)
+            assertTrue(viewModel.uiState.value.showUpNext)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun keepWatchingSuppressesCreditsPromptButReopensNextUpAtPlaybackEnd() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)

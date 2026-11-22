@@ -2,12 +2,35 @@ package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class MobileSubtitleAutoSelectionTest {
+
+    @Test
+    fun sidecarRowTheServerBurnsInStaysSelected() {
+        // A sidecar pick the server can only burn in commits as burn-in of
+        // that same server track; the menu still marks the row the viewer picked.
+        val rows = listOf(
+            subtitle(0, "Full Subs (ASS)", "en", codec = "ass")
+                .copy(serverTrackId = "file:11:subtitle:0", serverDelivery = SUBTITLE_DELIVERY_SIDECAR),
+            subtitle(1, "English (SRT)", "en")
+                .copy(serverTrackId = "file:11:subtitle:1", serverDelivery = SUBTITLE_DELIVERY_SIDECAR),
+        )
+        val picked = mobileSubtitleIdentity(rows[0]) as SubtitleIdentity.ServerSidecar
+        val burnedIn = SubtitleIdentity.ServerBurnIn(picked.serverIndex, picked.media)
+
+        assertEquals(0, resolveMobileSubtitleOrdinal(burnedIn, rows))
+        // A saved burn-in whose index now holds another track is not that row.
+        val reindexed = listOf(rows[1].copy(index = 0))
+        assertEquals(null, resolveMobileSubtitleOrdinal(burnedIn, reindexed))
+        // The same track at another index is still that row.
+        val moved = listOf(rows[1].copy(index = 0), rows[0].copy(index = 1))
+        assertEquals(1, resolveMobileSubtitleOrdinal(burnedIn, moved))
+    }
 
     @Test
     fun downloadedSelectionUsesPersistentDownloadIdentity() {

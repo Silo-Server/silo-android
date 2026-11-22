@@ -288,7 +288,6 @@ internal fun ActivePairingPanel(
                             )
                             TvMarqueeCodeTiles(DeviceCodeFormat.display(status.userCode), Modifier.padding(top = 11.dp))
                         }
-                        olderPhonesMatchWords(status)?.let { words -> CardNote(stringResource(CommonR.string.tvPairing_confirmOlderPhones, words)) }
                         // Every push shows its own code, naming the account
                         // the phone said it signs in ("sam on Home").
                         CardTitle(
@@ -345,14 +344,6 @@ private fun CancelButton(onCancel: () -> Unit, focusRequester: FocusRequester? =
         focusRequester = focusRequester,
     )
 }
-
-/**
- * The match words for the "Older phones show ..." line: only when a person
- * compares codes (not an automatic attempt) and the words are known, in
- * capitals like the phones show them. Remove with that line.
- */
-internal fun olderPhonesMatchWords(status: PairingReceiverStatus.AwaitingApproval): String? =
-    status.matchCode?.trim()?.takeIf { !status.automatic && it.isNotEmpty() }?.uppercase()
 
 private fun PairingFailureCode.messageRes(signIn: Boolean): Int = when (this) {
     PairingFailureCode.Denied -> CommonR.string.tvPairing_failedDenied
