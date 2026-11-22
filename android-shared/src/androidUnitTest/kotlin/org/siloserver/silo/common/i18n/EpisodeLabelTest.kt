@@ -30,5 +30,7 @@ class EpisodeLabelTest {
     @Test
     fun `an undated episode of a date-labeled series keeps its code`() {
         assertEquals("S2026E296", EpisodeLabel.text(2026, 296, "air_date", null).text(english))
+        // A date the month doesn't have can't be drawn, so the code stands in.
+        assertEquals("S2026E296", EpisodeLabel.text(2026, 296, "air_date", "2026-02-30").text(english))
     }
 }

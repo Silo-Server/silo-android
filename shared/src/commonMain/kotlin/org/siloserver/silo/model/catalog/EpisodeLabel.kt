@@ -17,6 +17,9 @@ enum class EpisodeCodeStyle(
     /** "S01E02". */
     Tag(SharedString.EpisodeTag, 2, "E"),
 
+    /** "S1E2", the tag a download stores. */
+    Plain(SharedString.EpisodeTag, 1, "E"),
+
     /** "S1·E2". */
     Dotted(SharedString.EpisodeCodeDotted, 1, "·E"),
 
@@ -47,18 +50,10 @@ object EpisodeLabel {
     /**
      * The air date that labels an episode of a date-labeled series, as a
      * calendar date (no time-zone shift), or null when the series uses numbers
-     * or [airDate] is missing or not `YYYY-MM-DD`.
+     * or [airDate] is missing or not a valid `YYYY-MM-DD` date.
      */
-    fun airDate(episodeLabels: String?, airDate: String?): UiText.CalendarDate? {
-        if (!labelsByAirDate(episodeLabels)) return null
-        // A timestamp's date part still names the day.
-        val match = airDate?.trim()?.take(10)?.let(CALENDAR_DATE::matchEntire) ?: return null
-        val (year, month, day) = match.destructured
-        val m = month.toInt()
-        val d = day.toInt()
-        if (m !in 1..12 || d !in 1..31) return null
-        return UiText.CalendarDate(year.toInt(), m, d)
-    }
+    fun airDate(episodeLabels: String?, airDate: String?): UiText.CalendarDate? =
+        if (labelsByAirDate(episodeLabels)) airDate?.let(::calendarDateOrNull) else null
 
     /**
      * "S01E02" (in [style]). A code is technical, so its numbers stay ASCII in
@@ -104,6 +99,4 @@ object EpisodeLabel {
         airDate(episodeLabels, airDate)?.let { "${ENGLISH_MONTHS[it.month - 1]} ${it.day}, ${it.year}" }
 
     private val ENGLISH_MONTHS = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-
-    private val CALENDAR_DATE = Regex("""(\d{4})-(\d{2})-(\d{2})""")
 }

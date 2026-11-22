@@ -4184,19 +4184,18 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
     subtitleAppearance: SubtitleAppearance,
     volumeState: SiloCastVolumeState,
 ): SiloCastPlaybackState {
+    // tvOS shape: "Series · S1 · E2", so remotes read the same for either TV.
+    // A date-labeled series (sports) sends the air date for both numbers.
+    val code = if (seasonNumber != null && episodeNumber != null) {
+        listOf(EpisodeLabel.englishText(seasonNumber, episodeNumber, episodeLabels, episodeAirDate, EpisodeCodeStyle.Spaced))
+    } else {
+        listOfNotNull(seasonNumber?.let { "S$it" }, episodeNumber?.let { "E$it" })
+    }
     return SiloCastPlaybackState(
         contentId = contentId,
         sessionId = sessionId,
         title = title,
-        // tvOS shape: "Series · S1 · E2", so remotes read the same for either TV.
-        // A date-labeled series (sports) sends the air date for both numbers.
-        subtitle = (
-            listOfNotNull(seriesTitle?.takeIf { it.isNotBlank() }) +
-                (
-                    EpisodeLabel.englishAirDate(episodeLabels, episodeAirDate)?.let(::listOf)
-                        ?: listOfNotNull(seasonNumber?.let { "S$it" }, episodeNumber?.let { "E$it" })
-                    )
-            ).joinToString(" · ").ifBlank { null },
+        subtitle = (listOfNotNull(seriesTitle?.takeIf { it.isNotBlank() }) + code).joinToString(" · ").ifBlank { null },
         isPlaying = isPlaying && !isPaused,
         isLoading = isLoading,
         isBuffering = isBuffering,

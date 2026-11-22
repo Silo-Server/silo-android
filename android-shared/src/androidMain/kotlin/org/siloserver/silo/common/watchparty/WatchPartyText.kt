@@ -51,8 +51,7 @@ fun watchPartyRuntimeText(minutes: Int): String =
 /** "S1 · E2", or the air date for a date-labeled series ([episodeLabels] `air_date`, sports). */
 @Composable
 fun watchPartyEpisodeLine(season: Int, episode: Int, episodeLabels: String? = null, airDate: String? = null): String =
-    EpisodeLabel.airDate(episodeLabels, airDate)?.text()
-        ?: stringResource(R.string.watchParty_episodes_line, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
+    EpisodeLabel.text(season, episode, episodeLabels, airDate, EpisodeCodeStyle.Spaced).text()
 
 /**
  * "S1:E2", the staged episode's short code, or its air date ("Nov 20, 2026")

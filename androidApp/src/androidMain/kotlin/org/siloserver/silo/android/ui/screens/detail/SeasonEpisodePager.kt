@@ -61,30 +61,6 @@ internal fun SeasonEpisodePager(
     /** The series' `episode_labels`; "air_date" (sports) leads each card with its title, not its code. */
     episodeLabels: String? = null,
 ) = CompositionLocalProvider(LocalEpisodeLabels provides episodeLabels) {
-    SeasonEpisodePagerContent(
-        seasons, selectedSeasonNumber, episodes, episodesBySeason, isLoadingEpisodes, onSeasonSelected,
-        onEpisodePlayClick, onEpisodeDetailClick, onEpisodeWatchedChange, highlightContentId,
-        showsSeasonSelector, selectsCenteredEpisode, allowsSeasonPaging, tapToFocusEpisode,
-    )
-}
-
-@Composable
-private fun SeasonEpisodePagerContent(
-    seasons: List<Season>,
-    selectedSeasonNumber: Int,
-    episodes: List<EpisodeListItem>,
-    episodesBySeason: Map<Int, List<EpisodeListItem>>,
-    isLoadingEpisodes: Boolean,
-    onSeasonSelected: (Int) -> Unit,
-    onEpisodePlayClick: ((String, Double?) -> Unit)?,
-    onEpisodeDetailClick: (String) -> Unit,
-    onEpisodeWatchedChange: ((String, Boolean) -> Unit)?,
-    highlightContentId: String?,
-    showsSeasonSelector: Boolean,
-    selectsCenteredEpisode: Boolean,
-    allowsSeasonPaging: Boolean,
-    tapToFocusEpisode: Boolean,
-) {
     if (seasons.size <= 1 || !allowsSeasonPaging) {
         SeasonEpisodePage(
             episodes = episodes,
@@ -96,7 +72,7 @@ private fun SeasonEpisodePagerContent(
             selectsCenteredEpisode = selectsCenteredEpisode,
             tapToFocusEpisode = tapToFocusEpisode,
         )
-        return
+        return@CompositionLocalProvider
     }
 
     val initialPage = seasons.indexOfFirst { it.seasonNumber == selectedSeasonNumber }

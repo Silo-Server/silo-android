@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
 
 /**
  * Thin Android-side helper that combines the cross-platform
@@ -499,9 +500,11 @@ class DownloadEnqueuer(
             seasonNumber = detail?.seasonNumber,
             episodeNumber = detail?.episodeNumber,
             subtitle = detail?.let { d ->
+                val season = d.seasonNumber
+                val episode = d.episodeNumber
                 when {
-                    d.seriesTitle != null && d.seasonNumber != null && d.episodeNumber != null ->
-                        "${d.seriesTitle} · ${episodeTag(d.seasonNumber, d.episodeNumber, d.episodeLabels, d.airDate)}"
+                    d.seriesTitle != null && season != null && episode != null ->
+                        "${d.seriesTitle} · ${episodeTag(season, episode, d.episodeLabels, d.airDate)}"
                     d.year > 0 -> "${d.year}"
                     else -> null
                 }
@@ -581,16 +584,13 @@ class DownloadEnqueuer(
         clientError(409, ALREADY_ACTIVE_ERROR, R.string.downloads_error_alreadyActive, "Already downloading")
 
     /**
-     * The compact "S2E5" tag. It is stored with the download (title, subtitle,
-     * worker input), so it stays English like the rest of the stored text.
+     * The compact "S2E5" tag, or the air date ("Nov 20, 2026") for a
+     * date-labeled series. It is stored with the download (title, subtitle,
+     * worker input), so it stays English like the rest of the stored text, and
+     * records saved before the server sent `episode_labels` keep their numbers.
      */
-    /**
-     * A download's stored episode label, English data: "S1E2", or the air date
-     * ("Nov 20, 2026") for a date-labeled series. Records saved before the
-     * server sent `episode_labels` keep their numbers.
-     */
-    private fun episodeTag(season: Int?, episode: Int?, episodeLabels: String? = null, airDate: String? = null): String =
-        EpisodeLabel.englishAirDate(episodeLabels, airDate) ?: "S${season}E${episode}"
+    private fun episodeTag(season: Int, episode: Int, episodeLabels: String?, airDate: String?): String =
+        EpisodeLabel.englishText(season, episode, episodeLabels, airDate, EpisodeCodeStyle.Plain)
 
     /**
      * An error this class writes: [message] in the app language for the screen
