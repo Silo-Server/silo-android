@@ -215,7 +215,8 @@ class BufferingQualityController(
     private val onPlanSummary: (BufferingPlanSummary) -> Unit,
     /**
      * The playing plan's measured throughput so far, or null when it has
-     * none: the evidence a lowering needs before the attempt first plays.
+     * none: the evidence a lowering needs before the attempt first plays,
+     * and that any lowering needs to claim a slow link.
      */
     private val planThroughputKbps: () -> Int?,
 ) {

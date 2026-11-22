@@ -656,12 +656,25 @@ class PlaybackSessionManagerBufferingQualityTest {
 
     @Test
     fun aLoweringReplanCarriesItsOwnStepDownEstimate() = runTest {
-        val harness = Harness(BUFFERING_QUALITY_SERVER, estimate = 48_000)
+        val harness = Harness(BUFFERING_QUALITY_SERVER, estimate = 48_000, playingPlanThroughputKbps = { 8_806 })
         harness.start()
         harness.lower()
         val lowering = harness.replanBodies.single()
         assertEquals(JsonPrimitive(44_100), lowering["bandwidth_estimate_kbps"])
         assertEquals(BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER, lowering.string("bandwidth_estimate_source"))
+    }
+
+    @Test
+    fun aLoweringWhoseReadingIsGoneWhenSentClaimsNoSlowLink() = runTest {
+        // The controller saw slow transfer, then the network changed before the
+        // request was built: the meter has no reading for the new connection.
+        val harness = Harness(BUFFERING_QUALITY_SERVER, playingPlanThroughputKbps = { null })
+        harness.start()
+        harness.lower()
+        val lowering = harness.replanBodies.single()
+        assertEquals(JsonPrimitive(44_100), lowering["bandwidth_estimate_kbps"])
+        assertNull(lowering["bandwidth_estimate_source"])
+        assertNull(lowering["observed_throughput_kbps"])
     }
 
     @Test
