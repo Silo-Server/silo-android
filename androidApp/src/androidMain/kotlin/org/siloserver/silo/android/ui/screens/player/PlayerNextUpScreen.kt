@@ -447,13 +447,15 @@ private fun CountdownRing(
 /** "S2·E4 — Title" under an On Deck card's title; the air date leads for a date-labeled series. */
 @Composable
 private fun onDeckEpisodeText(line: PlayerViewModel.OnDeckEpisodeLine): String {
-    val code = (line.airDate ?: EpisodeLabel.code(line.season, line.episode, EpisodeCodeStyle.Dotted)).text()
+    val code = EpisodeLabel.text(line.season, line.episode, line.episodeLabels, line.airDate, EpisodeCodeStyle.Dotted).text()
     return code + (line.title?.let { " — $it" } ?: "")
 }
 
 /** "S2·E4 — Title", the next episode's line on the card; the air date leads for a date-labeled series. */
 @Composable
 private fun nextEpisodeLabel(episode: PlayerViewModel.NextEpisodeInfo): String {
-    val code = (episode.airDate ?: EpisodeLabel.code(episode.seasonNumber, episode.episodeNumber, EpisodeCodeStyle.Dotted)).text()
+    val code = EpisodeLabel.text(
+        episode.seasonNumber, episode.episodeNumber, episode.episodeLabels, episode.airDate, EpisodeCodeStyle.Dotted,
+    ).text()
     return code + (episode.title?.let { " — $it" } ?: "")
 }

@@ -50,6 +50,21 @@ class ShufflePlaybackTest {
         return ShufflePlayback(ShufflesV2Api(client, tokens, ApiV2Gate.Unrestricted), "sh1") to client
     }
 
+    @Test fun nextPickCarriesASportsEpisodesAirDateLabels() = runTest {
+        val server = FakeServer()
+        val (playback, client) = session(server)
+        try {
+            val game = """{"content_id":"ep-9","type":"episode","title":"Nuggets vs Rockets","series_title":"NBA","season_number":2026,"episode_number":299,"episode_labels":"air_date","air_date":"2026-11-20"}"""
+            server.body = shuffleJson(current = movieCard, next = game)
+            playback.refresh()
+            val pick = assertNotNull(playback.nextPickAfter("mv-2"))
+            assertEquals("air_date", pick.episodeLabels)
+            assertEquals("2026-11-20", pick.airDate)
+        } finally {
+            client.close()
+        }
+    }
+
     @Test fun scopeLabelNamesASeasonUnderItsSeries() {
         assertEquals("Movies", ShuffleScope("library", "1", "Movies").label())
         assertEquals("Breaking Bad · Season 2", ShuffleScope("season", "s", "Season 2", "Breaking Bad").label())

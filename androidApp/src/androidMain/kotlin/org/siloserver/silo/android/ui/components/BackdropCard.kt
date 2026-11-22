@@ -53,7 +53,6 @@ import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.common.ui.components.WatchProgressBar
 import org.siloserver.silo.model.catalog.EpisodeLabel
-import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.text
 
 /**
@@ -87,8 +86,9 @@ fun BackdropCard(
     seriesTitle: String? = null,
     seasonNumber: Int? = null,
     episodeNumber: Int? = null,
-    /** Labels the episode in place of its numbers for a date-labeled series (sports): "Nov 15, 2026 • Title". */
-    episodeAirDate: UiText? = null,
+    /** The series' `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers: "Nov 15, 2026 • Title". */
+    episodeLabels: String? = null,
+    airDate: String? = null,
     progress: Float? = null,
     remainingMinutes: Int? = null,
     onClick: () -> Unit,
@@ -206,7 +206,7 @@ fun BackdropCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                val episodeTag = episodeAirDate?.text() ?: formatEpisodeTag(seasonNumber, episodeNumber)
+                val episodeTag = EpisodeLabel.airDate(episodeLabels, airDate)?.text() ?: formatEpisodeTag(seasonNumber, episodeNumber)
                 val subtitle = if (episodeTag != null) "$episodeTag \u2022 $title" else title
                 Text(
                     text = subtitle,

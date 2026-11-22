@@ -101,6 +101,8 @@ import org.siloserver.silo.viewmodel.WatchPartyItem
 import org.siloserver.silo.viewmodel.WatchPartySpoilers
 import org.siloserver.silo.viewmodel.WatchPartyPickerViewModel
 import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
 
 /** What choosing a title in the picker does. */
 internal enum class WatchPartyPickMode(
@@ -214,9 +216,12 @@ internal fun WatchPartyPicker(
 private data class WatchPartyChoice(
     val contentId: String,
     val title: String,
-    /** "S1 · E2" when both are known. */
+    /** "S1 · E2" when both are known, or the air date for a date-labeled series. */
     val season: Int?,
     val episode: Int?,
+    /** The series' `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers. */
+    val episodeLabels: String? = null,
+    val airDate: String? = null,
     /** Shown after the episode code. */
     val episodeTitle: String?,
     val posterUrl: String?,
@@ -272,6 +277,8 @@ private data class WatchPartyChoice(
                 title = series ?: item.title,
                 season = season,
                 episode = number,
+                episodeLabels = item.episodeLabels,
+                airDate = item.airDate,
                 episodeTitle = item.title.takeIf { series != null },
                 posterUrl = item.posterUrl,
                 posterThumbhash = item.posterThumbhash,
@@ -286,7 +293,7 @@ private data class WatchPartyChoice(
                     title = item.title,
                     // Sent to the server as the suggestion's subtitle: stays English.
                     subtitle = if (series != null && season != null && number != null) {
-                        "$series · S$season:E$number"
+                        "$series · " + EpisodeLabel.englishText(season, number, item.episodeLabels, item.airDate, EpisodeCodeStyle.Colon)
                     } else {
                         series
                     },
@@ -623,6 +630,8 @@ private fun PickerShelfRow(shelf: PickerShelf, onOpen: (SectionItem) -> Unit) {
                         seriesTitle = item.seriesTitle,
                         seasonNumber = item.seasonNumber,
                         episodeNumber = item.episodeNumber,
+                        episodeLabels = item.episodeLabels,
+                        airDate = item.airDate,
                         progress = if (position != null && duration != null && duration > 0) {
                             (position / duration).toFloat().coerceIn(0f, 1f)
                         } else {
@@ -761,7 +770,7 @@ private fun PickerChoicePage(
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
                         WatchPartyEyebrow(stringResource(mode.eyebrow))
                         WatchPartyHeroTitle(choice.title, size = WatchPartyMetrics.HERO_TITLE * 0.9f)
-                        val code = choice.season?.let { season -> choice.episode?.let { watchPartyEpisodeLine(season, it) } }
+                        val code = choice.season?.let { season -> choice.episode?.let { watchPartyEpisodeLine(season, it, choice.episodeLabels, choice.airDate) } }
                         val subtitle = listOfNotNull(code, choice.episodeTitle).joinToString(" · ").ifBlank { null }
                         val facts = listOfNotNull(subtitle, choice.year?.toIntOrNull()?.let { LocaleFormat.integer(it, currentNumberLocale()) }, watchPartyRuntime(choice.runtimeMinutes)) +
                             choice.otherFacts

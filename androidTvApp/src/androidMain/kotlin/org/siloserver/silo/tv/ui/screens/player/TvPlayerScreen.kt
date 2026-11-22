@@ -2541,6 +2541,8 @@ fun TvPlayerScreen(
                             durationSec = clock.duration,
                             seasonNumber = state.seasonNumber,
                             episodeNumber = state.episodeNumber,
+                            episodeLabels = state.episodeLabels,
+                            airDate = state.episodeAirDate,
                             audioTracks = state.audioTracks,
                             videoQualities = state.videoQualities,
                             videoQualityPreference = state.videoQualityPreference,
@@ -3351,7 +3353,7 @@ internal fun tvPlayerEyebrow(state: TvPlayerViewModel.UiState): String? {
     if (series != null) {
         val code = state.seasonNumber?.let { season ->
             state.episodeNumber?.let {
-                (state.episodeAirDate ?: EpisodeLabel.code(season, it, EpisodeCodeStyle.Colon)).text()
+                EpisodeLabel.text(season, it, state.episodeLabels, state.episodeAirDate, EpisodeCodeStyle.Colon).text()
             }
         }
         return listOfNotNull(series, code).joinToString(" · ")
@@ -3663,10 +3665,13 @@ private fun TvPlayerNextUpOverlay(
                                 }
                                 if (nextEpisode.isEpisode) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     androidx.tv.material3.Text(
-                                        text = (
-                                            nextEpisode.airDate
-                                                ?: EpisodeLabel.code(nextEpisode.seasonNumber, nextEpisode.episodeNumber, EpisodeCodeStyle.Dotted)
-                                            ).text(),
+                                        text = EpisodeLabel.text(
+                                            nextEpisode.seasonNumber,
+                                            nextEpisode.episodeNumber,
+                                            nextEpisode.episodeLabels,
+                                            nextEpisode.airDate,
+                                            EpisodeCodeStyle.Dotted,
+                                        ).text(),
                                         color = Color.White.copy(alpha = 0.62f),
                                         style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
                                     )
@@ -4188,7 +4193,7 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
         subtitle = (
             listOfNotNull(seriesTitle?.takeIf { it.isNotBlank() }) +
                 (
-                    episodeAirDateEnglish?.let(::listOf)
+                    EpisodeLabel.englishAirDate(episodeLabels, episodeAirDate)?.let(::listOf)
                         ?: listOfNotNull(seasonNumber?.let { "S$it" }, episodeNumber?.let { "E$it" })
                     )
             ).joinToString(" · ").ifBlank { null },
@@ -4672,7 +4677,7 @@ private fun tvOnDeckSubtitle(item: TvOnDeckItem): String? {
     val season = item.seasonNumber
     val episode = item.episodeNumber
     if (season == null || episode == null) return item.year?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: item.subtitle
-    val code = (item.airDate ?: EpisodeLabel.code(season, episode, EpisodeCodeStyle.Dotted)).text()
+    val code = EpisodeLabel.text(season, episode, item.episodeLabels, item.airDate, EpisodeCodeStyle.Dotted).text()
     return code + (item.subtitle?.let { " — ${bidiIsolated(it, isRightToLeftText())}" } ?: "")
 }
 

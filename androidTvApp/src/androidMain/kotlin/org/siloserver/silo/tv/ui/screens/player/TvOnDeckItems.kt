@@ -5,8 +5,6 @@ import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.siloserver.silo.common.i18n.LocaleFormat
-import org.siloserver.silo.model.catalog.EpisodeLabel
-import org.siloserver.silo.common.i18n.UiText
 
 /** One On Deck card on the Up Next overlay (tvOS `nextUpCarouselItems` parity). */
 data class TvOnDeckItem(
@@ -30,8 +28,10 @@ data class TvOnDeckItem(
     val seriesBackdropThumbhash: String? = null,
     val seasonNumber: Int? = null,
     val episodeNumber: Int? = null,
-    /** Labels the episode in place of its numbers for a date-labeled series (sports). */
-    val airDate: UiText? = null,
+    /** The series' `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers. */
+    val episodeLabels: String? = null,
+    /** The episode's air date, YYYY-MM-DD. */
+    val airDate: String? = null,
 )
 
 /**
@@ -70,7 +70,8 @@ internal fun List<ResolvedSection>.toTvOnDeckItems(contentId: String, seriesId: 
                 year = item.year.takeIf { it > 0 && (item.seasonNumber == null || item.episodeNumber == null) },
                 seasonNumber = item.seasonNumber.takeIf { item.episodeNumber != null },
                 episodeNumber = item.episodeNumber.takeIf { item.seasonNumber != null },
-                airDate = EpisodeLabel.airDate(item.episodeLabels, item.airDate),
+                episodeLabels = item.episodeLabels,
+                airDate = item.airDate,
                 artUrl = item.backdropUrl,
                 artThumbhash = item.backdropThumbhash,
                 progressFraction = progress,

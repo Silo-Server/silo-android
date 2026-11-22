@@ -94,6 +94,10 @@ sealed interface VideoPlayerUiState {
         val seriesId: String? = null,
         val seasonNumber: Int? = null,
         val episodeNumber: Int? = null,
+        /** The series' `episode_labels` from /watch; "air_date" (sports) labels the episode by [airDate]. */
+        val episodeLabels: String? = null,
+        /** The episode's air date from /watch, YYYY-MM-DD. */
+        val airDate: String? = null,
         /** Target-catalog decision for the one-shot episode-selection handoff. */
         val resolvedEpisodeSelection: ResolvedEpisodeSelection? = null,
         val seriesTitle: String? = null,

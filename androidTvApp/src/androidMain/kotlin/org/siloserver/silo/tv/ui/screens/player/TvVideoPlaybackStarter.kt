@@ -450,6 +450,8 @@ class TvVideoPlaybackStarter(
                 contentType = watchDetail.type,
                 seasonNumber = watchDetail.seasonNumber,
                 episodeNumber = watchDetail.episodeNumber,
+                episodeLabels = watchDetail.episodeLabels,
+                airDate = watchDetail.airDate,
                 resolvedEpisodeSelection = resolvedEpisodeSelection,
             )
             unpublishedSessionId = null

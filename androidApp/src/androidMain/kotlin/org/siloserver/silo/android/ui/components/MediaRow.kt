@@ -67,7 +67,6 @@ import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
 import kotlinx.coroutines.flow.distinctUntilChanged
-import org.siloserver.silo.model.catalog.EpisodeLabel
 
 enum class CardStyle { Poster, Backdrop }
 
@@ -290,7 +289,8 @@ fun MediaRow(
                             seriesTitle = item.seriesTitle,
                             seasonNumber = item.seasonNumber,
                             episodeNumber = item.episodeNumber,
-                            episodeAirDate = EpisodeLabel.airDate(item.episodeLabels, item.airDate),
+                            episodeLabels = item.episodeLabels,
+                            airDate = item.airDate,
                             progress = rowItem.progress,
                             remainingMinutes = rowItem.remainingMinutes,
                             onClick = { openDetail(item) },

@@ -722,8 +722,7 @@ data class WatchDetail(
     @SerialName("series_title") val seriesTitle: String? = null,
     @SerialName("season_number") val seasonNumber: Int? = null,
     @SerialName("episode_number") val episodeNumber: Int? = null,
-    // Forward-compatible: current servers send these on ItemDetail only, so
-    // the player falls back to the cached catalog detail when they are absent.
+    /** The series' `episode_labels` for an episode; "air_date" (sports) labels it by [airDate]. */
     @SerialName("episode_labels") val episodeLabels: String? = null,
     @SerialName("air_date") val airDate: String? = null,
     @SerialName("effective_subtitle_language") val effectiveSubtitleLanguage: String? = null,

@@ -269,19 +269,21 @@ private fun ApiResult<*>.subtitleToolsError(@StringRes fallback: Int): PlayerMes
 /**
  * An episode's line in the media notification, "Series - S01E02", kept in
  * parts so the season and episode tag is translated where it is shown. A
- * date-labeled series (sports) shows [airDate] in place of the tag.
+ * date-labeled series ([episodeLabels] `air_date`, sports) shows the
+ * episode's [airDate] in place of the tag.
  */
 data class MobileEpisodeSubtitle(
     val seriesTitle: String,
     val season: Int,
     val episode: Int,
-    val airDate: UiText? = null,
+    val episodeLabels: String? = null,
+    val airDate: String? = null,
 )
 
 /** [PlayerViewModel.PlayerUiState.subtitle] for display: the episode line in the app language, else as stored. */
 @Composable
 internal fun PlayerViewModel.PlayerUiState.displaySubtitle(): String = subtitleEpisode?.let {
-    it.seriesTitle + " - " + (it.airDate ?: EpisodeLabel.code(it.season, it.episode)).text()
+    it.seriesTitle + " - " + EpisodeLabel.text(it.season, it.episode, it.episodeLabels, it.airDate).text()
 } ?: subtitleYear?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: subtitle
 
 /** For logs and the debug test hook: the message in English, as before the catalog (the resource id without one). */
@@ -528,8 +530,14 @@ class PlayerViewModel(
         val year: Int? = null,
     )
 
-    /** [airDate] labels the episode in place of its numbers for a date-labeled series (sports). */
-    data class OnDeckEpisodeLine(val season: Int, val episode: Int, val title: String?, val airDate: UiText? = null)
+    /** A date-labeled series ([episodeLabels] `air_date`, sports) shows [airDate] in place of the numbers. */
+    data class OnDeckEpisodeLine(
+        val season: Int,
+        val episode: Int,
+        val title: String?,
+        val episodeLabels: String? = null,
+        val airDate: String? = null,
+    )
 
     data class NextEpisodeInfo(
         val contentId: String,
@@ -540,10 +548,10 @@ class PlayerViewModel(
         val stillThumbhash: String?,
         val runtimeMinutes: Int,
         val seriesTitle: String? = null,
-        /** The air date that labels this episode in place of its numbers (a date-labeled series). */
-        val airDate: UiText? = null,
-        /** The episode's YYYY-MM-DD air date as the server sent it, to relabel once the series' labels are known. */
-        val rawAirDate: String? = null,
+        /** The series' `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers. */
+        val episodeLabels: String? = null,
+        /** The episode's air date, YYYY-MM-DD. */
+        val airDate: String? = null,
         val overview: String? = null,
         /** Not started by this profile; spoiler protection may hide [overview]. */
         val isUnwatched: Boolean = true,
@@ -592,10 +600,10 @@ class PlayerViewModel(
         val subtitle: String = "",
         /** Set when [subtitle] is an episode line; [displaySubtitle] shows it translated. */
         val subtitleEpisode: MobileEpisodeSubtitle? = null,
-        /** The air date that labels this episode in place of its numbers (a date-labeled series), else null. */
-        val episodeAirDate: UiText? = null,
-        /** The playing episode's series `episode_labels` ("air_date" for sports), for the Up Next card. */
+        /** The playing episode's series `episode_labels` from /watch; "air_date" (sports) labels it by [episodeAirDate]. */
         val episodeLabels: String? = null,
+        /** The playing episode's air date from /watch, YYYY-MM-DD. */
+        val episodeAirDate: String? = null,
         /** Set when [subtitle] is a title's year; [displaySubtitle] writes it in the app's digits (D77). */
         val subtitleYear: Int? = null,
         val seriesTitle: String? = null,
@@ -2191,7 +2199,6 @@ class PlayerViewModel(
             stopStaleReadySession(playbackState.sessionId)
             return
         }
-        val labeling = episodeLabeling(watchDetail)
         val published = loadOwners.runIfOwned(loadOwner) {
             // Adopted only by the load that publishes: a superseded one must
             // not replace the owner of the playback on screen.
@@ -2209,9 +2216,9 @@ class PlayerViewModel(
                 seriesTitle = watchDetail?.seriesTitle,
                 contentType = watchDetail?.type ?: playbackState.contentType,
                 subtitle = watchDetail?.let { detail -> buildSubtitle(detail) } ?: playbackState.subtitle.orEmpty(),
-                subtitleEpisode = watchDetail?.let { detail -> episodeSubtitle(detail, labeling.airDate) },
-                episodeAirDate = labeling.airDate,
-                episodeLabels = labeling.episodeLabels,
+                subtitleEpisode = watchDetail?.let(::episodeSubtitle),
+                episodeLabels = watchDetail?.episodeLabels,
+                episodeAirDate = watchDetail?.airDate,
                 subtitleYear = watchDetail?.let(::subtitleYear),
                 artworkUrl = playbackState.artworkUrl,
                 sessionId = playbackState.sessionId
@@ -2316,9 +2323,6 @@ class PlayerViewModel(
         if (!published) {
             stopStaleReadySession(playbackState.sessionId)
             return
-        }
-        if (labeling.episodeLabels == null && watchDetail?.seasonNumber != null && watchDetail.episodeNumber != null) {
-            refineEpisodeLabeling(watchDetail.contentId)
         }
 
         // Begin observing intro auto-skip inputs for this session.
@@ -6211,17 +6215,15 @@ class PlayerViewModel(
                 stillThumbhash = next.stillThumbhash,
                 runtimeMinutes = next.runtime,
                 seriesTitle = state.seriesTitle,
-                airDate = EpisodeLabel.airDate(state.episodeLabels, next.airDate),
-                rawAirDate = next.airDate,
+                episodeLabels = state.episodeLabels,
+                airDate = next.airDate,
                 overview = next.overview,
                 isUnwatched = org.siloserver.silo.model.settings.EpisodeSpoilers.isUnwatched(next.userData),
             )
             _uiState.update {
                 // Drop the result if the player has since moved to another item.
                 if (it.contentId != forContentId) return@update it
-                // Labeled against the state current now: the series' labels may
-                // have arrived (refineEpisodeLabeling) while this resolved.
-                it.copy(nextEpisode = info.copy(airDate = EpisodeLabel.airDate(it.episodeLabels, info.rawAirDate)))
+                it.copy(nextEpisode = info)
             }
             if (_uiState.value.contentId != forContentId) return@launch
             // If the before-end/end point already fired while we were still
@@ -6499,6 +6501,8 @@ class PlayerViewModel(
                 stillThumbhash = pick.stillThumbhash,
                 runtimeMinutes = pick.runtimeMinutes,
                 seriesTitle = pick.seriesTitle,
+                episodeLabels = pick.episodeLabels,
+                airDate = pick.airDate,
                 overview = pick.overview,
                 isUnwatched = pick.isUnwatched,
                 isEpisode = pick.isEpisode,
@@ -6979,67 +6983,13 @@ class PlayerViewModel(
     private fun subtitleYear(watchDetail: org.siloserver.silo.model.catalog.WatchDetail): Int? =
         watchDetail.year.takeIf { episodeSubtitle(watchDetail) == null }
 
-    private fun episodeSubtitle(
-        watchDetail: org.siloserver.silo.model.catalog.WatchDetail,
-        airDate: UiText? = null,
-    ): MobileEpisodeSubtitle? {
+    private fun episodeSubtitle(watchDetail: org.siloserver.silo.model.catalog.WatchDetail): MobileEpisodeSubtitle? {
         val series = watchDetail.seriesTitle ?: return null
         val season = watchDetail.seasonNumber ?: return null
         val episode = watchDetail.episodeNumber ?: return null
-        return MobileEpisodeSubtitle(series, season, episode, airDate)
+        return MobileEpisodeSubtitle(series, season, episode, watchDetail.episodeLabels, watchDetail.airDate)
     }
 
-    /**
-     * The air date that labels this episode in place of its numbers, when its
-     * series is date-labeled (sports). /watch doesn't carry the series' choice
-     * yet, so this falls back to the cached catalog detail, cache-only like the
-     * artwork fallback, so it never adds a request to playback startup.
-     */
-    private suspend fun episodeLabeling(watchDetail: org.siloserver.silo.model.catalog.WatchDetail?): EpisodeLabeling {
-        if (watchDetail == null || watchDetail.seasonNumber == null || watchDetail.episodeNumber == null) return EpisodeLabeling()
-        if (watchDetail.episodeLabels != null) {
-            return EpisodeLabeling(watchDetail.episodeLabels, EpisodeLabel.airDate(watchDetail.episodeLabels, watchDetail.airDate))
-        }
-        val cached = runCatching { catalogRepository.getCachedItemDetail(watchDetail.contentId) }.getOrNull()
-        if (cached != null) {
-            return EpisodeLabeling(cached.episodeLabels, EpisodeLabel.airDate(cached.episodeLabels, cached.airDate))
-        }
-        // Up Next advanced within the series to an episode never opened, so not
-        // cached: keep the series' labels and the air date its Up Next card had.
-        val previous = _uiState.value
-        if (watchDetail.seriesId == null || watchDetail.seriesId != previous.seriesId) return EpisodeLabeling()
-        val next = previous.nextEpisode?.takeIf { it.contentId == watchDetail.contentId }
-        return EpisodeLabeling(previous.episodeLabels, next?.airDate)
-    }
-
-    /**
-     * An episode played without its catalog detail cached (started from a
-     * series rail): read the detail in the background, never delaying
-     * playback, and label it by air date if its series is date-labeled.
-     */
-    private fun refineEpisodeLabeling(contentId: String) {
-        viewModelScope.launch {
-            val detail = (catalogRepository.getItemDetailForPrefetch(contentId) as? ApiResult.Success)?.data ?: return@launch
-            val airDate = EpisodeLabel.airDate(detail.episodeLabels, detail.airDate)
-            _uiState.update {
-                if (it.contentId != contentId) {
-                    it
-                } else {
-                    it.copy(
-                        episodeLabels = detail.episodeLabels,
-                        episodeAirDate = airDate,
-                        subtitleEpisode = it.subtitleEpisode?.copy(airDate = airDate),
-                        nextEpisode = it.nextEpisode?.let { next ->
-                            next.copy(airDate = EpisodeLabel.airDate(detail.episodeLabels, next.rawAirDate))
-                        },
-                    )
-                }
-            }
-        }
-    }
-
-    /** The series' `episode_labels` and, for a date-labeled one, the playing episode's air date label. */
-    private data class EpisodeLabeling(val episodeLabels: String? = null, val airDate: UiText? = null)
 
     /** English, for state and logs; [displaySubtitle] shows the episode line translated. */
     private fun buildSubtitle(watchDetail: org.siloserver.silo.model.catalog.WatchDetail): String {
@@ -7186,7 +7136,6 @@ class PlayerViewModel(
             offlineSidecarSubtitleRows(offlineTracks?.subtitles.orEmpty())
         }
         val subtitlePreferences = offlineSubtitlePreferences(watchDetail)
-        val labeling = episodeLabeling(watchDetail)
         if (!ownsLoad(loadOwner)) return false
 
         val published = loadOwners.runIfOwned(loadOwner) {
@@ -7203,9 +7152,9 @@ class PlayerViewModel(
                 error = null,
                 title = title,
                 subtitle = subtitle,
-                subtitleEpisode = watchDetail?.let { detail -> episodeSubtitle(detail, labeling.airDate) },
-                episodeAirDate = labeling.airDate,
-                episodeLabels = labeling.episodeLabels,
+                subtitleEpisode = watchDetail?.let(::episodeSubtitle),
+                episodeLabels = watchDetail?.episodeLabels,
+                episodeAirDate = watchDetail?.airDate,
                 // A movie's stored download subtitle is its year as digits.
                 subtitleYear = if (watchDetail != null) subtitleYear(watchDetail) else sidecar.year?.takeIf { subtitle == it.toString() },
                 contentType = watchDetail?.type,

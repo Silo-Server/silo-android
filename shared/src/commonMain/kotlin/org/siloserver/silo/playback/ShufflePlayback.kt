@@ -26,6 +26,10 @@ data class ShuffleNextPick(
     val runtimeMinutes: Int,
     /** An episode the profile hasn't started, by the pick's own watch state; never a movie. */
     val isUnwatched: Boolean,
+    /** The episode's series `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers. */
+    val episodeLabels: String? = null,
+    /** The episode's air date, YYYY-MM-DD. */
+    val airDate: String? = null,
 )
 
 /** Names what a shuffle draws from: "Movies", or "Breaking Bad · Season 2" for a season. */
@@ -56,6 +60,8 @@ internal fun SectionItem.toShuffleNextPick(): ShuffleNextPick {
         overview = overview,
         runtimeMinutes = runtime ?: 0,
         isUnwatched = episode && EpisodeSpoilers.isUnwatched(this),
+        episodeLabels = episodeLabels.takeIf { episode },
+        airDate = airDate.takeIf { episode },
     )
 }
 

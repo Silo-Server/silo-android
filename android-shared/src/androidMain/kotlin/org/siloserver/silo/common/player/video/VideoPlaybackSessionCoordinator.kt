@@ -53,6 +53,8 @@ class VideoPlaybackSessionCoordinator(
                     contentType = result.contentType,
                     seasonNumber = result.seasonNumber,
                     episodeNumber = result.episodeNumber,
+                    episodeLabels = result.episodeLabels,
+                    airDate = result.airDate,
                     resolvedEpisodeSelection = result.resolvedEpisodeSelection,
                 )
             }
