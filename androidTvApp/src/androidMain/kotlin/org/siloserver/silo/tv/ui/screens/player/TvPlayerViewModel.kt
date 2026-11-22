@@ -26,6 +26,7 @@ import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.isPlaybackSessionEnded
 import org.siloserver.silo.common.player.PlaybackSessionManager
+import org.siloserver.silo.common.player.PlaybackNetworkTier
 import org.siloserver.silo.common.player.inPlayerQualityPair
 import org.siloserver.silo.common.player.PlaybackTeardownGate
 import org.siloserver.silo.common.player.video.MountedAudioTrack
@@ -1575,7 +1576,7 @@ class TvPlayerViewModel(
         stagedPort = PlaybackSessionManagerTvSubtitleStagedReplanPort(
             playbackSessionManager,
             sessionLifecycle,
-        ) { preference -> playerSettingsStore.inPlayerQualityPair(preference, cellular = false) },
+        ) { preference -> playerSettingsStore.inPlayerQualityPair(preference, tier = PlaybackNetworkTier.UNMETERED) },
         settlementScope = TvSubtitleSettlementOwner.scope,
         persistencePort = object : TvSubtitlePersistencePort {
             override suspend fun persist(

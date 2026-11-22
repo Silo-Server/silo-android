@@ -34,7 +34,7 @@ import org.siloserver.silo.common.player.NetworkQualityFollower
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackQualityPair
 import org.siloserver.silo.common.player.inPlayerQualityPair
-import org.siloserver.silo.common.player.usesCellularQuality
+import org.siloserver.silo.common.player.networkTier
 import org.siloserver.silo.common.player.PlaybackTeardownGate
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
@@ -746,7 +746,7 @@ class PlayerViewModel(
         stagedPort = PlaybackSessionManagerMobileSubtitleStagedReplanPort(playbackSessionManager) { preference ->
             playerSettingsStore.inPlayerQualityPair(
                 preference,
-                cellular = networkEvidenceProvider.snapshot().usesCellularQuality,
+                tier = networkEvidenceProvider.snapshot().networkTier,
             )
         },
         persistencePort = object : MobileSubtitlePersistencePort {
