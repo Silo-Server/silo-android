@@ -142,6 +142,7 @@ import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleCho
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.model.playback.videoQualityPreference
+import org.siloserver.silo.model.playback.deliveredAs
 import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.playback.ADMIN_ENDED_PLAYBACK_NOTICE
 import org.siloserver.silo.playback.PlaybackMarkersUpdate
@@ -2952,6 +2953,10 @@ class TvPlayerViewModel(
                         } else {
                             null
                         }
+                        // The row says how the track can be fetched; the plan
+                        // says how it plays. An ASS row on an HLS transcode
+                        // stays a sidecar row while the plan burns it in.
+                        val planSubtitleMode = result.playbackPlanV3?.subtitle?.mode
                         val committedIdentity = result.playbackPlan
                             ?.selectedTracks
                             ?.subtitleIndex
@@ -2959,6 +2964,7 @@ class TvPlayerViewModel(
                                 hydratedSubtitleUrls.firstOrNull { it.index == selected }
                             }
                             ?.let(::tvSubtitleIdentity)
+                            ?.let { identity -> planSubtitleMode?.let(identity::deliveredAs) ?: identity }
                             ?: SubtitleIdentity.Off
                         val predecessorUi = _uiState.value
                         val predecessorSubtitleContext = subtitlePlaybackContext(predecessorUi)
@@ -3509,6 +3515,7 @@ class TvPlayerViewModel(
                         val returnedSubtitleIdentity = returnedSubtitleIndex
                             ?.let { index -> effectiveSubtitleUrls.singleOrNull { it.index == index } }
                             ?.let(::tvSubtitleIdentity)
+                            ?.deliveredAs(decision.plan.subtitle.mode)
                             ?: SubtitleIdentity.Off
                         val returnedAudioIndex = decision.plan.selectedTracks.audio?.index
                             ?: decision.session.audioTrackIndex
@@ -4744,6 +4751,7 @@ class TvPlayerViewModel(
         val returnedSubtitleIdentity = returnedSubtitleIndex
             ?.let { index -> effectiveSubtitleUrls.singleOrNull { it.index == index } }
             ?.let(::tvSubtitleIdentity)
+            ?.deliveredAs(decision.plan.subtitle.mode)
             ?: SubtitleIdentity.Off
         val returnedAudioIndex = decision.plan.selectedTracks.audio?.index
             ?: decision.session.audioTrackIndex
@@ -6048,7 +6056,7 @@ class TvPlayerViewModel(
         // "Auto - None" — back as a durable manual preference, and every later
         // launch restored that instead of re-running Auto.
         autoSelectedSubtitleIdentity = identity
-        if (identity == state.committedSubtitleIdentity && state.pendingSubtitleIdentity == null) {
+        if (identity.playsAs(state.committedSubtitleIdentity) && state.pendingSubtitleIdentity == null) {
             // Committed is what the adapter BELIEVES is on. At load it is seeded
             // straight from the plan (resetContent) before the player has
             // selected any text track, so "already committed" is not evidence
@@ -6066,7 +6074,10 @@ class TvPlayerViewModel(
                 if (!subtitleTransactions.restoreCommittedOff()) {
                     nextSubtitleMountPriority = TvSubtitleMountPriority.UserTransaction
                 }
-            } else if (!playerHasSelectedSubtitle(identity, state)) {
+            } else if (state.committedSubtitleIdentity !is SubtitleIdentity.ServerBurnIn &&
+                !playerHasSelectedSubtitle(identity, state)
+            ) {
+                // A burn-in has nothing to mount: the captions are in the video.
                 SubDiag.log("AUTO committed-but-unmounted -> restoreCommittedLocalMount $identity")
                 nextSubtitleMountPriority = priority
                 subtitleTransactions.restoreCommittedLocalMount()
@@ -6364,7 +6375,7 @@ class TvPlayerViewModel(
         identity: SubtitleIdentity,
         rows: List<org.siloserver.silo.model.playback.PlayerSubtitleInfo>,
     ): Boolean {
-        if (identity == write.identity) return true
+        if (write.identity.playsAs(identity)) return true
         val staged = write.choice ?: return false
         val described = org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(identity, rows) ?: return false
         return described.subtitleMode == staged.subtitleMode &&

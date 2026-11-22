@@ -118,6 +118,7 @@ import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
+import org.siloserver.silo.model.playback.deliveredAs
 import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.playback.ADMIN_ENDED_PLAYBACK_NOTICE
 import org.siloserver.silo.playback.PlaybackMarkersUpdate
@@ -2251,9 +2252,14 @@ class PlayerViewModel(
             }
 
             val mountedState = _uiState.value
+            // The row says how the track can be fetched; the plan says how it
+            // plays. An ASS row on an HLS transcode stays a sidecar row while
+            // the plan burns it in.
+            val planSubtitleMode = playbackState.playbackPlanV3?.subtitle?.mode
             val committedIdentity = mountedState.subtitleTracks
                 .getOrNull(mountedState.selectedSubtitleIndex)
                 ?.let(::mobileSubtitleIdentity)
+                ?.let { identity -> planSubtitleMode?.let(identity::deliveredAs) ?: identity }
                 ?: SubtitleIdentity.Off
             mobileSubtitleTransactions.resetContent(
                 context = mobileSubtitleContext(mountedState),
@@ -2267,7 +2273,7 @@ class PlayerViewModel(
                 mobileSubtitleTransactions.persistCommittedSelection()
             }
             deferredSubtitleIdentity
-                ?.takeIf { it != committedIdentity }
+                ?.takeIf { !it.playsAs(committedIdentity) }
                 ?.let(mobileSubtitleTransactions::select)
 
             // Seeded whether or not it differs from what the server reported.
@@ -2835,6 +2841,7 @@ class PlayerViewModel(
                         val returnedSubtitleIdentity = recoveredSubtitles
                             .getOrNull(returnedSubtitleOrdinal)
                             ?.let(::mobileSubtitleIdentity)
+                            ?.deliveredAs(decision.plan.subtitle.mode)
                             ?: SubtitleIdentity.Off
                         val returnedAudioIndex = decision.plan.selectedTracks.audio?.index
                             ?: decision.session.audioTrackIndex
@@ -4016,6 +4023,7 @@ class PlayerViewModel(
         val returnedSubtitleIdentity = authoritativeSubtitles
             .getOrNull(returnedSubtitleOrdinal)
             ?.let(::mobileSubtitleIdentity)
+            ?.deliveredAs(decision.plan.subtitle.mode)
             ?: SubtitleIdentity.Off
         val returnedAudioIndex = decision.plan.selectedTracks.audio?.index
             ?: decision.session.audioTrackIndex
@@ -5292,7 +5300,7 @@ class PlayerViewModel(
         identity: SubtitleIdentity,
         rows: List<org.siloserver.silo.model.playback.PlayerSubtitleInfo>,
     ): Boolean {
-        if (identity == write.identity) return true
+        if (write.identity.playsAs(identity)) return true
         val described = org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(identity, rows) ?: return false
         return described.subtitleMode == write.choice.subtitleMode &&
             described.trackSignature == write.choice.trackSignature

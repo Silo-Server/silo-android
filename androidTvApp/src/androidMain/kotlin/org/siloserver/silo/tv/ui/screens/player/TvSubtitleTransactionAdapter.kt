@@ -687,6 +687,15 @@ internal class TvSubtitleTransactionAdapter(
     }
 
     fun select(identity: SubtitleIdentity) {
+        // The sidecar row whose burn-in already plays: a replan would only
+        // restart the transcode for the same answer.
+        if (identity != transition.committed.identity &&
+            identity.playsAs(transition.committed.identity) &&
+            !hasActiveTransaction
+        ) {
+            SubDiag.log("ADAPTER select NOOP $identity plays as ${transition.committed.identity}")
+            return
+        }
         SubDiag.log("ADAPTER select $identity")
         mutate(SelectSubtitle(identity), explicit = true)
     }
@@ -725,8 +734,10 @@ internal class TvSubtitleTransactionAdapter(
     ) {
         val current = context ?: return
         val priorState = transition
-        if (identity == transition.committed.identity) {
-            if (identity is SubtitleIdentity.ServerBurnIn) {
+        // playsAs: a saved burn-in restores to its sidecar row, which the
+        // server may be burning in again. Nothing is mounted for a burn-in.
+        if (identity.playsAs(transition.committed.identity)) {
+            if (transition.committed.identity is SubtitleIdentity.ServerBurnIn) {
                 if (migrationRequired) persist(transition.committed, current)
             } else {
                 // mutate() refuses to touch local state while a publication is
@@ -1682,7 +1693,7 @@ internal class TvSubtitleTransactionAdapter(
         val rollbackOutputRouteGeneration = committedOutputRouteGeneration
         val freshRestore = pendingFreshRestore
             ?.takeIf { it.generation < validatedState.nextGeneration }
-            ?.takeIf { it.identity == validatedState.committed.identity }
+            ?.takeIf { it.identity.playsAs(validatedState.committed.identity) }
         val priorState = freshRestore?.priorState ?: transition.copy(pending = null)
         transition = if (validatedState.committed.identity.requiresPlayerBoundaryConfirmation()) {
             priorState
@@ -2109,11 +2120,11 @@ internal class TvSubtitleTransactionAdapter(
         ) {
             return
         }
-        if (deferred.identity != transition.committed.identity) {
+        if (!deferred.identity.playsAs(transition.committed.identity)) {
             restoreFreshPreference(deferred.identity, deferred.migrationRequired)
             return
         }
-        if (deferred.identity is SubtitleIdentity.ServerBurnIn) {
+        if (transition.committed.identity is SubtitleIdentity.ServerBurnIn) {
             if (deferred.migrationRequired) persist(transition.committed, current)
             return
         }

@@ -34,6 +34,7 @@ import org.siloserver.silo.model.playback.SubtitleTransitionState
 import org.siloserver.silo.model.playback.UpdateAudioPreference
 import org.siloserver.silo.model.playback.UpdateQualityPreference
 import org.siloserver.silo.model.playback.deliveredAs
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.isServerPick
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
@@ -412,6 +413,14 @@ internal class MobileSubtitleTransactionAdapter(
     }
 
     fun select(identity: SubtitleIdentity) {
+        // The sidecar row whose burn-in already plays: a replan would only
+        // restart the transcode for the same answer.
+        if (identity != transition.committed.identity &&
+            identity.playsAs(transition.committed.identity) &&
+            !hasActiveTransaction
+        ) {
+            return
+        }
         mutate(SelectSubtitle(identity), explicit = true)
     }
 
