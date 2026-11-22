@@ -23,7 +23,7 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
     data class Intent(val key: Key, val present: Boolean, val generation: Long, val revision: Long)
     data class Action(val intent: Intent, val command: MembershipPort.Command? = null,
         val completion: MembershipPort.Completion? = null, val busy: Boolean = false,
-        val baseline: Intent? = null) {
+        val baseline: Intent? = null, val joined: Boolean = false) {
         val confirmed: Boolean get() = completion?.mayPublish == true && completion.disposition in setOf(
             MembershipPort.Disposition.ACKNOWLEDGED, MembershipPort.Disposition.RECONCILED)
     }
@@ -36,9 +36,9 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
 
     /**
      * The viewer's own attempts ([perform]) still unconfirmed after their automatic
-     * retries, including one whose caller was cancelled. Commands restored by
-     * [restorePending] never appear here, so a notice raised from this flow answers
-     * something the viewer just did. NOT_CLAIMED is left out: another sender owns the
+     * retries, including one whose caller was cancelled. A command restored by
+     * [restorePending] appears only when the viewer repeated its choice during its
+     * retry, so a notice raised from this flow answers something the viewer just did. NOT_CLAIMED is left out: another sender owns the
      * command and its result arrives through [restorePending].
      */
     val unconfirmedAttempts: SharedFlow<Intent> = mutableUnconfirmedAttempts.asSharedFlow()
@@ -53,8 +53,10 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
     fun begin(itemId: String, kind: MembershipPort.Kind, present: Boolean): Intent {
         val key = Key(itemId, kind)
         val previous = mutableActions.value[key]
-        // Repeating an unresolved choice retries it, which reads before resending.
-        if (previous != null && current(previous.intent) && !previous.confirmed && previous.completion?.disposition != MembershipPort.Disposition.PAUSED && previous.intent.present == present) {
+        // Repeating an unresolved choice retries it, which reads before resending. A choice
+        // already retrying (a startup restore included) is joined, never recorded twice.
+        if (previous != null && current(previous.intent) && !previous.confirmed && previous.intent.present == present &&
+            (previous.busy || previous.completion?.disposition != MembershipPort.Disposition.PAUSED)) {
             return previous.intent
         }
         val intent = Intent(key, present, generation.value, kotlin.random.Random.nextLong())
@@ -72,13 +74,22 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
     suspend fun perform(intent: Intent) {
         if (!current(intent)) return
         val prior = mutableActions.value[intent.key] ?: return
-        if (prior.busy || prior.confirmed) return
+        if (prior.confirmed) return
+        if (prior.busy) {
+            // The viewer repeated a choice that is already retrying. A restored witness's owner
+            // reports it if that retry fails; this attempt's own finally reports it otherwise.
+            update(intent) { it.copy(joined = true) }
+            return
+        }
         update(intent) { it.copy(busy = true) }
         var command = prior.command
+        // This attempt retries the command itself, so a later restore pass must not retry it again.
+        command?.let { owned -> unretriedRestores.update { it - owned.id } }
+        var stale = false
         try {
             val activePort = checkNotNull(port) { "Membership storage is unavailable" }
             val authority = checkNotNull(activePort.captureAuthority()) { "Sign in to change membership" }
-            if (!current(intent) || authority.scope.identityGeneration != intent.generation) return
+            if (!current(intent) || authority.scope.identityGeneration != intent.generation) { stale = true; return }
             val recorded = command ?: withContext(NonCancellable) {
                 // Preserve the exact durable witness if cancellation arrives after Room commits.
                 activePort.record(authority, intent.key.itemId, intent.key.kind, intent.present).also { recorded ->
@@ -94,11 +105,12 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
         } catch (_: Throwable) {
             complete(intent, UNCONFIRMED)
         } finally {
-            // Finish the change even if the screen that started it closes.
+            // Finish the change even if the screen that started it closes. A stale attempt,
+            // for an identity that is already changing, neither retries nor reports.
             withContext(NonCancellable) {
-                command?.let { recover(intent, it) }
-                update(intent) { it.copy(busy = false) }
-                reportIfUnconfirmed(intent)
+                if (!stale) command?.let { recover(intent, it) }
+                update(intent) { it.copy(busy = false, joined = false) }
+                if (!stale) reportIfUnconfirmed(intent)
             }
         }
     }
@@ -211,10 +223,17 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
                 try {
                     complete(intent, activePort.retry(command))
                 } catch (cancelled: CancellationException) {
+                    // The retry may not have run; a later pass in this process gets it again.
+                    unretriedRestores.update { it + command.id }
                     throw cancelled
                 } catch (_: Exception) {
                     complete(intent, UNCONFIRMED)
                 } finally { update(intent) { it.copy(busy = false) } }
+                // A viewer who repeated this choice while it retried hears about a failure.
+                if (mutableActions.value[intent.key]?.joined == true) {
+                    update(intent) { it.copy(joined = false) }
+                    reportIfUnconfirmed(intent)
+                }
             }
         } finally {
             // Release restored witnesses a cancelled scan or retry pass never reached.

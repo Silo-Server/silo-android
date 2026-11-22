@@ -134,14 +134,15 @@ roll back another field or replace a newer home snapshot. Personal-list removals
 retain their row, total and continuation until acknowledged or reconciled.
 
 An unconfirmed user change retries automatically after 2, 5 and 15 seconds, even
-if the screen that started it closes. Repeating the same choice retries it again.
+if the screen that started it closes. Repeating the same choice retries it again, or
+joins the retry already running for it.
 The field keeps its last confirmed value. The root notice host restores a bounded
 set of current-authority commands, retries each unconfirmed one once, silently, and
 keeps collecting Room invalidations. It opens a dialog (phone `SiloDialog`, TV
 `TvDialog`) only when one of the viewer's own attempts, including one whose caller
 was cancelled, is still unconfirmed after its retries
-(`MembershipActions.unconfirmedAttempts`). Restored commands and NOT_CLAIMED
-results never open one; the dialog waits while a player route is showing. It names
+(`MembershipActions.unconfirmedAttempts`). A restored command opens one only when the
+viewer repeated its choice during its retry; NOT_CLAIMED results never open one; the dialog waits while a player route is showing. It names
 the list and the change, offers Try Again, which retries the command (or sends it
 when none was recorded), and closes with OK or Back without touching the command.
 Legacy quarantine keeps its separate non-modal notice directing the user to
