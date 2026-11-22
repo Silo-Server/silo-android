@@ -8,6 +8,7 @@ import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.player.trackIdDenotes
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
@@ -147,7 +148,7 @@ internal fun buildTvSubtitleHudPresentation(
     return TvSubtitleHudPresentation(
         rows = options.map { option ->
             val applying = pendingIdentity != null &&
-                option.identity.playsAs(pendingIdentity) &&
+                option.plays(pendingIdentity) &&
                 !pendingIdentity.playsAs(committedIdentity)
             TvSubtitleHudRow(
                 stableId = option.stableId,
@@ -164,7 +165,13 @@ internal fun buildTvSubtitleHudPresentation(
         focusedStableId = resolvedFocus,
         focusTrapActive = hudOpen,
         committedIdentity = committedIdentity,
-        onSelect = onSelect,
+        onSelect = { identity ->
+            // The row stands for the player track that already plays: picking
+            // it keeps that track rather than switching it to the server's copy.
+            val keepsPlayerTrack = committedIdentity is SubtitleIdentity.LocalMedia3 &&
+                options.any { it.identity == identity && it.plays(committedIdentity) }
+            onSelect(if (keepsPlayerTrack) committedIdentity else identity)
+        },
         onFocused = onFocused,
     )
 }
@@ -213,11 +220,13 @@ internal fun buildTvSubtitleHudOptions(
 }
 
 /**
- * The file's track this row stands for in the menu. An unplayable row cannot be
- * picked, so its track stays listed on its own as the only way to show it.
+ * The file's track this row stands for in the menu: only a sidecar row, which
+ * plays the same track from the server's copy. A burn-in-only row's route is a
+ * transcode, and an unplayable row cannot be picked, so their track stays
+ * listed on its own as the way to show it on the device.
  */
 private fun PlayerSubtitleInfo.menuSourceTrackId(): String? =
-    sourceContainerTrackId.takeUnless { unplayable }
+    sourceContainerTrackId.takeIf { serverDelivery == SUBTITLE_DELIVERY_SIDECAR && !unplayable }
 
 private fun tvSubtitleHudOption(
     identity: SubtitleIdentity,

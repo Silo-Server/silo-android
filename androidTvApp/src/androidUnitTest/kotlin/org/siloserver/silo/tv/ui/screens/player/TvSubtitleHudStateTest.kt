@@ -269,6 +269,12 @@ class TvSubtitleHudStateTest {
             Case("an unplayable row keeps its track pickable", listOf(english, spanish.copy(unplayable = true)),
                 listOf(englishTrack, spanishTrack),
                 listOf("off", "server:0", "server:1", "player:4")),
+            // A burn-in-only row (VobSub, DVB) plays through a transcode; the
+            // file's track is the way to show it on the device.
+            Case("a burn-in-only row keeps its track pickable",
+                listOf(english, spanish.copy(url = "", serverDelivery = SUBTITLE_DELIVERY_BURN_IN_ONLY)),
+                listOf(englishTrack, spanishTrack),
+                listOf("off", "server:0", "server:1", "player:4")),
         )
         for (case in cases) {
             val options = buildTvSubtitleHudOptions(case.rows, case.tracks, resources)
@@ -281,7 +287,9 @@ class TvSubtitleHudStateTest {
             }
             assertEquals(case.expected, keys, case.name)
         }
-        // A choice saved as that player track checks the row it now stands under.
+        // A choice saved as that player track checks the row it now stands under,
+        // and picking that row keeps the player track instead of replanning it.
+        val picked = mutableListOf<SubtitleIdentity>()
         val presentation = buildTvSubtitleHudPresentation(
             options = buildTvSubtitleHudOptions(listOf(english, spanish), listOf(englishTrack, spanishTrack), resources),
             committedIdentity = tvSubtitleIdentity(spanishTrack),
@@ -289,8 +297,12 @@ class TvSubtitleHudStateTest {
             hudOpen = true,
             focusedStableId = null,
             resources = resources,
+            onSelect = { picked += it },
         )
         assertEquals(listOf(tvSubtitleIdentity(spanish)), presentation.rows.filter { it.checked }.map { it.identity })
+        presentation.onSelect(tvSubtitleIdentity(spanish))
+        presentation.onSelect(tvSubtitleIdentity(english))
+        assertEquals(listOf(tvSubtitleIdentity(spanishTrack), tvSubtitleIdentity(english)), picked)
     }
 
     private fun SubtitleIdentity.serverIndexOrNull(): Int? = when (this) {
