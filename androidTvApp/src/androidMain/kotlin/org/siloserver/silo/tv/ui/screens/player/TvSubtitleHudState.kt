@@ -7,6 +7,7 @@ import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.playback.subtitleMediaIdentityOrNull
@@ -56,6 +57,11 @@ internal data class TvSubtitleHudPresentation(
     val hudOpen: Boolean,
     val focusedStableId: String?,
     val focusTrapActive: Boolean,
+    /**
+     * What plays. The checked row is the viewer's pick, which differs when the
+     * server burned a sidecar pick in.
+     */
+    val committedIdentity: SubtitleIdentity,
     val onSelect: (SubtitleIdentity) -> Unit = {},
     val onFocused: (String) -> Unit = {},
 )
@@ -122,17 +128,18 @@ internal fun buildTvSubtitleHudPresentation(
         .mapTo(mutableSetOf(), TvSubtitleHudOption::stableId)
     val resolvedFocus = focusedStableId
         ?.takeIf(optionIds::contains)
-        ?: options.firstOrNull { it.identity == committedIdentity && !it.unplayable }?.stableId
+        ?: options.firstOrNull { it.identity.playsAs(committedIdentity) && !it.unplayable }?.stableId
         ?: options.firstOrNull { !it.unplayable }?.stableId
     return TvSubtitleHudPresentation(
         rows = options.map { option ->
-            val applying = option.identity == pendingIdentity &&
-                pendingIdentity != committedIdentity
+            val applying = pendingIdentity != null &&
+                option.identity.playsAs(pendingIdentity) &&
+                !pendingIdentity.playsAs(committedIdentity)
             TvSubtitleHudRow(
                 stableId = option.stableId,
                 identity = option.identity,
                 label = option.label,
-                checked = option.identity == committedIdentity,
+                checked = option.identity.playsAs(committedIdentity),
                 applying = applying,
                 focused = option.stableId == resolvedFocus,
                 unplayable = option.unplayable,
@@ -142,6 +149,7 @@ internal fun buildTvSubtitleHudPresentation(
         hudOpen = hudOpen,
         focusedStableId = resolvedFocus,
         focusTrapActive = hudOpen,
+        committedIdentity = committedIdentity,
         onSelect = onSelect,
         onFocused = onFocused,
     )
