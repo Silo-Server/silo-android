@@ -102,14 +102,14 @@ class PlaybackNetworkMonitor(
     private val dataSaverReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ConnectivityManager.ACTION_RESTRICT_BACKGROUND_CHANGED) {
-                refresh(defaultNetwork)
+                refreshCurrentNetwork()
             }
         }
     }
 
     init {
         bandwidthMeter.addEventListener(Handler(Looper.getMainLooper()), this)
-        refresh(defaultNetwork)
+        refreshCurrentNetwork()
         connectivity.registerDefaultNetworkCallback(callback)
         ContextCompat.registerReceiver(
             appContext,
@@ -131,15 +131,21 @@ class PlaybackNetworkMonitor(
     }
 
     @Synchronized
+    private fun refreshCurrentNetwork() {
+        val current = defaultNetwork
+        publish(current, capabilities(current))
+    }
+
+    @Synchronized
     private fun refresh(
         network: Network?,
-        knownCapabilities: NetworkCapabilities? = capabilities(network),
+        knownCapabilities: NetworkCapabilities? = null,
     ) {
         if (network != defaultNetwork) {
             defaultNetwork = network
             measuredBitrateBps = null
         }
-        publish(network, knownCapabilities)
+        publish(network, knownCapabilities ?: capabilities(network))
     }
 
     private fun publish(network: Network?, caps: NetworkCapabilities?) {
