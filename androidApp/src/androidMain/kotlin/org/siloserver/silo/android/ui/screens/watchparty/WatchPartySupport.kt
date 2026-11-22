@@ -1,6 +1,11 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import java.security.MessageDigest
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.watchparty.watchPartyRuntimeText
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.watchtogether.RoomMember
 import org.siloserver.silo.model.watchtogether.RoomPhase
@@ -36,17 +41,24 @@ internal fun watchPartyInviteHandoffId(link: WatchPartyInvite.Link): String {
 private const val INVITE_ID_BYTES = 12
 
 /** What the lobby and player say when this device's party ended. */
-internal fun watchPartyEndedMessage(reason: String): String = when (reason) {
-    WatchPartyEndReason.Replaced -> "This profile joined the Watch Party on another device."
-    WatchPartyEndReason.ConnectionLost -> "Lost connection to the party."
-    WatchPartyEndReason.Unauthorized -> "Sign in again to use Watch Party."
-    else -> "The Watch Party has ended."
+@StringRes
+internal fun watchPartyEndedMessage(reason: String): Int = when (reason) {
+    WatchPartyEndReason.Replaced -> CommonR.string.watchParty_endReason_replaced
+    WatchPartyEndReason.ConnectionLost -> CommonR.string.watchParty_endReason_connectionLost
+    WatchPartyEndReason.Unauthorized -> CommonR.string.watchParty_endReason_unauthorized
+    else -> CommonR.string.watchParty_endReason_ended
 }
 
 /** The party itself goes on after these, so the hub offers Rejoin. */
 internal fun watchPartyEndedOffersRejoin(reason: String): Boolean =
     reason == WatchPartyEndReason.Replaced || reason == WatchPartyEndReason.ConnectionLost
 
+/**
+ * English member name and name list for the player's notices
+ * (`player/PlayerScreen.kt`, another area) and their tests. Screens here use
+ * the catalog's `org.siloserver.silo.common.watchparty.watchPartyDisplayName`
+ * and `watchPartyNameList`; drop these once the player moves to them.
+ */
 internal fun watchPartyMemberName(member: RoomMember): String =
     member.displayName.ifBlank { "Someone" }
 
@@ -92,25 +104,30 @@ private fun RoomMember.isSameMemberAs(other: RoomMember): Boolean =
     userId.isNotBlank() && profileId.isNotBlank() && userId == other.userId && profileId == other.profileId
 
 /** Share text: the host's invitation link with the code, or the code alone for guests. */
+@Composable
 internal fun watchPartyShareText(code: String, inviteUrl: String?): String =
     if (inviteUrl != null) {
-        "Join my Watch Party on Silo: $inviteUrl\nOr enter the code $code."
+        stringResource(CommonR.string.watchParty_invite_shareTextLink, inviteUrl, code)
     } else {
-        "Join my Watch Party on Silo with the code $code."
+        stringResource(CommonR.string.watchParty_invite_shareTextCode, code)
     }
 
 /** Quality chips for the staged version, for example "4K" and "HDR". */
+@Composable
 internal fun watchPartyQualityChips(version: FileVersion?): List<String> {
     version ?: return emptyList()
     val resolution = version.resolution?.lowercase().orEmpty()
+    val uhd = stringResource(CommonR.string.watchParty_facts_uhd)
+    val hdr = stringResource(CommonR.string.watchParty_facts_hdr)
     return listOfNotNull(
-        "4K".takeIf { "2160" in resolution || "4k" in resolution },
-        "HDR".takeIf { version.hdr },
+        uhd.takeIf { "2160" in resolution || "4k" in resolution },
+        hdr.takeIf { version.hdr },
     )
 }
 
 /** "2h 35m" or "48m", as Apple's `WatchPartyFacts.runtime`. */
+@Composable
 internal fun watchPartyRuntime(minutes: Int?): String? {
     val value = minutes?.takeIf { it > 0 } ?: return null
-    return if (value >= 60) "${value / 60}h ${value % 60}m" else "${value}m"
+    return watchPartyRuntimeText(value)
 }

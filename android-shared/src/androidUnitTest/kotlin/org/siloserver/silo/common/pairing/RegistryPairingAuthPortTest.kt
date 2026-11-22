@@ -78,7 +78,7 @@ class RegistryPairingAuthPortTest {
         registry.rename(serverId, "Living Room")
         registry.switchTo(serverId)
         tokens.switchActiveServer(serverId)
-        tokens.saveTokens("old-access", "old-refresh", 3600)
+        tokens.replaceAccountSession(serverId = serverId, accessToken = "old-access", refreshToken = "old-refresh", expiresIn = 3600)
         tokens.setProfileId("old-profile")
         tokens.setProfileToken("old-profile-token")
         registry.setProfileId(serverId, "old-profile")
@@ -112,7 +112,7 @@ class RegistryPairingAuthPortTest {
         val serverId = registry.addOrUpdate(serverUrl)
         registry.switchTo(serverId)
         val tokens = EncryptedTokenManagerImpl(prefs, registry, transitions)
-        tokens.saveTokens("old-access", "old-refresh", 3600)
+        tokens.replaceAccountSession(serverId = serverId, accessToken = "old-access", refreshToken = "old-refresh", expiresIn = 3600)
         val createStarted = CompletableDeferred<Unit>()
         val releaseCreate = CompletableDeferred<Unit>()
         val expectedGeneration = transitions.generation.value
@@ -156,7 +156,7 @@ class RegistryPairingAuthPortTest {
         val serverId = registry.addOrUpdate(serverUrl)
         registry.switchTo(serverId)
         val tokens = EncryptedTokenManagerImpl(prefs, registry, transitions)
-        tokens.saveTokens("old-access", "old-refresh", 3600)
+        tokens.replaceAccountSession(serverId = serverId, accessToken = "old-access", refreshToken = "old-refresh", expiresIn = 3600)
         tokens.setProfileIdentity("old-profile", "old-profile-token")
         registry.setProfileId(serverId, "old-profile")
         transitions.installGate { transition ->
@@ -230,7 +230,7 @@ class RegistryPairingAuthPortTest {
         val newId = initialRegistry.addOrUpdate("https://new.example")
         initialRegistry.switchTo(oldId)
         val initialTokens = EncryptedTokenManagerImpl(prefs, initialRegistry, transitions)
-        initialTokens.saveTokens("old-access", "old-refresh", 3600)
+        initialTokens.replaceAccountSession(serverId = oldId, accessToken = "old-access", refreshToken = "old-refresh", expiresIn = 3600)
         initialTokens.setProfileIdentity("old-profile", "old-profile-token")
         initialRegistry.setProfileId(oldId, "old-profile")
 
@@ -267,6 +267,9 @@ class RegistryPairingAuthPortTest {
         val registry = AndroidServerRegistry(prefs, transitions)
         val oldId = registry.addOrUpdate("https://old.example")
         registry.switchTo(oldId)
+        // Signed in before the hook is installed: the hook fails every account commit.
+        EncryptedTokenManagerImpl(prefs, registry, transitions)
+            .replaceAccountSession(serverId = oldId, accessToken = "old-access", refreshToken = "old-refresh", expiresIn = 3600)
         // The commit hook runs after the registry has already switched to the
         // new server, so failing it exercises the restore-and-reprobe branch.
         val tokens = EncryptedTokenManagerImpl(
@@ -275,7 +278,6 @@ class RegistryPairingAuthPortTest {
             transitions,
             afterAccountSessionCommit = { error("injected post-commit failure") },
         )
-        tokens.saveTokens("old-access", "old-refresh", 3600)
         var probes = 0
         val client = HttpClient(
             MockEngine { request ->
@@ -322,7 +324,7 @@ class RegistryPairingAuthPortTest {
         val oldId = registry.addOrUpdate("https://old.example")
         registry.switchTo(oldId)
         val tokens = EncryptedTokenManagerImpl(prefs, registry, transitions)
-        tokens.saveTokens("old-access", "old-refresh", 3600)
+        tokens.replaceAccountSession(serverId = oldId, accessToken = "old-access", refreshToken = "old-refresh", expiresIn = 3600)
         var probes = 0
         val client = HttpClient(
             MockEngine { request ->
@@ -482,13 +484,15 @@ class RegistryPairingAuthPortTest {
         val registry = AndroidServerRegistry(prefs, transitions)
         val oldId = registry.addOrUpdate("https://old.example")
         registry.switchTo(oldId)
+        // Signed in before the hook is installed: the hook fails every account commit.
+        EncryptedTokenManagerImpl(prefs, registry, transitions)
+            .replaceAccountSession(serverId = oldId, accessToken = "old-access", refreshToken = "old-refresh", expiresIn = 3600)
         val tokens = EncryptedTokenManagerImpl(
             prefs,
             registry,
             transitions,
             afterAccountSessionCommit = { error("injected post-commit failure") },
         )
-        tokens.saveTokens("old-access", "old-refresh", 3600)
 
         assertFailsWith<IllegalStateException> {
             RegistryPairingAuthPort(tokens, registry).persistApprovedSession(
@@ -515,7 +519,7 @@ class RegistryPairingAuthPortTest {
         val serverId = registry.addOrUpdate("https://signed-in.example")
         registry.switchTo(serverId)
         EncryptedTokenManagerImpl(prefs, registry).apply {
-            saveTokens("old-access", "old-refresh", 3600)
+            replaceAccountSession(serverId = serverId, accessToken = "old-access", refreshToken = "old-refresh", expiresIn = 3600)
             setProfileIdentity("old-profile", "old-profile-token")
         }
         registry.setProfileId(serverId, "old-profile")

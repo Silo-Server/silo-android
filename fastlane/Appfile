@@ -2,7 +2,7 @@
 # Nothing secret is hardcoded — this file is safe to commit to a public repo.
 #
 # The Play service-account key is intentionally not referenced here: the
-# beta lane resolves it from PLAY_SERVICE_ACCOUNT_JSON (CI) or a local key
-# file (see play_json_key_data in the Fastfile).
+# lanes resolve it from PLAY_SERVICE_ACCOUNT_JSON (CI) or a local key file
+# (see play_json_key_data in the Fastfile).
 
 package_name("org.siloserver.silo")

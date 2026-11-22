@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.localizedResources
+import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -36,6 +38,7 @@ import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.theme.SiloDetailActionControl
 import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
 import org.siloserver.silo.android.ui.util.rememberDominantColor
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.movieDirectorCredit
 import org.siloserver.silo.model.catalog.EpisodeListItem
@@ -67,10 +70,19 @@ fun MovieDetailContent(
         thumbhash = detail.posterThumbhash,
     ),
     similarItems: List<org.siloserver.silo.model.catalog.BrowseItem> = emptyList(),
+    /** The box set this movie belongs to; null shows no box set row. */
+    boxSet: org.siloserver.silo.model.catalog.CatalogBoxSetDetail? = null,
+    onOpenBoxSet: (org.siloserver.silo.model.catalog.CatalogBoxSet) -> Unit = {},
+    onBoxSetMovieClick: (contentId: String, libraryId: String) -> Unit = { _, _ -> },
+    /** The collections row; null shows none. */
+    collectionsRow: org.siloserver.silo.viewmodel.ItemCollectionsRow? = null,
+    onCollectionClick: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit = {},
+    onCollectionItemClick: (org.siloserver.silo.model.catalog.BrowseItem) -> Unit = {},
     isFavorite: Boolean,
     isInWatchlist: Boolean,
     selectedVersionIndex: Int,
     isAutoVersion: Boolean,
+    preferredQuality: String?,
     selectedAudioIndex: Int?,
     selectedSubtitleIndex: Int?,
     onPlayClick: () -> Unit,
@@ -80,10 +92,11 @@ fun MovieDetailContent(
     onWatchlistClick: () -> Unit,
     onToggleWatched: () -> Unit,
     onVersionSelected: (Int?) -> Unit,
+    onEditionSelected: (String) -> Unit,
     onAudioSelected: (Int?) -> Unit,
     onSubtitleSelected: (Int?) -> Unit,
     onPersonClick: (String) -> Unit,
-    onItemDetailClick: (String) -> Unit,
+    onSimilarItemClick: (String) -> Unit,
     onSeriesClick: (() -> Unit)? = null,
     onPlayExtra: (ItemExtra) -> Unit = {},
     // Episode pages only: the parent series' seasons + the selected
@@ -119,8 +132,9 @@ fun MovieDetailContent(
     val hasTrackSelectors = detail.versions.isNotEmpty()
     val hasOverflow = onSeriesClick != null || partyAction != null
 
+    val resources = localizedResources()
     val eyebrow = if (detail.type == "episode") {
-        HeroMetadata.episodeEyebrow(detail)
+        HeroMetadata.episodeEyebrow(resources, detail)
     } else {
         null
     }
@@ -183,14 +197,17 @@ fun MovieDetailContent(
                                 detail = detail,
                                 selectedVersionIndex = selectedVersionIndex,
                                 isAutoVersion = isAutoVersion,
+                                preferredQuality = preferredQuality,
                                 onVersionSelected = onVersionSelected,
+                                onEditionSelected = onEditionSelected,
                             )
                             if (audioTracks.isNotEmpty()) {
                                 PlaybackSelectorDivider()
                                 TrackSelectorRow(
                                     icon = Icons.Outlined.AudioFile,
-                                    label = "Audio",
+                                    label = stringResource(CommonR.string.detail_audio),
                                     value = formatAudioValueLabel(
+                                        resources,
                                         audioTracks,
                                         selectedAudioIndex,
                                         selectedVersion?.effectiveAudioTrackIndex,
@@ -203,8 +220,15 @@ fun MovieDetailContent(
                                 PlaybackSelectorDivider()
                                 TrackSelectorRow(
                                     icon = Icons.Outlined.ClosedCaption,
-                                    label = "Subtitles",
-                                    value = formatSubtitleValueLabel(subtitleTracks, selectedSubtitleIndex),
+                                    label = stringResource(CommonR.string.detail_subtitles),
+                                    value = formatSubtitleValueLabel(
+                                        resources,
+                                        subtitleTracks,
+                                        selectedSubtitleIndex,
+                                        seriesSignature = detail.effectiveSubtitleTrackSignature,
+                                        seriesOff = detail.effectiveSubtitleTrackSignature == null &&
+                                            detail.effectiveSubtitleMode.equals("off", ignoreCase = true),
+                                    ),
                                     onClick = { showSubtitlePicker = true },
                                     interactive = subtitleTracks.size > 1,
                                 )
@@ -214,7 +238,7 @@ fun MovieDetailContent(
                 },
             ) {
                 HeroActionStack(
-                    primaryLabel = computePlayLabel(detail),
+                    primaryLabel = computePlayLabel(resources, detail),
                     onPlay = onPlayClick,
                     onPlayFromBeginning = onPlayFromBeginning,
                     resumeStoppedAtLabel = resumeStoppedAtLabel,
@@ -228,7 +252,7 @@ fun MovieDetailContent(
                         { dismiss ->
                             if (onSeriesClick != null) {
                                 SiloDropdownMenuItem(
-                                    text = { Text("Go to Series") },
+                                    text = { Text(stringResource(CommonR.string.detail_goToSeries)) },
                                     onClick = {
                                         dismiss()
                                         onSeriesClick()
@@ -287,13 +311,11 @@ fun MovieDetailContent(
                         it.seasonNumber == selectedSeasonNumber
                     }
                     SectionHeader(
-                        title = selectedSeason?.let(::seriesSeasonSectionTitle) ?: if (
-                            selectedSeasonNumber == 0
-                        ) {
-                            "Specials Episodes"
-                        } else {
-                            "Season $selectedSeasonNumber Episodes"
-                        },
+                        title = selectedSeason?.let { seriesSeasonSectionTitle(resources, it) }
+                            ?: stringResource(
+                                CommonR.string.detail_seasonEpisodes,
+                                phoneSeasonNumberLabel(resources, selectedSeasonNumber),
+                            ),
                     )
                     SeasonEpisodePager(
                         seasons = seasons,
@@ -316,7 +338,7 @@ fun MovieDetailContent(
         if (detail.cast.isNotEmpty()) {
             item(contentType = "detail-cast") {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    SectionHeader(title = "Cast & Crew")
+                    SectionHeader(title = stringResource(CommonR.string.detail_cast))
                     CastCrewSection(
                         cast = detail.cast,
                         onPersonClick = onPersonClick,
@@ -332,20 +354,45 @@ fun MovieDetailContent(
             }
         }
 
-        item(contentType = "detail-facts") {
-            // Header renders inside DetailFactsList, gated on having facts.
-            DetailFactsList(detail = detail, runtimeMinutes = selectedRuntimeMinutes)
+        // A movie in a box set: its sibling films, between the trailers and
+        // More Like This.
+        if (boxSet != null && detail.type == "movie") {
+            item(contentType = "detail-box-set") {
+                BoxSetRail(
+                    boxSet = boxSet,
+                    currentContentId = detail.contentId,
+                    onOpenBoxSet = onOpenBoxSet,
+                    onMovieClick = onBoxSetMovieClick,
+                )
+            }
+        }
+
+        // The collections holding the movie, below the box set row (web).
+        if (collectionsRow != null) {
+            item(contentType = "detail-collections") {
+                ItemCollectionsRail(
+                    row = collectionsRow,
+                    onCollectionClick = onCollectionClick,
+                    onItemClick = onCollectionItemClick,
+                )
+            }
         }
 
         // Hide the similar rail on episode pages — viewers usually want
-        // the next episode, not a tangentially related title.
-        if (detail.type != "episode") {
+        // the next episode, not a tangentially related title. Skip it when
+        // empty so it leaves no extra gap above Details.
+        if (detail.type != "episode" && similarItems.isNotEmpty()) {
             item(contentType = "detail-similar") {
                 SimilarRail(
                     items = similarItems,
-                    onSelect = onItemDetailClick,
+                    onSelect = onSimilarItemClick,
                 )
             }
+        }
+
+        item(contentType = "detail-facts") {
+            // Header renders inside DetailFactsList, gated on having facts.
+            DetailFactsList(detail = detail, runtimeMinutes = selectedRuntimeMinutes)
         }
 
         item(contentType = "detail-spacer") {
@@ -401,17 +448,18 @@ internal fun DownloadCircleButton(
     onClick: () -> Unit,
     enabled: Boolean = true,
 ) {
+    val clickable = enabled && LocalDetailActionsReady.current
     val isInFlight = progress != null && !isDownloaded
     Box(
         modifier = Modifier
             .size(42.dp)
-            .alpha(if (enabled) 1f else 0.45f)
+            .alpha(if (clickable) 1f else DetailActionDisabledAlpha)
             .clip(CircleShape)
             .background(
                 if (isDownloaded) SiloDetailActionControlActive
                 else SiloDetailActionControl
             )
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(enabled = clickable, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (isInFlight) {
@@ -425,7 +473,9 @@ internal fun DownloadCircleButton(
         }
         Icon(
             imageVector = if (isDownloaded) Icons.Filled.Check else Icons.Filled.Download,
-            contentDescription = if (isDownloaded) "Downloaded" else "Download",
+            contentDescription = stringResource(
+                if (isDownloaded) CommonR.string.detail_downloaded else CommonR.string.detail_download,
+            ),
             tint = Color.White,
             modifier = Modifier.size(if (isDownloaded) 22.dp else 18.dp),
         )

@@ -2,67 +2,214 @@ package org.siloserver.silo.watchtogether
 
 import org.siloserver.silo.model.watchtogether.TransportAction
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
- * How a Watch Party client applies a room command's position. Ported from the
- * web reference client (`web/src/player/utils/roomSyncCatchup.ts`).
+ * The room position a member follows: the latest applied command for the
+ * current selection revision. Its [positionSeconds] is the room position at
+ * [executeAtServerMs]; while [playing] the room advances from there at 1x.
+ * Snapshots never replace it.
+ */
+data class RoomReference(
+    val positionSeconds: Double,
+    val executeAtServerMs: Long,
+    val playing: Boolean,
+) {
+    /** The room position at server time [serverNowMs]. */
+    fun positionAt(serverNowMs: Long): Double {
+        val elapsed = if (playing) (serverNowMs - executeAtServerMs).coerceAtLeast(0L) / 1000.0 else 0.0
+        return (positionSeconds + elapsed).coerceAtLeast(0.0)
+    }
+}
+
+/**
+ * How a Watch Party client keeps its playhead on the room, shared by every
+ * client (web, Apple, Android phone and TV).
  *
- * Small drift is absorbed with a temporary playback-rate nudge instead of a
- * seek, because on copy-remux deliveries a seek outside the downloaded window
- * rebuilds the whole stream. Every position the player can reach without new
- * media stays a seek. The rate is a correction, never a user speed: it is not
- * saved or shown, and it returns to exactly 1x.
+ * Drift is `room position - local position`: positive means this member is
+ * behind and speeds up. Drift a playing member can absorb is closed with a
+ * small temporary rate instead of a seek, because on copy-remux deliveries a
+ * seek outside the downloaded window rebuilds the whole stream. The rate is a
+ * correction, never a user speed: it is not saved or shown, and it returns to
+ * exactly 1x.
  */
 object RoomCatchup {
-    /** Drift within this band converges by rate instead of rebuilding the stream. */
-    const val BAND_SECONDS = 2.0
+    /** No correction starts below this drift. */
+    const val DEADBAND_SECONDS = 0.4
 
-    /** Playback already this close to the room needs no correction. */
-    const val DEADBAND_SECONDS = 0.35
-    const val MIN_RATE = 0.9
-    const val MAX_RATE = 1.25
+    /** An active rate nudge ends within this drift. */
+    const val SETTLE_SECONDS = 0.1
 
-    /** A 1 s deficit plays at 1.125x and converges in about 8 s; the band edge reaches the cap. */
-    private const val DIVISOR_SECONDS = 8.0
+    /** Only above this drift does a playing member seek. */
+    const val HARD_SEEK_SECONDS = 5.0
 
-    /** Rate for [driftSeconds] (room minus local), clamped to the correction bounds. */
-    fun rateFor(driftSeconds: Double): Double =
-        (1.0 + driftSeconds / DIVISOR_SECONDS).coerceIn(MIN_RATE, MAX_RATE)
+    /**
+     * The room host executes a command with a seek above this drift instead
+     * of [HARD_SEEK_SECONDS]. A released server takes a host report more than
+     * 2 s off the room as the host's decision and re-anchors everyone to it,
+     * so a host must not stay that far off while a nudge closes the gap.
+     */
+    const val HOST_COMMAND_SEEK_SECONDS = 2.0
+
+    /** Above this a non-playing member seeks, but only to a target reachable in place. */
+    const val PAUSED_SEEK_SECONDS = 1.0
+
+    const val RATE_MIN_DELTA = 0.01
+    const val RATE_MAX_DELTA = 0.04
+
+    /** The rate delta before clamping is `|drift| / RATE_GAIN_SECONDS`. */
+    const val RATE_GAIN_SECONDS = 25.0
+
+    /** Rates are quantized to this step so the player sees few distinct values. */
+    const val RATE_STEP = 0.005
+
+    /** The drift loop waits this long after a command finished. */
+    const val LOOP_SETTLE_MS = 1_000L
+
+    /** Drift loop cadence. */
+    const val LOOP_INTERVAL_MS = 500L
+
+    /**
+     * A rate-incapable mount aims its correction seeks at most this far ahead:
+     * the host band, so a host never lands far enough ahead that the server
+     * takes its report as a decision and moves the room.
+     */
+    const val FALLBACK_MAX_LEAD_SECONDS = HOST_COMMAND_SEEK_SECONDS
+
+    /** Correction seeks that keep missing back off up to this interval. */
+    const val FALLBACK_MAX_INTERVAL_MS = 16_000L
+
+    private const val STEPS_PER_UNIT = 200 // 1 / RATE_STEP
+
+    /**
+     * The nudge rate for [driftSeconds]:
+     * `1 + sign(d) * clamp(|d| / 25, 0.01, 0.04)`, quantized to 0.005.
+     * Zero or non-finite drift is exactly 1x.
+     */
+    fun rateFor(driftSeconds: Double): Double {
+        if (!driftSeconds.isFinite() || driftSeconds == 0.0) return 1.0
+        val delta = (abs(driftSeconds) / RATE_GAIN_SECONDS).coerceIn(RATE_MIN_DELTA, RATE_MAX_DELTA)
+        val steps = (delta * STEPS_PER_UNIT).roundToInt()
+        val signed = if (driftSeconds > 0.0) steps else -steps
+        return (STEPS_PER_UNIT + signed).toDouble() / STEPS_PER_UNIT
+    }
 
     sealed interface Decision {
+        /** Seek to the target now, whatever it costs. */
         data object Seek : Decision
-        data class Rate(val rate: Double) : Decision
+
+        /** Seek in place when the target is buffered; otherwise a budgeted reload. */
+        data object SeekOrReload : Decision
+
+        /** Close the drift with a temporary [rate]; no seek. */
+        data class Nudge(val rate: Double) : Decision
+
+        /** Leave the position alone. */
         data object None : Decision
     }
 
     /**
-     * Decide how to reach [targetSeconds] from [localSeconds] for a command of
-     * [action]. [targetReachableLocally] is true when the player can take the
-     * target without loading new media.
+     * How to apply a command at its execution moment. [driftSeconds] is the
+     * projected room position minus the local position, measured then.
+     *
+     * - [memberPlaying]: this player is actually advancing.
+     * - [memberIntendsToPlay]: this player wants to play but may not be
+     *   advancing yet (buffering, or a seek or mount in flight).
+     * - [commandPlays]: the command leaves the room playing.
+     * - [targetReachableInPlace]: the player can take the target without
+     *   rebuilding its stream.
+     * - [rateCapable]: this mount honours a playback rate. A tunneled or
+     *   passthrough audio path plays on at 1x, so a nudge there becomes a
+     *   seek beyond [PAUSED_SEEK_SECONDS]: in place when the target is
+     *   reachable, otherwise through the reload budget.
+     * - [host]: this member is the room host, which seeks above
+     *   [HOST_COMMAND_SEEK_SECONDS] instead of [HARD_SEEK_SECONDS].
      */
-    fun decide(
+    fun decideCommand(
         action: TransportAction,
-        targetSeconds: Double,
-        localSeconds: Double,
-        targetReachableLocally: Boolean,
+        driftSeconds: Double,
+        memberPlaying: Boolean,
+        commandPlays: Boolean,
+        targetReachableInPlace: Boolean,
+        memberIntendsToPlay: Boolean = memberPlaying,
+        rateCapable: Boolean = true,
+        host: Boolean = false,
     ): Decision {
+        // A seek is a room barrier: everyone lands on the same frame.
         if (action == TransportAction.Seek) return Decision.Seek
-        val drift = targetSeconds - localSeconds
-        if (abs(drift) <= DEADBAND_SECONDS) return Decision.None
-        if (targetReachableLocally) return Decision.Seek
-        // Pausing is cheap and the next Play realigns; never rebuild a stream
-        // just to park a paused member at the anchor.
-        if (action == TransportAction.Pause) return Decision.None
-        if (abs(drift) > BAND_SECONDS) return Decision.Seek
-        return Decision.Rate(rateFor(drift))
+        val drift = abs(driftSeconds)
+        val hardSeek = if (host) HOST_COMMAND_SEEK_SECONDS else HARD_SEEK_SECONDS
+        val inPlaceSeek = drift > PAUSED_SEEK_SECONDS && targetReachableInPlace
+        if (action == TransportAction.Play && commandPlays && memberPlaying) {
+            return when {
+                drift <= DEADBAND_SECONDS -> Decision.None
+                drift > hardSeek -> Decision.SeekOrReload
+                rateCapable -> Decision.Nudge(rateFor(driftSeconds))
+                inPlaceSeek -> Decision.Seek
+                // A mount that cannot nudge or seek in place would never
+                // converge; the reload budget paces the rebuild.
+                drift > PAUSED_SEEK_SECONDS -> Decision.SeekOrReload
+                else -> Decision.None
+            }
+        }
+        // Wants to play but is not advancing yet: a large gap still goes
+        // through the reload budget, never an unpaced stream rebuild.
+        if (action == TransportAction.Play && commandPlays && memberIntendsToPlay) {
+            return when {
+                drift > hardSeek -> Decision.SeekOrReload
+                inPlaceSeek -> Decision.Seek
+                else -> Decision.None
+            }
+        }
+        // Pause, or a play this member starts from rest: the loop corrects
+        // any residual once playing, so only a large or cheap gap is a seek.
+        return if (drift > hardSeek || inPlaceSeek) Decision.Seek else Decision.None
     }
 
-    /** The room position at [nowMs] for a target that starts advancing at 1x from [executeAtMs]. */
-    fun expectedPosition(targetSeconds: Double, executeAtMs: Long, nowMs: Long): Double =
-        (targetSeconds + (nowMs - executeAtMs).coerceAtLeast(0L) / 1000.0).coerceAtLeast(0.0)
+    /** How the next correction seek on a rate-incapable mount is aimed and spaced. */
+    data class FallbackStep(val leadSeconds: Double, val intervalMs: Long)
 
-    fun converged(targetSeconds: Double, executeAtMs: Long, localSeconds: Double, nowMs: Long): Boolean =
-        abs(expectedPosition(targetSeconds, executeAtMs, nowMs) - localSeconds) <= DEADBAND_SECONDS
+    /**
+     * After a correction seek on a rate-incapable mount has landed: the room
+     * kept playing while it travelled, so [driftSeconds] measured now is the
+     * shortfall the seek left. The next seek aims ahead by the lead so far
+     * plus that shortfall (never behind, at most [FALLBACK_MAX_LEAD_SECONDS]).
+     * A seek that left more than [PAUSED_SEEK_SECONDS] doubles the interval
+     * before the next one, up to [FALLBACK_MAX_INTERVAL_MS]; one that
+     * converged resets it to [LOOP_SETTLE_MS].
+     */
+    fun fallbackAfterSeek(leadSeconds: Double, intervalMs: Long, driftSeconds: Double): FallbackStep {
+        if (!driftSeconds.isFinite()) return FallbackStep(leadSeconds, intervalMs)
+        val lead = (leadSeconds + driftSeconds).coerceIn(0.0, FALLBACK_MAX_LEAD_SECONDS)
+        val interval = if (abs(driftSeconds) <= PAUSED_SEEK_SECONDS) {
+            LOOP_SETTLE_MS
+        } else {
+            (intervalMs * 2).coerceAtMost(FALLBACK_MAX_INTERVAL_MS)
+        }
+        return FallbackStep(lead, interval)
+    }
+
+    /**
+     * The continuous drift loop's step for [driftSeconds]: [Decision.Nudge]
+     * at a rate, [Decision.None] for exactly 1x, or [Decision.Seek] on a
+     * mount that cannot change rate. A running nudge ([nudging]) continues
+     * until within [SETTLE_SECONDS]; a new one starts only beyond
+     * [DEADBAND_SECONDS]. Without [rateCapable] the loop seeks in place
+     * beyond [PAUSED_SEEK_SECONDS] and never rebuilds the stream.
+     */
+    fun loopDecision(
+        driftSeconds: Double,
+        nudging: Boolean,
+        rateCapable: Boolean = true,
+        targetReachableInPlace: Boolean = false,
+    ): Decision {
+        val drift = abs(driftSeconds)
+        if (!rateCapable) {
+            return if (drift > PAUSED_SEEK_SECONDS && targetReachableInPlace) Decision.Seek else Decision.None
+        }
+        val correct = if (nudging) drift > SETTLE_SECONDS else drift > DEADBAND_SECONDS
+        return if (correct) Decision.Nudge(rateFor(driftSeconds)) else Decision.None
+    }
 }
 
 /**
@@ -89,6 +236,9 @@ class RoomReloadBudget(
     private var leadSeconds = 0.0
 
     val inFlight: Boolean get() = targetSeconds != null
+
+    /** A reload that has not landed within the stale interval; treat it as finished. */
+    fun stale(nowMs: Long): Boolean = targetSeconds != null && nowMs - startedAtMs >= staleMs
 
     fun allowed(nowMs: Long): Boolean =
         if (targetSeconds != null) nowMs - startedAtMs >= staleMs else nowMs >= nextAllowedAtMs
@@ -117,7 +267,7 @@ class RoomReloadBudget(
         val target = targetSeconds ?: return false
         if (!loadStarted) return false
         val offset = localSeconds - target
-        return offset >= -RoomCatchup.DEADBAND_SECONDS && offset <= RoomCatchup.BAND_SECONDS
+        return offset >= -RoomCatchup.DEADBAND_SECONDS && offset <= LANDED_AHEAD_SECONDS
     }
 
     /** The reload is playing: remember its load time and space the next one. */
@@ -134,6 +284,18 @@ class RoomReloadBudget(
         nextAllowedAtMs = nowMs + backoffMs()
     }
 
+    /**
+     * The reload went stale without landing: it is over, and a replacement
+     * may start at once. Unlike [abandon] this adds no backoff, so a viewer
+     * left behind by a load that never arrived is not held back further.
+     * The attempt count stands, so later backoffs keep growing.
+     */
+    fun expire(nowMs: Long) {
+        targetSeconds = null
+        loadStarted = false
+        nextAllowedAtMs = nowMs
+    }
+
     /** The viewer reached the room: the next drift starts a fresh backoff. */
     fun settle() {
         attempts = 0
@@ -147,6 +309,11 @@ class RoomReloadBudget(
         attempts = 0
         nextAllowedAtMs = 0L
         leadSeconds = 0.0
+    }
+
+    private companion object {
+        /** A reload counts as landed while playback is at most this far past its target. */
+        const val LANDED_AHEAD_SECONDS = 2.0
     }
 
     private fun backoffMs(): Long {

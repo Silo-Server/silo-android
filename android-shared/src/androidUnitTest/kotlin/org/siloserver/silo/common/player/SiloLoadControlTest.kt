@@ -327,4 +327,50 @@ class SiloLoadControlTest {
             )
         }
     }
+
+    // A 91 Mbps Dolby Vision remux with DTS-HD passthrough on a Shield: the
+    // halved byte target stopped loading before the 2.25 MB AudioTrack was
+    // full, so audio never started and the position never moved.
+    @Test
+    fun `a playing player whose position does not move is stalled after the grace period`() {
+        val guard = StalledStartLoadGuard(stallMs = 1_000L)
+
+        assertFalse(guard.isStalled(nowMs = 0L, isPlaying = true, playbackPositionUs = 0L))
+        assertFalse(guard.isStalled(nowMs = 999L, isPlaying = true, playbackPositionUs = 0L))
+        assertTrue(guard.isStalled(nowMs = 1_000L, isPlaying = true, playbackPositionUs = 0L))
+    }
+
+    @Test
+    fun `moving playback restarts the stall clock`() {
+        val guard = StalledStartLoadGuard(stallMs = 1_000L)
+        guard.isStalled(nowMs = 0L, isPlaying = true, playbackPositionUs = 0L)
+        assertTrue(guard.isStalled(nowMs = 1_000L, isPlaying = true, playbackPositionUs = 0L))
+
+        assertFalse(guard.isStalled(nowMs = 1_010L, isPlaying = true, playbackPositionUs = 10_000L))
+        assertFalse(guard.isStalled(nowMs = 1_900L, isPlaying = true, playbackPositionUs = 10_000L))
+    }
+
+    @Test
+    fun `a player that is not playing is never stalled`() {
+        // Paused, buffering and audio-focus suppression all report isPlaying=false.
+        val guard = StalledStartLoadGuard(stallMs = 1_000L)
+        guard.isStalled(nowMs = 0L, isPlaying = false, playbackPositionUs = 0L)
+        assertFalse(guard.isStalled(nowMs = 60_000L, isPlaying = false, playbackPositionUs = 0L))
+
+        assertFalse(
+            "the stall clock starts when playing starts, not before",
+            guard.isStalled(nowMs = 60_001L, isPlaying = true, playbackPositionUs = 0L),
+        )
+    }
+
+    @Test
+    fun `a stalled start extends only halfway from the target to the device budget`() {
+        val mib = 1024 * 1024
+        assertEquals(72 * mib, stalledStartCeilingBytes(targetBytes = 48 * mib, budgetBytes = 96 * mib))
+        assertEquals(
+            "a route already at the full budget gets no extension",
+            96 * mib,
+            stalledStartCeilingBytes(targetBytes = 96 * mib, budgetBytes = 96 * mib),
+        )
+    }
 }

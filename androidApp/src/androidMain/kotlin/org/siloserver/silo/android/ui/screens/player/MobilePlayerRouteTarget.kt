@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.model.playback.SubtitleIdentity
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
 import org.siloserver.silo.playback.resolveCatalogSubtitlePreferenceOrdinal
 
@@ -162,7 +163,7 @@ internal class MobilePlayerRouteIntentState {
         pendingSubtitleSelection
             ?.takeIf { it.contentId == contentId }
             ?.let { pending ->
-                if (pending.identity == committedSubtitleIdentity) {
+                if (pending.identity.playsAs(committedSubtitleIdentity)) {
                     current
                         ?.takeIf { it.contentId == contentId }
                         ?.let { intent ->

@@ -1,3 +1,7 @@
+import java.util.Properties
+import com.android.build.api.variant.HasHostTestsBuilder
+import com.android.build.api.variant.HostTestBuilder
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.multiplatform)
@@ -14,19 +18,28 @@ if (file("google-services.json").isFile) {
     apply(plugin = "com.google.gms.google-services")
 }
 
-// Play's own track vocabulary, plus the two ways a build reaches a device
-// without Play. Validated so a typo can't reach the server as a header value.
-val siloReleaseChannels = listOf("internal", "alpha", "beta", "production", "sideload", "dev")
+// The languages this app ships: the ones the generated catalog has
+// translations for (scripts/sync-translations writes the list). Packaging only
+// those also keeps library translations (Media3, AppCompat) out of an app
+// whose own text is English, and keeps generateLocaleConfig to the same list.
+val siloLocaleFilters = Properties()
+    .apply { rootProject.file("android-shared/silo-locales.properties").reader().use(::load) }
+    .getProperty("phone").orEmpty().split(',').map(String::trim).filter(String::isNotEmpty)
+
+// How a build reaches a device: Google Play, an APK from a GitHub release, or a
+// local debug build. Validated so a typo can't reach the server as a header value.
+val siloReleaseChannels = listOf("release", "sideload", "dev")
 
 val siloVersionName = providers
     .gradleProperty("siloVersionName")
     .orElse(providers.environmentVariable("SILO_VERSION_NAME"))
-    // Release builds override this from the validated Git tag in
-    // android-build.yml. Keep local/dev builds aligned with the latest release.
-    .orElse("0.3.11")
+    // Release builds get the store version from scripts/release-version.py
+    // (release.yml). Local builds are 0.0.0 so they never pass for a release.
+    .orElse("0.0.0")
 
-// The per-marketing-version build counter (TestFlight-style). It is folded into
-// the versionCode by CI, but the app also reports it verbatim to the server
+// The build number: one counter for the repository, never reset (see
+// scripts/release-version.py). It is folded into the versionCode by CI, but the
+// app also reports it verbatim to the server
 // (X-Silo-Client-Build) and shows it on the About row, so it has to survive as
 // its own value rather than being reverse-engineered from the versionCode.
 val siloBuildNumber = providers
@@ -34,9 +47,9 @@ val siloBuildNumber = providers
     .orElse(providers.environmentVariable("SILO_BUILD_NUMBER"))
     .map { value ->
         val build = value.toIntOrNull() ?: error("siloBuildNumber must be an integer.")
-        // The same 0..999 window release.yml and the Fastfile enforce, so a
-        // hand-run build can't stamp a counter the release scheme could never
-        // produce. 0 is the unstamped local default; CI itself requires 1..999.
+        // The same window scripts/release-version.py enforces, so a hand-run
+        // build can't stamp a counter the release scheme could never produce.
+        // 0 is the unstamped local default; releases use 1..999.
         require(build in 0..999) {
             "siloBuildNumber must be between 0 and 999 (0 marks an unstamped local build)."
         }
@@ -45,11 +58,10 @@ val siloBuildNumber = providers
     // Local/dev builds have no CI build number; 0 marks "not a release build".
     .orElse("0")
 
-// How the artifact reaches a user, reported as X-Silo-Client-Channel. Release
-// pipelines state it: the Fastfile passes the Play track it is actually
-// uploading to, so a beta-track tester and a production user are told apart
-// rather than both reporting "release". Everything else is a hand-built or
-// sideloaded artifact, which is not on any track.
+// How the artifact reaches a user, reported as X-Silo-Client-Channel: release.yml
+// stamps "release" on the Google Play bundles and "sideload" on the APKs. Play
+// builds don't name their track, because a store release promotes the tested
+// beta build to production without rebuilding it. Matches silo-apple's channels.
 val siloReleaseChannel = providers
     .gradleProperty("siloReleaseChannel")
     .orElse(providers.environmentVariable("SILO_RELEASE_CHANNEL"))
@@ -76,9 +88,9 @@ val siloVersionCode = providers
         }
         code
     }
-    // Bump this per release. base -> phone = base*2, TV = base*2+1. base 6 was
-    // the 12/13 build; base 7 -> phone 14, TV 15.
-    .orElse(7)
+    // Release builds get the base code from scripts/release-version.py
+    // (release.yml); phone = base*2, TV = base*2+1. Local builds use base 1.
+    .orElse(1)
 
 // APK ABI splits (below) are incompatible with the App Bundle build:
 // PerModuleBundleTask.getResourcesFile() expects a single processed-resources
@@ -175,6 +187,8 @@ kotlin {
             // runtime + ApplicationProvider aren't transitive — add them here.
             implementation(libs.androidx.room.runtime)
             implementation(libs.androidx.test.core)
+            // CatalogGridLoadMoreTest composes the grid under Robolectric.
+            implementation(libs.compose.ui.test.junit4)
         }
     }
 }
@@ -209,6 +223,12 @@ android {
         // flavor wiring.
         buildConfigField("boolean", "FFMPEG_AUDIO_ENABLED", "true")
     }
+    // Lists the shipped languages in the system per-app language screen
+    // (Settings → Apps → Silo → Language). Reads res/resources.properties.
+    androidResources {
+        generateLocaleConfig = true
+        localeFilters += siloLocaleFilters
+    }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -234,6 +254,8 @@ android {
     }
     buildTypes {
         debug {
+            // en-XA (accented, longer) and ar-XB (mirrored) for layout checks.
+            isPseudoLocalesEnabled = true
             buildConfigField("String", "RELEASE_CHANNEL", "\"dev\"")
         }
         release {
@@ -265,6 +287,12 @@ android {
     bundle {
         abi {
             enableSplit = true
+        }
+        // Every shipped language stays in the base split: the app applies a
+        // profile's language itself, and before Android 13 nothing would
+        // download a language split the device's own languages didn't need.
+        language {
+            enableSplit = false
         }
     }
     // Per-ABI APKs for sideload QA (one per arch + a universal). Matches
@@ -314,14 +342,33 @@ android {
         // Without this, none of android-shared is examined.
         checkDependencies = true
         baseline = file("lint-baseline.xml")
+        lintConfig = rootProject.file("lint.xml")
         abortOnError = true
         fatal += setOf("NewApi", "InlinedApi")
+        // Translations arrive per language and may lag English; a missing
+        // one falls back to English at runtime by design.
+        disable += "MissingTranslation"
         checkReleaseBuilds = true
+    }
+}
+
+// The Compose UI tests need the test ComponentActivity in the merged manifest,
+// and that dependency is debug-only so it never reaches the release APK. Those
+// tests cannot run against the release variant, and unit tests are not
+// minified, so release runs no different code: run unit tests on debug only,
+// as androidTvApp does.
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { variant ->
+        (variant as HasHostTestsBuilder)
+            .hostTests[HostTestBuilder.UNIT_TEST_TYPE]
+            ?.enable = false
     }
 }
 
 dependencies {
     coreLibraryDesugaring(libs.desugar.jdk.libs)
+    // Registers the host activity createComposeRule() launches in unit tests.
+    debugImplementation(libs.compose.ui.test.manifest)
     // The generated Baseline Profile artifact (see :baselineprofile).
     baselineProfile(project(":baselineprofile"))
 }

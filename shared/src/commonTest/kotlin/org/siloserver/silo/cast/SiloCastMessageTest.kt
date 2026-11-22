@@ -5,8 +5,10 @@ import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * Wire-parity tests against silo-apple's SiloControlMessage encoder
@@ -75,7 +77,8 @@ class SiloCastMessageTest {
                     "fileId":7,
                     "audioTrackIndex":1,
                     "startFromBeginning":false,
-                    "resumePosition":120.5
+                    "resumePosition":120.5,
+                    "pinsVersion":true
                 }
             }}
             """,
@@ -89,6 +92,7 @@ class SiloCastMessageTest {
                         subtitleTrackIndex = null,
                         startFromBeginning = false,
                         resumePosition = 120.5,
+                        pinsVersion = true,
                     ),
                 ),
             ),
@@ -124,6 +128,7 @@ class SiloCastMessageTest {
             """{"type":"launch","v":2,"launch":{"serverId":"srv-1","playback":{"contentId":"movie-42","startFromBeginning":true}}}""",
         )
         assertNull(assertIs<SiloCastMessage.Launch>(decoded).launch.playback.libraryId)
+        assertNull(assertIs<SiloCastMessage.Launch>(decoded).launch.playback.pinsVersion)
     }
 
     @Test
@@ -206,6 +211,33 @@ class SiloCastMessageTest {
     }
 
     @Test
+    fun stateCarriesPosterAndOverviewOnlyWhenKnown() {
+        val frame = { extra: String ->
+            """
+            {"type":"state","v":2,"state":{
+                "title":"Movie","isPlaying":true,"isLoading":false,"isBuffering":false,
+                "currentTime":1.0,"duration":2.0,"audioTracks":[],"subtitleTracks":[],
+                "qualityOptions":[],"activeQualityId":"auto","isQualitySwitching":false,
+                "playbackSpeed":1.0,"videoGravity":"fit","hdrEnabled":false,
+                "supportsVideoGravity":true,"supportsHDRToggle":false,$extra
+                "volume":1.0,"isMuted":false,"hasNextEpisode":false
+            }}
+            """
+        }
+        // A TV that predates the fields.
+        val old = assertIs<SiloCastMessage.State>(json.decodeFromString(SiloCastMessage.serializer(), frame(""))).state
+        assertNull(old.posterUrl)
+        assertNull(old.overview)
+        assertFalse("posterUrl" in json.encodeToString(SiloCastMessage.serializer(), SiloCastMessage.State(state = old)))
+
+        val withArt = old.copy(posterUrl = "https://silo.example/p.webp?exp=1&sig=x", overview = "Plot")
+        assertWireEquals(
+            frame(""""posterUrl":"https://silo.example/p.webp?exp=1&sig=x","overview":"Plot","""),
+            SiloCastMessage.State(state = withArt),
+        )
+    }
+
+    @Test
     fun errorMatchesAppleShape() {
         assertWireEquals(
             """{"type":"error","v":2,"error":{"code":"server_mismatch","message":"wrong server"}}""",
@@ -264,9 +296,174 @@ class SiloCastMessageTest {
         assertEquals(
             setOf(
                 "hello", "handoff_offer", "handoff_challenge", "handoff_ready", "handoff_cancel",
-                "launch", "control", "state", "error", "ping", "pong", "close",
+                "launch", "control", "state", "error", "presence", "ping", "pong", "close",
             ),
             SiloCastMessage.knownTypes,
         )
+    }
+
+    // Several controllers on one TV (silo-apple SiloControlMultiControllerTests).
+
+    @Test
+    fun phoneHelloCarriesFeaturesPassiveAndIdentity() {
+        assertWireEquals(
+            """
+            {"type":"hello","v":2,"hello":{
+                "role":"phone","deviceName":"Pixel 9","deviceId":"android-abc",
+                "serverId":"srv-1","serverName":"Home","supportedVersions":[2],
+                "serverIdentity":"deploy-1",
+                "features":["close_reason","resume_token","replace_confirmation"],
+                "passive":true
+            }}
+            """,
+            SiloCastMessage.Hello(
+                SiloCastHello(
+                    role = SiloCastPeerRole.Phone,
+                    deviceName = "Pixel 9",
+                    deviceId = "android-abc",
+                    serverId = "srv-1",
+                    serverName = "Home",
+                    supportedVersions = SiloCastProtocol.supportedVersions,
+                    serverIdentity = "deploy-1",
+                    features = SiloCastFeature.phoneFeatures,
+                    passive = true,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun decodesAppleMultiControllerTvHello() {
+        val hello = assertIs<SiloCastMessage.Hello>(
+            json.decodeFromString(
+                SiloCastMessage.serializer(),
+                """{"type":"hello","v":2,"hello":{"role":"tv","deviceName":"Den","deviceId":"atv-1",""" +
+                    """"serverId":"srv-1","serverName":"Home","supportedVersions":[1,2],"serverIdentity":"deploy-1",""" +
+                    """"features":["multi_controller","close_reason","resume_token","replace_confirmation","presence"]}}""",
+            ),
+        ).hello
+        assertTrue(hello.supports(SiloCastFeature.MultiController))
+        assertTrue(hello.supports(SiloCastFeature.Presence))
+        assertEquals("deploy-1", hello.serverIdentity)
+        // An older TV lists nothing.
+        assertFalse(SiloCastHello(SiloCastPeerRole.Tv, "Old", "atv-0", supportedVersions = listOf(2)).supports(SiloCastFeature.MultiController))
+    }
+
+    @Test
+    fun closeCarriesAReasonOnlyWhenGiven() {
+        assertWireEquals(
+            """{"type":"close","v":2,"close":{"reason":"replaced"}}""",
+            SiloCastMessage.Close.withReason(SiloCastCloseReason.Replaced),
+        )
+        assertWireEquals("""{"type":"close","v":2}""", SiloCastMessage.Close.withReason(null))
+        fun reason(frame: String) = assertIs<SiloCastMessage.Close>(SiloCastMessage.decodeOrNull(json, frame)).reason
+        assertEquals("tv_disconnected", reason("""{"type":"close","v":2,"close":{"reason":"tv_disconnected"}}"""))
+        assertNull(reason("""{"type":"close","v":2}"""))
+        // A malformed payload is no reason, never a broken frame (Apple decodes it with try?).
+        assertNull(reason("""{"type":"close","v":2,"close":{"reason":5}}"""))
+        assertNull(reason("""{"type":"close","v":2,"close":"replaced"}"""))
+    }
+
+    @Test
+    fun presenceMatchesApple() {
+        assertWireEquals(
+            """{"type":"presence","v":2,"presence":{"passive":false}}""",
+            SiloCastMessage.Presence(SiloCastPresence(passive = false)),
+        )
+    }
+
+    @Test
+    fun offerCarriesIdentityResumeTokenAndConsent() {
+        assertWireEquals(
+            """{"type":"handoff_offer","v":2,"handoffOffer":{"requestId":"req-2","serverId":"srv-1",""" +
+                """"serverURL":"https://silo.example","profileId":"p","profileName":"Alex","serverIdentity":"deploy-1",""" +
+                """"resumeToken":"tok","replaceConfirmed":true,"replacingContentId":"oak"}}""",
+            SiloCastMessage.HandoffOffer(
+                SiloCastHandoffOffer(
+                    requestId = "req-2",
+                    serverId = "srv-1",
+                    serverURL = "https://silo.example",
+                    profileId = "p",
+                    profileName = "Alex",
+                    serverIdentity = "deploy-1",
+                    resumeToken = "tok",
+                    replaceConfirmed = true,
+                    replacingContentId = "oak",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun offerCarriesTheServersOtherAddresses() {
+        assertWireEquals(
+            """{"type":"handoff_offer","v":2,"handoffOffer":{"requestId":"req-3","serverId":"srv-1",""" +
+                """"serverURL":"https://silo.example","profileId":"p","serverIdentity":"deploy-1",""" +
+                """"serverEndpoints":[{"url":"https://silo.example","kind":"public"},""" +
+                """{"url":"https://silo.tail.ts.net","kind":"provider","provider":"tailscale","displayName":"Tailscale"}]}}""",
+            SiloCastMessage.HandoffOffer(
+                SiloCastHandoffOffer(
+                    requestId = "req-3",
+                    serverId = "srv-1",
+                    serverURL = "https://silo.example",
+                    profileId = "p",
+                    serverIdentity = "deploy-1",
+                    serverEndpoints = listOf(
+                        SiloCastServerEndpoint(url = "https://silo.example", kind = "public"),
+                        SiloCastServerEndpoint(
+                            url = "https://silo.tail.ts.net",
+                            kind = "provider",
+                            provider = "tailscale",
+                            displayName = "Tailscale",
+                        ),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun decodesAppleReadyWithResumeTokenAndCancelWithNowPlaying() {
+        val ready = assertIs<SiloCastMessage.HandoffReady>(
+            json.decodeFromString(
+                SiloCastMessage.serializer(),
+                """{"type":"handoff_ready","v":2,"handoffReady":{"requestId":"r","serverId":"s","profileId":"p",""" +
+                    """"sessionExpiresAt":"2099-01-01T00:00:00Z","reused":true,"resumeToken":"tok"}}""",
+            ),
+        ).handoffReady
+        assertEquals("tok", ready.resumeToken)
+
+        val cancel = assertIs<SiloCastMessage.HandoffCancel>(
+            json.decodeFromString(
+                SiloCastMessage.serializer(),
+                """{"type":"handoff_cancel","v":2,"handoffCancel":{"requestId":"r","reason":"replace_confirmation_required",""" +
+                    """"message":"Alex is watching Oak Street on this TV.","nowPlaying":{"contentId":"oak","title":"Oak Street",""" +
+                    """"profileName":"Alex","controllerName":"Sam's iPhone"}}}""",
+            ),
+        ).handoffCancel
+        assertEquals(SiloCastHandoffCancelReason.ReplaceConfirmationRequired, cancel.reason)
+        assertEquals(
+            SiloCastNowPlayingSummary(contentId = "oak", title = "Oak Street", profileName = "Alex", controllerName = "Sam's iPhone"),
+            cancel.nowPlaying,
+        )
+    }
+
+    @Test
+    fun featureAndReasonNamesMatchApple() {
+        assertEquals(
+            listOf("multi_controller", "close_reason", "resume_token", "replace_confirmation", "presence"),
+            SiloCastFeature.receiverFeatures,
+        )
+        assertEquals(listOf("close_reason", "resume_token", "replace_confirmation"), SiloCastFeature.phoneFeatures)
+        assertEquals(
+            listOf("replaced", "tv_disconnected", "too_many_controllers", "timeout", "unauthorized", "launch_timeout"),
+            listOf(
+                SiloCastCloseReason.Replaced, SiloCastCloseReason.TvDisconnected, SiloCastCloseReason.TooManyControllers,
+                SiloCastCloseReason.Timeout, SiloCastCloseReason.Unauthorized, SiloCastCloseReason.LaunchTimeout,
+            ),
+        )
+        assertEquals("superseded", SiloCastHandoffCancelReason.Superseded)
+        assertEquals("replace_confirmation_required", SiloCastHandoffCancelReason.ReplaceConfirmationRequired)
+        assertEquals("integration", SiloCastClientKind.Integration)
     }
 }

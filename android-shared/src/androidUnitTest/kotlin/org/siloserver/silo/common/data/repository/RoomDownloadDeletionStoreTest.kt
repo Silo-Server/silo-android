@@ -26,13 +26,13 @@ class RoomDownloadDeletionStoreTest {
 
     @Test
     fun `enqueue then read back by scope and globally`() = runTest {
-        store.enqueue("srv1", "profA", "dl-1", mediaFileId = 7)
-        store.enqueue("srv1", "profA", "dl-2", mediaFileId = null)
-        store.enqueue("srv2", "profB", "dl-3", mediaFileId = 9)
+        store.enqueue("srv1", "acct", "profA", "dl-1", mediaFileId = 7)
+        store.enqueue("srv1", "acct", "profA", "dl-2", mediaFileId = null)
+        store.enqueue("srv2", "acct", "profB", "dl-3", mediaFileId = 9)
 
         assertEquals(setOf("dl-1", "dl-2", "dl-3"), store.allPendingRecordIds())
 
-        val scoped = store.pendingForScope("srv1", "profA")
+        val scoped = store.pendingForScope("srv1", "acct", "profA")
         assertEquals(setOf("dl-1", "dl-2"), scoped.map { it.recordId }.toSet())
         assertEquals(7, scoped.first { it.recordId == "dl-1" }.mediaFileId)
         assertEquals(null, scoped.first { it.recordId == "dl-2" }.mediaFileId)
@@ -40,22 +40,22 @@ class RoomDownloadDeletionStoreTest {
 
     @Test
     fun `remove drops only the targeted scoped tombstone`() = runTest {
-        store.enqueue("srv1", "profA", "dl-1", 1)
-        store.enqueue("srv2", "profB", "dl-1", 1) // same recordId, different scope
+        store.enqueue("srv1", "acct", "profA", "dl-1", 1)
+        store.enqueue("srv2", "acct", "profB", "dl-1", 1) // same recordId, different scope
 
-        store.remove("srv1", "profA", "dl-1")
+        store.remove("srv1", "acct", "profA", "dl-1")
 
         assertEquals(setOf("dl-1"), store.allPendingRecordIds())
-        assertEquals(emptyList(), store.pendingForScope("srv1", "profA"))
-        assertEquals(listOf("dl-1"), store.pendingForScope("srv2", "profB").map { it.recordId })
+        assertEquals(emptyList(), store.pendingForScope("srv1", "acct", "profA"))
+        assertEquals(listOf("dl-1"), store.pendingForScope("srv2", "acct", "profB").map { it.recordId })
     }
 
     @Test
     fun `enqueue upserts on the scoped key`() = runTest {
-        store.enqueue("srv1", "profA", "dl-1", mediaFileId = 7)
-        store.enqueue("srv1", "profA", "dl-1", mediaFileId = 8)
+        store.enqueue("srv1", "acct", "profA", "dl-1", mediaFileId = 7)
+        store.enqueue("srv1", "acct", "profA", "dl-1", mediaFileId = 8)
 
-        val scoped = store.pendingForScope("srv1", "profA")
+        val scoped = store.pendingForScope("srv1", "acct", "profA")
         assertEquals(1, scoped.size)
         assertEquals(8, scoped.single().mediaFileId)
     }

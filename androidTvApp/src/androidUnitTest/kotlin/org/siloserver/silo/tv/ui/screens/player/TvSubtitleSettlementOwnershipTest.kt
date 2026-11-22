@@ -158,8 +158,9 @@ class TvSubtitleSettlementOwnershipTest {
         runCurrent()
 
         assertTrue(invalidation.await())
+        // The quality pick merged with the output change is a quality change.
         harness.assertRollbackBeforeStage(
-            nextClassification = "output_route_changed",
+            nextClassification = "quality_changed",
             nextSubtitleIndex = 5,
             outputRouteGeneration = 9,
             qualityPreference = "720p",

@@ -53,6 +53,37 @@ class NativeEmbeddedSubtitleProtocolTest {
         )))
     }
 
+    @Test fun matroskaBitmapTracksArePlayableUnderEveryServerAlias() {
+        fun mkv(codec: String, delivery: String = "sidecar", url: String? = "/subtitle.sup") = plan.copy(
+            source = PlaybackSourceDescriptorV3(container = "mkv"),
+            subtitle = plan.subtitle.copy(inventory = listOf(track.copy(codec = codec, delivery = delivery, url = url))),
+        )
+        listOf("hdmv_pgs_subtitle", "pgs", "pgssub").forEach { codec ->
+            assertIs<PlaybackV3Validation.Playable>(validate(mkv(codec)), codec)
+        }
+        // VobSub and DVB rows are burn_in_only in the inventory: the server has
+        // no sidecar for them, so the native plan is the only client route.
+        listOf("dvd_subtitle", "dvdsub", "vobsub", "dvb_subtitle", "dvbsub").forEach { codec ->
+            assertIs<PlaybackV3Validation.Playable>(validate(mkv(codec, delivery = "burn_in_only", url = null)), codec)
+        }
+        listOf("hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle").forEach { codec ->
+            val mp4 = plan.copy(subtitle = plan.subtitle.copy(inventory = listOf(track.copy(codec = codec))))
+            assertEquals(
+                SUBTITLE_EMBEDDED_FAILED_CLASSIFICATION,
+                assertIs<PlaybackV3Validation.ReplanRequired>(validate(mp4), codec).reason,
+            )
+        }
+        assertIs<PlaybackV3Validation.ReplanRequired>(validate(mkv("dvb_teletext", delivery = "burn_in_only", url = null)))
+    }
+
+    @Test fun matroskaAdvertisesEveryBitmapFamilyMedia3Demuxes() {
+        assertEquals(
+            listOf("subrip", "ass", "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"),
+            NATIVE_EMBEDDED_SUBTITLE_CODECS.getValue("mkv"),
+        )
+        assertEquals(listOf("mov_text"), NATIVE_EMBEDDED_SUBTITLE_CODECS.getValue("mp4"))
+    }
+
     @Test fun nativeCapabilitiesHaveExactWireNames() {
         val capability = DeliverySubtitleCapabilities(nativeEmbedded = listOf(NativeEmbeddedSubtitleCapability("mp4", listOf("mov_text"), "container_track_id")))
         val json = SiloJson.encodeToString(capability)

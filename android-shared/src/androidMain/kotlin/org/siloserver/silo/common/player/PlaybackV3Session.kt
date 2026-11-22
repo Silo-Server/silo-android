@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.player
 
+import androidx.annotation.StringRes
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
@@ -13,8 +14,14 @@ import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
 import org.siloserver.silo.model.playback.PlaybackTimeline
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SelectedPlaybackTracks
+import org.siloserver.silo.model.playback.SubtitleHlsRendition
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
+import org.siloserver.silo.model.playback.carriesHlsSubtitleRendition
+import org.siloserver.silo.model.playback.isUnplayableSubtitle
+import org.siloserver.silo.model.playback.nativeSwitchTrackId
+import org.siloserver.silo.model.playback.sourceContainerTrackId
+import org.siloserver.silo.model.playback.switchableHlsRendition
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 
@@ -29,12 +36,22 @@ sealed interface VideoSessionStartV3 {
         val capabilities: org.siloserver.silo.model.playback.ClientCodecCapabilities,
         /** Exact output/delivery context used to negotiate this plan. */
         val clientPlaybackContext: org.siloserver.silo.model.playback.ClientPlaybackContext,
+        /**
+         * The plan keeps the transport the player is already playing and
+         * changes only a subtitle it selects in that media
+         * ([org.siloserver.silo.model.playback.appliesInPlaceOver]), so its
+         * adoption must not remount the MediaItem. Only a replan sets it.
+         */
+        val inPlace: Boolean = false,
     ) : VideoSessionStartV3
 
     data class Terminal(
         val reason: String,
+        /** The server's text, or this client's English for a terminal it wrote itself. */
         val message: String,
         val retryable: Boolean,
+        /** Set when this client wrote [message]: the catalog string to show instead. */
+        @StringRes val messageRes: Int? = null,
     ) : VideoSessionStartV3
 
     data object ServerUpgradeRequired : VideoSessionStartV3
@@ -78,6 +95,10 @@ internal fun PlaybackPlanV3.toSessionResponse(
             ),
         )
     }
+    val selectedHlsRendition = subtitle.hlsRendition?.takeIf {
+        delivery.carriesHlsSubtitleRendition() &&
+            (subtitle.mode == PlaybackSubtitleModeV3.CONVERT || subtitle.mode == PlaybackSubtitleModeV3.RENDER)
+    }?.let { SubtitleHlsRendition(groupId = it.groupId, name = it.name, index = it.index) }
     // Neutral v3 publishes the complete subtitle inventory on every plan,
     // including plans with subtitles off. Project it into native phone/TV UI
     // state so both menus retain every authoritative ordinal. The player mount
@@ -92,6 +113,22 @@ internal fun PlaybackPlanV3.toSessionResponse(
                 it.delivery == SUBTITLE_DELIVERY_BURN_IN_ONLY
         }
         .map { item ->
+            // The selected row follows the plan's own decision. Every other
+            // row says how the player can switch to it on the stream it
+            // already plays: a rendition that stream lists, or a native track
+            // of the original file. Those rows are exact identities, never
+            // sidecars, so a pick shows at once while the replan confirms it.
+            val selected = item.trackId == subtitle.trackId && item.combinedIndex == selectedSubtitleIndex
+            // The stream itself carries a rendition track. Its inventory URL
+            // is a whole-file extraction, the slow path the rendition
+            // replaces, so this row publishes no URL to mount.
+            val rendition = if (selected) {
+                selectedHlsRendition
+            } else {
+                switchableHlsRendition(item)?.let {
+                    SubtitleHlsRendition(groupId = it.groupId, name = it.name, index = it.index)
+                }
+            }
             PlayerSubtitleInfo(
                 index = item.combinedIndex,
                 language = item.language,
@@ -99,22 +136,29 @@ internal fun PlaybackPlanV3.toSessionResponse(
                 label = item.label,
                 source = item.source,
                 forced = item.forced,
+                hearingImpaired = item.hearingImpaired,
                 url = if (
+                    rendition == null &&
                     subtitle.mode != PlaybackSubtitleModeV3.BURN_IN &&
                     item.delivery == SUBTITLE_DELIVERY_SIDECAR
                 ) item.url.orEmpty() else "",
                 catalogLabel = item.label,
                 catalogSource = item.source,
                 isDefault = item.isDefault,
-                nativeContainerTrackId = subtitle.embedded?.containerTrackId.takeIf {
-                    item.trackId == subtitle.trackId && item.combinedIndex == selectedSubtitleIndex
+                nativeContainerTrackId = if (selected) {
+                    subtitle.embedded?.containerTrackId
+                } else {
+                    nativeSwitchTrackId(item)
                 },
+                sourceContainerTrackId = sourceContainerTrackId(item),
+                hlsRendition = rendition,
                 serverTrackId = item.trackId,
                 serverDelivery = item.delivery.takeIf {
                     it == SUBTITLE_DELIVERY_SIDECAR ||
                         it == SUBTITLE_DELIVERY_BURN_IN_ONLY
                 },
                 syncKey = item.syncKey,
+                unplayable = item.isUnplayableSubtitle(),
             )
         }
         .distinctBy(PlayerSubtitleInfo::index)
@@ -181,6 +225,10 @@ internal fun PlaybackPlanV3.toSessionResponse(
         requestedMediaFileId = requestedMediaFileId ?: mediaFileId,
         effectiveMediaFileId = effectiveFileId,
         effectiveRecipe = effectiveRecipe,
+        sourceFile = source,
+        bandwidthLimit = bandwidthLimit,
+        activeQuality = activeQuality,
+        activeQualityReported = activeQualityReported,
     )
     return PlaybackSessionResponse(
         sessionId = sessionId,

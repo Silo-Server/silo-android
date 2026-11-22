@@ -8,11 +8,28 @@ import kotlin.test.assertNull
 class TvPlayerRemoteKeyActionTest {
 
     @Test
+    fun mediaStopExitsOnFirstDownAndConsumesTheRestOfThePress() {
+        assertEquals(
+            TvPlayerRemoteKeyAction.Stop,
+            tvPlayerRemoteKeyAction(KeyEvent.KEYCODE_MEDIA_STOP, KeyEvent.ACTION_DOWN, repeatCount = 0),
+        )
+        assertEquals(
+            TvPlayerRemoteKeyAction.ConsumeOnly,
+            tvPlayerRemoteKeyAction(KeyEvent.KEYCODE_MEDIA_STOP, KeyEvent.ACTION_DOWN, repeatCount = 1),
+        )
+        assertEquals(
+            TvPlayerRemoteKeyAction.ConsumeOnly,
+            tvPlayerRemoteKeyAction(KeyEvent.KEYCODE_MEDIA_STOP, KeyEvent.ACTION_UP, repeatCount = 0),
+        )
+    }
+
+    @Test
     fun mediaPlayPauseKeysTogglePlaybackOnKeyDown() {
         listOf(
             KeyEvent.KEYCODE_MEDIA_PLAY,
             KeyEvent.KEYCODE_MEDIA_PAUSE,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_SPACE,
         ).forEach { keyCode ->
             assertEquals(
                 TvPlayerRemoteKeyAction.PlayPause,
@@ -31,6 +48,7 @@ class TvPlayerRemoteKeyActionTest {
             KeyEvent.KEYCODE_MEDIA_PLAY,
             KeyEvent.KEYCODE_MEDIA_PAUSE,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_SPACE,
         ).forEach { keyCode ->
             assertEquals(
                 TvPlayerRemoteKeyAction.ConsumeOnly,
@@ -49,6 +67,7 @@ class TvPlayerRemoteKeyActionTest {
             KeyEvent.KEYCODE_MEDIA_PLAY,
             KeyEvent.KEYCODE_MEDIA_PAUSE,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_SPACE,
         ).forEach { keyCode ->
             assertEquals(
                 TvPlayerRemoteKeyAction.ConsumeOnly,
@@ -280,6 +299,41 @@ class TvPlayerRemoteKeyActionTest {
                 ),
             )
         }
+    }
+
+    @Test
+    fun spaceWithAShortcutModifierIsLeftUnmapped() {
+        listOf(
+            KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON,
+            KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON,
+            KeyEvent.META_META_ON or KeyEvent.META_META_LEFT_ON,
+        ).forEach { metaState ->
+            assertNull(
+                tvPlayerRemoteKeyAction(
+                    keyCode = KeyEvent.KEYCODE_SPACE,
+                    action = KeyEvent.ACTION_DOWN,
+                    repeatCount = 0,
+                    metaState = metaState,
+                ),
+            )
+            assertNull(
+                tvPlayerIdleOverlayRemoteKeyAction(
+                    keyCode = KeyEvent.KEYCODE_SPACE,
+                    action = KeyEvent.ACTION_DOWN,
+                    repeatCount = 0,
+                    metaState = metaState,
+                ),
+            )
+        }
+        assertEquals(
+            TvPlayerRemoteKeyAction.PlayPause,
+            tvPlayerRemoteKeyAction(
+                keyCode = KeyEvent.KEYCODE_SPACE,
+                action = KeyEvent.ACTION_DOWN,
+                repeatCount = 0,
+                metaState = KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON,
+            ),
+        )
     }
 
     @Test

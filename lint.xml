@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- The generated translation catalog is shared by both apps, so each app
+         sees the other's strings as unused (docs/i18n.md). -->
+    <issue id="UnusedResources">
+        <ignore path="**/strings_catalog.xml" />
+    </issue>
+    <!-- Generated Hebrew (iw) plurals follow CLDR 42+ (one/two/other), whereas
+         AGP's older CLDR table still expects "many". Android falls back to
+         "other" at runtime. -->
+    <issue id="MissingQuantity">
+        <ignore path="**/values-iw/strings_catalog.xml" />
+    </issue>
+</lint>

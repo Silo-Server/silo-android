@@ -180,6 +180,24 @@ class TrackSelectionFingerprintTest {
     }
 
     @Test
+    fun nativelyDrawnVobsubAndDvbPreferencesResolveOnTheDetailScreen() {
+        val tracks = listOf(
+            SubtitleTrack(index = 2, codec = "subrip", language = "eng", title = "English"),
+            SubtitleTrack(index = 3, codec = "dvd_subtitle", language = "eng", title = "English VobSub"),
+            SubtitleTrack(index = 4, codec = "dvb_subtitle", language = "deu", title = "German DVB"),
+        )
+        // A direct-play plan draws these from the stream, and the player then
+        // remembers the committed Embedded identity rather than burn-in.
+        for (ordinal in 1..2) {
+            val media = decodeSubtitleIdentityPreference(encodeCatalogSubtitlePreference(tracks, ordinal)!!)
+                .let { assertIs<SubtitleIdentity.ServerBurnIn>(it).media!! }
+            val saved = encodeSubtitleIdentityPreference(SubtitleIdentity.Embedded(ordinal, media))
+
+            assertEquals(ordinal, resolveCatalogSubtitlePreferenceOrdinal(tracks, saved))
+        }
+    }
+
+    @Test
     fun detailPreferenceResolverFallsBackToLegacyFingerprint() {
         val tracks = catalogTracksInMixedIndexSpaces()
 

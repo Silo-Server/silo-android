@@ -1,8 +1,7 @@
 package org.siloserver.silo.android.ui.screens.home
 
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.domain.settings.CatalogLanguageRevision
-import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
-import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,9 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.SettingsRemote
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -41,6 +38,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
@@ -53,17 +51,25 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil3.imageLoader
 import coil3.request.ImageRequest
+import org.siloserver.silo.android.ui.navigation.ReportBottomNavPageTop
+import org.siloserver.silo.android.ui.components.TabContentGap
+import org.siloserver.silo.android.ui.components.TabContentTop
+import org.siloserver.silo.android.ui.components.TabHeaderRowHeight
 import org.siloserver.silo.android.ui.components.TopBarEdgeMargin
+import org.siloserver.silo.android.ui.components.TopBarRemoteControl
 import org.siloserver.silo.android.ui.components.TopBarRowTopInset
 import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.android.ui.components.SiloWordmark
 import org.siloserver.silo.android.ui.components.TabTopBarActions
-import org.siloserver.silo.android.ui.components.TopBarIconButton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
@@ -71,6 +77,7 @@ import org.siloserver.silo.android.ui.components.MediaRowSkeleton
 import org.siloserver.silo.android.ui.components.ProfileMenu
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.diagnostics.DiagnosticsHomeContentState
 import org.siloserver.silo.common.diagnostics.DiagnosticsHomeLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsHomeScrollRegion
@@ -90,8 +97,9 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.i18n.text
 
-private data class ContinueWatchingWarmTarget(
+private data class SeriesWarmTarget(
     val seriesId: String,
     val seasonNumber: Int?,
     val episodeContentId: String,
@@ -119,23 +127,27 @@ fun HomeScreen(
     onItemClick: (String) -> Unit,
     onContinueWatchingItemClick: (SectionItem) -> Unit,
     onPlayClick: (String, Double?) -> Unit,
-    onBottomNavMinimizedChange: (Boolean) -> Unit = {},
+    /** Opens a row's full page ("Explore all"). */
+    onExploreSection: ((org.siloserver.silo.model.section.ResolvedSection) -> Unit)? = null,
+    /** Opens a card of a row of collections. */
+    onCollectionClick: ((org.siloserver.silo.model.section.SectionCollectionCard) -> Unit)? = null,
     viewModel: HomeViewModel,
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
-    onRemoteControlClick: () -> Unit,
-    onRemoteChooseTvClick: () -> Unit,
-    onRemoteDisconnectClick: () -> Unit,
-    isRemoteControlActive: Boolean,
+    remoteControl: TopBarRemoteControl,
     onRequestsClick: (() -> Unit)?,
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    onSignOutClick: (removeServer: Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
+        viewModel.onShown(refreshOnResume = true)
+        onPauseOrDispose { viewModel.onHidden() }
+    }
     val sectionPreferences: HomeSectionPreferencesStore = koinInject()
     val preferenceRevision by sectionPreferences.revision.collectAsState()
     val serverRegistry: ServerRegistry = koinInject()
@@ -143,13 +155,15 @@ fun HomeScreen(
     val activeEntry by serverRegistry.activeEntry.collectAsState()
     val sections = state.sections
     val profileScopeId = activeEntry?.profileId ?: activeProfile?.id
-    val populatedServerSections = remember(sections) { sections.filter { it.items.isNotEmpty() } }
+    val activeAccountId = activeEntry?.accountId
+    val populatedServerSections = remember(sections) { sections.filter { it.hasCards } }
     // No hero billboard on phone (matches iOS): a `featured` section is just
     // another row, rendered in the order the server configured it.
     val regularSections = remember(
         sections,
         preferenceRevision,
         activeServerId,
+        activeAccountId,
         profileScopeId,
     ) {
         sectionPreferences.arrangedSections(sections, profileId = profileScopeId)
@@ -159,12 +173,14 @@ fun HomeScreen(
     val catalogLanguage: CatalogLanguageRevision = koinInject()
     val languageRevision by catalogLanguage.revision.collectAsState()
     val heroHandoff = LocalHeroSourceHandoff.current
-    val continueWatchingWarmTargets = remember(regularSections) {
+    val tapWarmupScope = rememberCoroutineScope()
+    val seriesWarmTargets = remember(regularSections) {
         regularSections
             .asSequence()
             .filter { section ->
                 section.sectionType == "continue_watching" ||
-                    section.sectionType == "in_progress"
+                    section.sectionType == "in_progress" ||
+                    section.sectionType == "next_up"
             }
             .flatMap { it.items.asSequence() }
             .mapNotNull { item ->
@@ -172,7 +188,7 @@ fun HomeScreen(
                 if (!item.type.equals("episode", ignoreCase = true) || seriesId == null) {
                     null
                 } else {
-                    ContinueWatchingWarmTarget(
+                    SeriesWarmTarget(
                         seriesId = seriesId,
                         seasonNumber = item.seasonNumber,
                         episodeContentId = item.contentId,
@@ -185,15 +201,15 @@ fun HomeScreen(
             .take(4)
             .toList()
     }
-    var warmedSeriesArtwork by remember(activeServerId, profileScopeId, languageRevision) {
+    var warmedSeriesArtwork by remember(activeServerId, activeAccountId, profileScopeId, languageRevision) {
         mutableStateOf<Map<String, WarmedSeriesArtwork>>(emptyMap())
     }
-    LaunchedEffect(activeServerId, profileScopeId, languageRevision, continueWatchingWarmTargets) {
-        // Warm each Continue Watching destination in row order. Within one
+    LaunchedEffect(activeServerId, activeAccountId, profileScopeId, languageRevision, seriesWarmTargets) {
+        // Warm each Continue Watching and Next Up series in row order. Within one
         // title, its parent detail, exact episode and selector data run in
         // parallel. CatalogRepository keeps these calls alive/single-flight if
         // the user taps while this effect is still awaiting them.
-        for (target in continueWatchingWarmTargets) {
+        for (target in seriesWarmTargets) {
             coroutineScope {
                 val parentDetail = async {
                     catalogRepository.warmItemDetail(target.seriesId)
@@ -265,30 +281,8 @@ fun HomeScreen(
     }
 
     val listState = rememberLazyListState()
+    ReportBottomNavPageTop(listState)
     val currentDiagnosticsSections by rememberUpdatedState(regularSections)
-    val currentBottomNavCallback by rememberUpdatedState(onBottomNavMinimizedChange)
-    LaunchedEffect(listState) {
-        var previousIndex = listState.firstVisibleItemIndex
-        var previousOffset = listState.firstVisibleItemScrollOffset
-        snapshotFlow {
-            Triple(
-                listState.firstVisibleItemIndex,
-                listState.firstVisibleItemScrollOffset,
-                listState.isScrollInProgress,
-            )
-        }.collect { (index, offset, isScrolling) ->
-            val isAtTop = index == 0 && offset == 0
-            if (isAtTop) {
-                currentBottomNavCallback(false)
-            } else if (isScrolling) {
-                val movingDown = index > previousIndex ||
-                    (index == previousIndex && offset > previousOffset)
-                if (movingDown) currentBottomNavCallback(true)
-            }
-            previousIndex = index
-            previousOffset = offset
-        }
-    }
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
             .distinctUntilChanged()
@@ -325,19 +319,19 @@ fun HomeScreen(
         when {
             state.isLoading && regularSections.isEmpty() -> HomeLoadingSkeleton()
             state.error != null && regularSections.isEmpty() -> ErrorView(
-                message = state.error ?: "Something went wrong",
+                message = state.error?.text() ?: stringResource(CommonR.string.status_errorGeneric),
                 onRetry = { viewModel.loadSections() },
             )
             regularSections.isEmpty() -> {
                 if (populatedServerSections.isNotEmpty()) {
                     EmptyStateView(
-                        title = "Home sections are hidden",
-                        subtitle = "Choose which rows appear in Settings → Interface → Home Sections.",
+                        title = stringResource(CommonR.string.home_hiddenSections),
+                        subtitle = stringResource(CommonR.string.home_hiddenSectionsBody),
                     )
                 } else {
                     EmptyStateView(
-                        title = "Nothing to watch yet",
-                        subtitle = "Add media to your libraries or start watching to see it here.",
+                        title = stringResource(CommonR.string.home_empty),
+                        subtitle = stringResource(CommonR.string.home_emptyBody),
                     )
                 }
             }
@@ -360,20 +354,25 @@ fun HomeScreen(
                         // iOS `sectionSpacing` = SiloTheme.largePadding (24).
                         verticalArrangement = Arrangement.spacedBy(24.dp),
                     ) {
-                        // Reserve runway under the floating header so the first row
-                        // doesn't slide under the status-bar chrome. iOS runway =
-                        // topInset + 40 + smallPadding(8) + largePadding(24) +
-                        // smallPadding(8) - headerTopReclaim(16) = topInset + 64.
+                        // The wordmark sits in the header row; the space below
+                        // it covers the pill band Libraries and For You use, so
+                        // the first row starts at TabContentTop on every tab.
                         item(key = "homeIdentity") {
-                            Row(
+                            Box(
                                 modifier = Modifier
                                     .windowInsetsPadding(WindowInsets.statusBars)
                                     .fillMaxWidth()
-                                    .height(64.dp)
-                                    .padding(horizontal = 16.dp),
-                                verticalAlignment = Alignment.Top,
+                                    .height(TabContentTop - TabContentGap),
                             ) {
-                                SiloWordmark()
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(TabHeaderRowHeight)
+                                        .padding(horizontal = TopBarEdgeMargin),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    SiloWordmark()
+                                }
                             }
                         }
 
@@ -389,34 +388,50 @@ fun HomeScreen(
                                 section = section,
                                 onItemClick = { contentId ->
                                     val item = section.items.firstOrNull { it.contentId == contentId }
-                                    if (opensUnifiedSeriesDetail && item != null) {
-                                        item.seriesId
-                                            ?.takeIf {
-                                                item.type.equals("episode", ignoreCase = true) &&
-                                                    it.isNotBlank()
+                                    val seriesId = item
+                                        ?.takeIf { it.type.equals("episode", ignoreCase = true) }
+                                        ?.seriesId
+                                        ?.takeIf { it.isNotBlank() }
+                                    // An episode page only redirects to its series
+                                    // (seriesDetailRedirect), so open the series
+                                    // directly. Outside Continue Watching this needs
+                                    // the season number, which the redirect requires too.
+                                    if (
+                                        item != null && seriesId != null &&
+                                        (opensUnifiedSeriesDetail || item.seasonNumber != null)
+                                    ) {
+                                        val knownParent = regularSections
+                                            .asSequence()
+                                            .flatMap { it.items.asSequence() }
+                                            .firstOrNull { it.contentId == seriesId }
+                                        val artwork = warmedSeriesArtwork[seriesId]
+                                            ?: knownParent?.let {
+                                                WarmedSeriesArtwork(
+                                                    url = it.backdropUrl ?: it.posterUrl,
+                                                    thumbhash = it.backdropThumbhash
+                                                        ?: it.posterThumbhash,
+                                                )
                                             }
-                                            ?.let { seriesId ->
-                                                val knownParent = regularSections
-                                                    .asSequence()
-                                                    .flatMap { it.items.asSequence() }
-                                                    .firstOrNull { it.contentId == seriesId }
-                                                val artwork = warmedSeriesArtwork[seriesId]
-                                                    ?: knownParent?.let {
-                                                        WarmedSeriesArtwork(
-                                                            url = it.backdropUrl ?: it.posterUrl,
-                                                            thumbhash = it.backdropThumbhash
-                                                                ?: it.posterThumbhash,
-                                                        )
-                                                    }
-                                                // MediaRow initially hands off the episode
-                                                // still. Replace it with the actual parent
-                                                // series artwork before navigation so the
-                                                // loading frame matches a direct series tap.
-                                                artwork?.let {
-                                                    heroHandoff?.pendingArtworkUrl = it.url
-                                                    heroHandoff?.pendingArtworkThumbhash = it.thumbhash
-                                                }
+                                            ?: item.seriesHeroBackdrop()?.let {
+                                                WarmedSeriesArtwork(url = it.url, thumbhash = it.thumbhash)
                                             }
+                                        // MediaRow hands off the episode still, which
+                                        // the series page never shows. Load with the
+                                        // series artwork instead, or with none until
+                                        // Home knows it, so the hero never swaps
+                                        // one picture for another.
+                                        heroHandoff?.pendingArtworkUrl = artwork?.url
+                                        heroHandoff?.pendingArtworkThumbhash = artwork?.thumbhash
+                                        // The series page reads this route cache-first,
+                                        // which only Home's warm-up keeps fresh. For a
+                                        // row it has not warmed, start those reads now
+                                        // so the page joins them.
+                                        val target = SeriesWarmTarget(seriesId, item.seasonNumber, item.contentId)
+                                        if (warmedSeriesArtwork[seriesId] == null || target !in seriesWarmTargets) {
+                                            tapWarmupScope.startSeriesWarmup(catalogRepository, target)
+                                        }
+                                        onContinueWatchingItemClick(item)
+                                    } else if (opensUnifiedSeriesDetail && item != null) {
                                         onContinueWatchingItemClick(item)
                                     } else {
                                         onItemClick(contentId)
@@ -438,11 +453,10 @@ fun HomeScreen(
                                 onSetWatched = viewModel::setWatched,
                                 onToggleFavorite = viewModel::toggleFavorite,
                                 onToggleWatchlist = viewModel::toggleWatchlist,
-                                onDismissContinueWatching = { item ->
-                                    item.progressUpdatedAt?.let { ts ->
-                                        viewModel.dismissContinueWatching(item.contentId, ts)
-                                    }
-                                },
+                                onRemoveFromHome = viewModel::dismissFromHome,
+                                onExploreAllClick = onExploreSection?.let { open -> { open(section) } },
+                                onCollectionClick = onCollectionClick,
+                                activeProfileId = profileScopeId,
                             )
                         }
 
@@ -460,15 +474,12 @@ fun HomeScreen(
         HomeFloatingChrome(
             activeProfile = activeProfile,
             onSearchClick = onSearchClick,
-            onRemoteControlClick = onRemoteControlClick,
-            onRemoteChooseTvClick = onRemoteChooseTvClick,
-            onRemoteDisconnectClick = onRemoteDisconnectClick,
-            isRemoteControlActive = isRemoteControlActive,
+            remoteControl = remoteControl,
             onRequestsClick = onRequestsClick,
             onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
-            onSwitchServerClick = onSwitchServerClick,
+            onChangeAccountClick = onChangeAccountClick,
             onSignOutClick = onSignOutClick,
         )
 
@@ -485,7 +496,7 @@ private fun HomeLoadingSkeleton() {
         Spacer(
             modifier = Modifier
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .height(64.dp),
+                .height(TabContentTop - TabContentGap),
         )
         repeat(4) {
             MediaRowSkeleton(progress = shimmer)
@@ -497,92 +508,51 @@ private fun HomeLoadingSkeleton() {
 private fun HomeFloatingChrome(
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
-    onRemoteControlClick: () -> Unit,
-    onRemoteChooseTvClick: () -> Unit,
-    onRemoteDisconnectClick: () -> Unit,
-    isRemoteControlActive: Boolean,
+    remoteControl: TopBarRemoteControl,
     onRequestsClick: (() -> Unit)?,
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    onSignOutClick: (removeServer: Boolean) -> Unit,
 ) {
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
     Box(modifier = Modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier
                 .padding(top = statusBarPadding.calculateTopPadding() + TopBarRowTopInset)
-                .padding(start = TopBarEdgeMargin, end = TopBarEdgeMargin, bottom = 8.dp)
-                .fillMaxWidth(),
+                .padding(start = TopBarEdgeMargin, end = TopBarEdgeMargin)
+                .fillMaxWidth()
+                .height(TabHeaderRowHeight),
         ) {
             // The SILO identity scrolls with the feed; only utilities remain pinned.
             TabTopBarActions(
                 modifier = Modifier.align(Alignment.CenterEnd),
                 activeProfile = activeProfile,
+                remoteControl = remoteControl,
                 onSearchClick = onSearchClick,
                 onRequestsClick = onRequestsClick,
                 onWatchPartyClick = onWatchPartyClick,
                 onSettingsClick = onSettingsClick,
                 onSwitchProfileClick = onSwitchProfileClick,
-                onSwitchServerClick = onSwitchServerClick,
+                onChangeAccountClick = onChangeAccountClick,
                 onSignOutClick = onSignOutClick,
-                leadingActions = {
-                    // Mirrors Apple's SiloControlModeButton: chrome-free at rest,
-                    // filled disc while controlling a TV; the active state opens a
-                    // menu instead of jumping straight to the remote.
-                    Box {
-                        var remoteMenuExpanded by remember { mutableStateOf(false) }
-                        TopBarIconButton(
-                            onClick = {
-                                if (isRemoteControlActive) {
-                                    remoteMenuExpanded = true
-                                } else {
-                                    onRemoteControlClick()
-                                }
-                            },
-                            isActive = isRemoteControlActive,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.SettingsRemote,
-                                contentDescription = "Remote Control",
-                            )
-                        }
-                        SiloDropdownMenu(
-                            expanded = remoteMenuExpanded,
-                            onDismissRequest = { remoteMenuExpanded = false },
-                        ) {
-                            SiloDropdownMenuItem(
-                                text = { Text("Remote Control") },
-                                onClick = {
-                                    remoteMenuExpanded = false
-                                    onRemoteControlClick()
-                                },
-                            )
-                            SiloDropdownMenuItem(
-                                text = { Text("Choose TV") },
-                                onClick = {
-                                    remoteMenuExpanded = false
-                                    onRemoteChooseTvClick()
-                                },
-                            )
-                            HorizontalDivider()
-                            SiloDropdownMenuItem(
-                                text = {
-                                    Text(
-                                        "Turn Off Control Mode",
-                                        color = MaterialTheme.colorScheme.error,
-                                    )
-                                },
-                                onClick = {
-                                    remoteMenuExpanded = false
-                                    onRemoteDisconnectClick()
-                                },
-                            )
-                        }
-                    }
-                },
             )
         }
     }
+}
+
+/**
+ * Starts [target]'s live reads ahead of navigation, so its series page joins
+ * them instead of reading an older cached copy. Each read registers before
+ * its first suspension unless another request holds the repository's lock,
+ * and the repository keeps it running after Home leaves composition.
+ */
+private fun CoroutineScope.startSeriesWarmup(catalogRepository: CatalogRepository, target: SeriesWarmTarget) {
+    launch(start = CoroutineStart.UNDISPATCHED) { catalogRepository.warmItemDetail(target.seriesId) }
+    launch(start = CoroutineStart.UNDISPATCHED) { catalogRepository.warmSeasons(target.seriesId) }
+    target.seasonNumber?.let { seasonNumber ->
+        launch(start = CoroutineStart.UNDISPATCHED) { catalogRepository.warmEpisodes(target.seriesId, seasonNumber) }
+    }
+    launch(start = CoroutineStart.UNDISPATCHED) { catalogRepository.warmItemDetail(target.episodeContentId) }
 }

@@ -25,6 +25,7 @@ class HomeScreenV2Test {
     private var title = "Old"
     private var unresolved = false
     private var failFallback = false
+    private var failLayout = false
     private var fallbackReads = 0
     private var cacheWrites = 0
     private var listReads = 0
@@ -34,12 +35,20 @@ class HomeScreenV2Test {
     private var listHook: suspend () -> Unit = {}
     private val cache = object : HomeCachePort {
         override suspend fun getCachedHomeV2(owner: AuthScopeSnapshot): HomeCacheSnapshot? { val value = cached; cacheHook(); return value }
-        override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, stillCurrent: () -> Boolean) { cacheWrites++; cached = HomeCacheSnapshot(sections, 1) }
+        override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, artworkFingerprint: String?, stillCurrent: () -> Boolean) { cacheWrites++; cached = HomeCacheSnapshot(sections, 1) }
     }
     private val local = object : UserItemStatePort by NoOpUserItemStatePort {
-        override suspend fun localPlaybackProgressForContent(contentIds: List<String>): Map<String, LocalPlaybackProgress> { overlayHook(); return emptyMap() }
+        override suspend fun localPlaybackProgressForContent(contentIds: List<String>, includeSent: Boolean): Map<String, LocalPlaybackProgress> { overlayHook(); return emptyMap() }
     }
-    private fun scenario(block: suspend TestScope.(HomeViewModel) -> Unit) = runTest {
+    // Each test report is a new change: a minute apart on this clock.
+    private var clockMs = 0L
+    private val accessChanges = AccessChangeSignals { clockMs }
+    private fun reportAccessChange() { clockMs += 60_000; accessChanges.reportAccessChanged() }
+    private val realtime = HomeRealtimeCoordinator(
+        object : HomeRealtimeClient { override fun connect() = kotlinx.coroutines.flow.emptyFlow<HomeRealtimeEvent>() },
+        tokens, accessChanges,
+    )
+    private fun scenario(startShown: Boolean = true, block: suspend TestScope.(HomeViewModel) -> Unit) = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler); Dispatchers.setMain(dispatcher)
         val client = HttpClient(MockEngine(MockEngineConfig().apply {
             this.dispatcher = dispatcher
@@ -56,13 +65,14 @@ class HomeScreenV2Test {
                     if (unresolved) """{"sections":[{"id":"row/a","section_type":"continue_watching","title":"Row","total_count":1,"items":[]}]}"""
                     else """{"sections":[$row]}"""
                 }
-                respond(body, if (fallback && failFallback) HttpStatusCode.ServiceUnavailable else HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                respond(body, if ((fallback && failFallback) || (!fallback && failLayout)) HttpStatusCode.ServiceUnavailable else HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
             }
         }))
         val store = ViewModelStore()
         try {
             val repository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted, decodeDispatcher = dispatcher)))
-            val vm = HomeViewModel(repository, MediaActionsCoordinator(PersonalDataRepository(PersonalDataApi(client))), cache, local, catalogLanguage = language)
+            val vm = HomeViewModel(repository, MediaActionsCoordinator(PersonalDataRepository(PersonalDataApi(client))), cache, local,
+                homeRealtime = realtime, catalogLanguage = language, startShown = startShown)
             store.put("home", vm); block(vm)
         } finally { store.clear(); client.close(); Dispatchers.resetMain() }
     }
@@ -124,4 +134,125 @@ class HomeScreenV2Test {
         assertEquals("Latest language", vm.uiState.value.sections.single().items.single().title)
     }
 
+    @Test fun hiddenHomeRunsOneDeferredRefreshWhenShown() = scenario(startShown = false) { vm ->
+        runCurrent(); assertEquals(1, listReads)
+        reportAccessChange(); advanceTimeBy(5_000); runCurrent()
+        language.changed(); runCurrent()
+        assertEquals(1, listReads, "a hidden Home must not re-read")
+        title = "New"; vm.onShown(); runCurrent()
+        assertEquals(2, listReads)
+        assertEquals("New", vm.uiState.value.sections.single().items.single().title)
+        vm.runPendingRealtimeRefresh(); runCurrent()
+        assertEquals(2, listReads, "the deferred refresh runs once")
+    }
+
+    @Test fun realtimeRetryRecoversTransientFallbackWithoutAnotherSignal() = scenario { vm ->
+        runCurrent()
+        unresolved = true
+        failFallback = true
+        title = "New"
+        vm.refreshFromRealtime(); runCurrent()
+        assertEquals(1, fallbackReads)
+        assertEquals("Old", vm.uiState.value.sections.single().items.single().title)
+        failFallback = false
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(2, fallbackReads)
+        assertEquals("New", vm.uiState.value.sections.single().items.single().title)
+    }
+
+    @Test fun shownHomeRefreshesLiveAndStopsWhenHidden() = scenario { vm ->
+        runCurrent(); assertEquals(1, listReads)
+        reportAccessChange(); advanceTimeBy(5_000); runCurrent()
+        assertEquals(2, listReads)
+        vm.onHidden()
+        reportAccessChange(); advanceTimeBy(5_000); runCurrent()
+        assertEquals(2, listReads)
+        // Showing Home covers the update that waited.
+        vm.onShown(); runCurrent()
+        assertEquals(3, listReads)
+        vm.runPendingRealtimeRefresh(); runCurrent()
+        assertEquals(3, listReads)
+    }
+
+    @Test fun hidingDropsARealtimeReadAndRunsItWhenShown() = scenario { vm ->
+        runCurrent(); assertEquals(1, listReads)
+        val gate = CompletableDeferred<Unit>(); listHook = { gate.await() }
+        title = "New"; reportAccessChange(); advanceTimeBy(5_000); runCurrent()
+        assertEquals(2, listReads)
+        vm.onHidden(); gate.complete(Unit); runCurrent()
+        assertEquals("Old", vm.uiState.value.sections.single().items.single().title, "the dropped read must not publish")
+        listHook = {}
+        vm.onShown(); vm.runPendingRealtimeRefresh(); runCurrent()
+        assertEquals(3, listReads)
+        assertEquals("New", vm.uiState.value.sections.single().items.single().title)
+    }
+
+    @Test fun realtimeReadWaitsForInitialLoadAndVisibleHome() = scenario { vm ->
+        val gate = CompletableDeferred<Unit>(); listHook = { gate.await() }
+        runCurrent(); assertTrue(vm.uiState.value.isLoading)
+        // Only the initial request should be filling Home.
+        reportAccessChange(); advanceTimeBy(5_000); runCurrent()
+        assertEquals(1, listReads)
+        vm.onHidden(); gate.complete(Unit); runCurrent()
+        assertFalse(vm.uiState.value.isLoading)
+        assertEquals("Old", vm.uiState.value.sections.single().items.single().title)
+        assertEquals(1, listReads)
+        title = "New"
+        vm.onShown(); vm.runPendingRealtimeRefresh(); runCurrent()
+        assertEquals(2, listReads)
+        assertEquals("New", vm.uiState.value.sections.single().items.single().title)
+    }
+
+    @Test fun warmReturnDuringFirstLoadRechecksHome() = scenario(startShown = false) { vm ->
+        val gate = CompletableDeferred<Unit>()
+        listHook = { gate.await() }
+        vm.onShown(refreshOnResume = true); runCurrent()
+        assertEquals(1, listReads)
+        vm.onHidden()
+        title = "New"
+        vm.onShown(refreshOnResume = true); runCurrent()
+        assertEquals(1, listReads)
+        gate.complete(Unit); runCurrent()
+        assertEquals(2, listReads)
+        assertEquals("New", vm.uiState.value.sections.single().items.single().title)
+    }
+
+    @Test fun realtimeRefreshRetriesTransientFailureWhileShown() = scenario { vm ->
+        runCurrent()
+        title = "New"
+        failLayout = true
+        vm.refreshFromRealtime(); runCurrent()
+        assertEquals(2, listReads)
+        assertEquals("Old", vm.uiState.value.sections.single().items.single().title)
+        failLayout = false
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(3, listReads)
+        assertEquals("New", vm.uiState.value.sections.single().items.single().title)
+    }
+
+    @Test fun hiddenLanguageChangeKeepsTheReadThatFillsAnEmptyHome() = scenario { vm ->
+        val gate = CompletableDeferred<Unit>(); listHook = { gate.await() }
+        runCurrent()
+        // This read supersedes the first load, so only it can fill Home.
+        language.changed(); runCurrent()
+        assertEquals(2, listReads)
+        vm.onHidden(); language.changed(); runCurrent()
+        gate.complete(Unit); runCurrent()
+        assertFalse(vm.uiState.value.isLoading)
+        assertEquals("Old", vm.uiState.value.sections.single().items.single().title)
+        listHook = {}; title = "New"
+        vm.onShown(); vm.runPendingRealtimeRefresh(); runCurrent()
+        assertEquals(3, listReads)
+        assertEquals("New", vm.uiState.value.sections.single().items.single().title)
+    }
+
+    @Test fun updateThatWaitedDuringFirstLoadRunsAfterIt() = scenario(startShown = false) { vm ->
+        val gate = CompletableDeferred<Unit>(); listHook = { gate.await() }
+        runCurrent(); assertEquals(1, listReads)
+        reportAccessChange(); advanceTimeBy(5_000); runCurrent()
+        vm.onShown(); vm.runPendingRealtimeRefresh(); runCurrent()
+        assertEquals(1, listReads, "no second read beside the first load")
+        listHook = {}; gate.complete(Unit); runCurrent()
+        assertEquals(2, listReads)
+    }
 }

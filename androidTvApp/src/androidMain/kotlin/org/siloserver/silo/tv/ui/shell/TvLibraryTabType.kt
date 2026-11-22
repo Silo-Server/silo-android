@@ -1,11 +1,13 @@
 package org.siloserver.silo.tv.ui.shell
 
+import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.LocalMovies
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.ui.graphics.vector.ImageVector
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType
 import org.siloserver.silo.model.personal.UserLibrary
 
@@ -29,12 +31,23 @@ enum class TvLibraryTabType {
     Audiobooks;
 
     /** Top-bar tab label / cascade context title. */
-    val title: String
+    @get:StringRes
+    val titleRes: Int
         get() = when (this) {
-            Movies -> "Movies"
-            Series -> "Series"
-            Music -> "Music"
-            Audiobooks -> "Audiobooks"
+            Movies -> CommonR.string.topBar_movies
+            Series -> CommonR.string.topBar_series
+            Music -> CommonR.string.topBar_music
+            Audiobooks -> CommonR.string.topBar_audiobooks
+        }
+
+    /** The empty state when the profile can see no library of this type. */
+    @get:StringRes
+    val noLibrariesRes: Int
+        get() = when (this) {
+            Movies -> CommonR.string.shell_library_noMovies
+            Series -> CommonR.string.shell_library_noSeries
+            Music -> CommonR.string.shell_library_noMusic
+            Audiobooks -> CommonR.string.shell_library_noAudiobooks
         }
 
     /**
@@ -52,12 +65,13 @@ enum class TvLibraryTabType {
         }
 
     /** Mono section header for the cascade level-1 panel (§5.3). */
-    val librariesHeader: String
+    @get:StringRes
+    val librariesHeaderRes: Int
         get() = when (this) {
-            Movies -> "MOVIE LIBRARIES"
-            Series -> "SERIES LIBRARIES"
-            Music -> "MUSIC LIBRARIES"
-            Audiobooks -> "AUDIOBOOK LIBRARIES"
+            Movies -> CommonR.string.menu_libraries_movies
+            Series -> CommonR.string.menu_libraries_series
+            Music -> CommonR.string.menu_libraries_music
+            Audiobooks -> CommonR.string.menu_libraries_audiobooks
         }
 
     /**

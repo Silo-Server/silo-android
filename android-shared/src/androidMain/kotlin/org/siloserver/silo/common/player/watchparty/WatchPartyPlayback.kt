@@ -57,6 +57,12 @@ class WatchPartyPlayback(
     val catchingUp: StateFlow<Boolean> get() = binding.catchingUp
     val offerLowerQuality: StateFlow<Boolean> get() = binding.offerLowerQuality
 
+    /** The unanswered target of this member's last seek request; the timeline shows it while set. */
+    val pendingSeekSeconds: StateFlow<Double?> get() = binding.pendingSeekSeconds
+
+    /** Where a relative skip starts: the pending seek target, else [liveSeconds]. */
+    fun relativeSeekOrigin(liveSeconds: Double): Double = binding.relativeSeekOrigin(liveSeconds)
+
     /**
      * The playback the player must be prepared for. It changes only when the
      * room starts a new epoch (a new selection revision or file); anchor and

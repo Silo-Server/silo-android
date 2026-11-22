@@ -3,6 +3,7 @@ package org.siloserver.silo.model.subtitles
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.siloserver.silo.network.ApiResult
 
 /** Provider ids the server may return for search results / downloaded subtitles. */
 object SubtitleProvider {
@@ -95,6 +96,40 @@ data class DownloadedSubtitlesResponse(
     val subtitles: List<DownloadedSubtitle> = emptyList(),
 )
 
+/**
+ * GET /api/v2/subtitles/providers/status — whether this viewer can search
+ * external subtitle providers. Search is offered only when the profile is
+ * allowed, the capability is `available`, and a provider is enabled.
+ */
+@Serializable
+data class SubtitleProviderStatus(
+    val state: String = "",
+    val allowed: Boolean = false,
+    val enabled: Boolean = false,
+    val providers: List<String> = emptyList(),
+) {
+    val searchAvailable: Boolean get() = allowed && enabled && state == "available"
+}
+
+/**
+ * How long a provider-status probe may take before it counts as failed, so a
+ * slow read doesn't keep search hidden for the full HTTP timeout.
+ */
+const val SUBTITLE_PROVIDER_STATUS_TIMEOUT_MS = 5_000L
+
+/**
+ * Next "Search subtitles" availability after a provider-status probe. A
+ * server answer decides it. A failed probe (an older server without the
+ * endpoint, or no network) or a timed-out one (null) keeps a known answer
+ * and otherwise offers search, because hiding it would remove a working
+ * feature on those servers.
+ */
+fun subtitleSearchAvailabilityAfter(result: ApiResult<SubtitleProviderStatus>?, previous: Boolean?): Boolean =
+    when (result) {
+        is ApiResult.Success -> result.data.searchAvailable
+        else -> previous ?: true
+    }
+
 /** GET /api/v2/subtitles/ai/status — both false when AI is unconfigured. */
 @Serializable
 data class SubtitleAiStatus(
@@ -120,9 +155,13 @@ data class SubtitleAiQuota(
 /**
  * Input for subtitle AI creation. The v2 adapter emits required strings and a string file ID.
  *
- * Deliberately has NO `session_id` field: the web sends one to receive live
- * cue streaming over the playback websocket; Android polls the job instead
- * (web/src/player/.../usePlaybackSession.ts vs. SubtitlesRepository.pollJob).
+ * [sessionId] is the playback session the job was started from. The server
+ * runs a new job with a session as a foreground job: transcription extracts
+ * audio from the playhead in short chunks, so progress moves with each chunk.
+ * Without one, it extracts the whole file first and sends long chunks (ten
+ * minutes by default). A job already running for the same source keeps its
+ * mode. The server also streams live cues to that session; Android ignores
+ * them and polls the job to completion (SubtitlesRepository.pollJob).
  *
  * [sourceIndex] is the combined subtitle index for `translate`, and the audio
  * track index for the transcribe kinds. [targetLanguage] is optional only for
@@ -136,6 +175,7 @@ data class SubtitleTranslateRequest(
     @SerialName("source_language") val sourceLanguage: String? = null,
     @SerialName("target_language") val targetLanguage: String? = null,
     @SerialName("start_position") val startPosition: Double? = null,
+    @SerialName("session_id") val sessionId: String? = null,
 )
 
 @Serializable

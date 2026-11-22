@@ -1,5 +1,6 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.network.localroute.stayOnSavedAddress
 import org.siloserver.silo.model.watchtogether.AddSuggestionRequest
 import org.siloserver.silo.model.watchtogether.CreateRoomRequest
 import org.siloserver.silo.model.watchtogether.JoinRoomRequest
@@ -416,6 +417,8 @@ class DefaultWatchTogetherApi(
     private fun HttpRequestBuilder.pin(scope: AuthScopeSnapshot, roomToken: String? = null) {
         authScope(scope)
         requireSiloAuth()
+        // Watch Party stays on the saved address, as its socket and playback do.
+        stayOnSavedAddress()
         roomToken?.let { header(ROOM_TOKEN_HEADER, it) }
     }
 }

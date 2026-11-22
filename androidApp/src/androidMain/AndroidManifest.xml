@@ -58,7 +58,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|locale|layoutDirection"
             android:launchMode="singleTop"
             android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize">
@@ -80,6 +80,8 @@
                 <data android:host="downloads" />
                 <!-- Watch Party invitation: silo://watch-party?server=…&token=… -->
                 <data android:host="watch-party" />
+                <!-- A Roku's pairing link: silo://cast?v=2&host=…&port=…&id=… -->
+                <data android:host="cast" />
             </intent-filter>
         </activity>
 
@@ -117,6 +119,8 @@
             <intent-filter>
                 <action android:name="org.siloserver.silo.debug.PLAYBACK_STATUS" />
                 <action android:name="org.siloserver.silo.debug.PLAYBACK_COMMAND" />
+                <action android:name="org.siloserver.silo.debug.CAST_STATUS" />
+                <action android:name="org.siloserver.silo.debug.CAST_TARGET" />
             </intent-filter>
         </receiver>
 

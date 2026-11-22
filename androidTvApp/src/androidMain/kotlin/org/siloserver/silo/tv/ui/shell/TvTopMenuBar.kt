@@ -48,6 +48,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.delay
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,6 +61,8 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.R
@@ -74,8 +77,10 @@ import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.tv.ui.theme.navRailLabel
 
-private const val TopMenuInitialPreviewDelayMillis = 180L
-private const val TopMenuPanelSwitchDelayMillis = 80L
+// tvOS `TVTopMenuBar` (silo-apple #1195): 120 ms before the first preview,
+// and a showing menu swaps at once when focus reaches a neighbouring menu tab.
+private const val TopMenuInitialPreviewDelayMillis = 120L
+private const val TopMenuPanelSwitchDelayMillis = 0L
 
 /**
  * How long a non-anchor focus must hold before it disarms dwell suppression.
@@ -127,7 +132,6 @@ private sealed class TvTopMenuFocus {
     data class Tab(val type: TvLibraryTabType) : TvTopMenuFocus()
     data object ForYou : TvTopMenuFocus()
     data object Calendar : TvTopMenuFocus()
-    data object Requests : TvTopMenuFocus()
     data object Search : TvTopMenuFocus()
     data object Profile : TvTopMenuFocus()
 }
@@ -175,7 +179,7 @@ fun TvTopMenuBar(
     onEnterProfileMenu: () -> Unit,
     onMoveDown: () -> Unit,
     isMenuFocused: Boolean,
-    onMenuFocusChange: (Boolean) -> Unit,
+    onMenuFocusChange: (focused: Boolean, focusedPanel: TvTopMenuPanel?) -> Unit,
     isFocusSuppressed: Boolean,
     focusRequest: Int,
     focusRequestTarget: TvTopMenuPanel? = null,
@@ -203,7 +207,6 @@ fun TvTopMenuBar(
     val homeFocusRequester = remember { FocusRequester() }
     val calendarFocusRequester = remember { FocusRequester() }
     val forYouFocusRequester = remember { FocusRequester() }
-    val requestsFocusRequester = remember { FocusRequester() }
     val searchFocusRequester = remember { FocusRequester() }
     val profileFocusRequester = remember { FocusRequester() }
     // One requester per library-type tab; stable across recompositions so a
@@ -218,8 +221,7 @@ fun TvTopMenuBar(
     var focusedButton by remember { mutableStateOf<TvTopMenuFocus?>(null) }
 
     // tvOS keeps the tab focused after Back closes its panel, but suppresses
-    // that tab's dwell preview until focus leaves it. Android additionally
-    // uses the first Down from that state as a direct handoff to content.
+    // that tab's dwell preview until focus leaves it. Down still opens it.
     var dwellSuppressedButton by remember { mutableStateOf<TvTopMenuFocus?>(null) }
 
     // While a Back-close handoff is in flight, the anchor is the ONLY focusable
@@ -246,7 +248,6 @@ fun TvTopMenuBar(
         TvRootDestination.Home -> TvTopMenuFocus.Home
         TvRootDestination.ForYou -> TvTopMenuFocus.ForYou
         TvRootDestination.Calendar -> TvTopMenuFocus.Calendar
-        TvRootDestination.Requests -> TvTopMenuFocus.Requests
         is TvRootDestination.LibraryType -> TvTopMenuFocus.Tab(root.type)
     }
 
@@ -260,7 +261,6 @@ fun TvTopMenuBar(
         is TvTopMenuFocus.Tab -> tabFocusRequesters[focus.type] ?: homeFocusRequester
         TvTopMenuFocus.ForYou -> forYouFocusRequester
         TvTopMenuFocus.Calendar -> calendarFocusRequester
-        TvTopMenuFocus.Requests -> requestsFocusRequester
         TvTopMenuFocus.Search -> searchFocusRequester
         TvTopMenuFocus.Profile -> profileFocusRequester
     }
@@ -275,7 +275,6 @@ fun TvTopMenuBar(
     fun selectedEntryRequester(): FocusRequester = when (val root = selectedRoot) {
         TvRootDestination.Home -> homeFocusRequester
         TvRootDestination.Calendar -> calendarFocusRequester
-        TvRootDestination.Requests -> requestsFocusRequester
         is TvRootDestination.LibraryType -> tabFocusRequesters[root.type] ?: homeFocusRequester
         TvRootDestination.ForYou -> forYouFocusRequester
         null -> if (isSearchActive) searchFocusRequester else homeFocusRequester
@@ -335,7 +334,7 @@ fun TvTopMenuBar(
     }
 
     LaunchedEffect(focusedButton) {
-        onMenuFocusChange(focusedButton != null)
+        onMenuFocusChange(focusedButton != null, panelForFocus(focusedButton))
     }
 
     // Dedicated focus path for closing the profile dropdown: return focus to the
@@ -482,19 +481,16 @@ fun TvTopMenuBar(
                 val focus = focusedButton
                 when {
                     event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown -> {
-                        // On a library-type tab, d-pad-down opens that tab's cascade
-                        // panel (and focuses into it) instead of diving to content.
-                        // Home/Calendar/Search keep the move-to-content behavior.
+                        // On a library-type tab or For You, d-pad-down always opens
+                        // that tab's cascade panel (and focuses into it) instead of
+                        // diving to content, including right after Back closed it
+                        // (tvOS parity, silo-apple #1195). Home/Calendar/Search keep
+                        // the move-to-content behavior.
                         val panel = panelForFocus(focus)
                         if (focus == TvTopMenuFocus.Profile) {
                             onEnterProfileMenu()
-                        } else if (panel != null && dwellSuppressedButton == focus) {
-                            // Back just dismissed this tab's panel. Treat the
-                            // next Down as the user's intent to leave chrome
-                            // and enter the first/remembered content row.
-                            dwellSuppressedButton = null
-                            onMoveDown()
                         } else if (panel != null) {
+                            dwellSuppressedButton = null
                             onEnterPanel(panel)
                         } else {
                             onMoveDown()
@@ -540,7 +536,7 @@ fun TvTopMenuBar(
         ) {
             TvTopMenuIconButton(
                 icon = Icons.Outlined.Search,
-                contentDescription = "Search",
+                contentDescription = stringResource(CommonR.string.topBar_search),
                 isFocused = focusedButton == TvTopMenuFocus.Search,
                 canFocus = canFocusButton(TvTopMenuFocus.Search),
                 focusRequester = searchFocusRequester,
@@ -557,7 +553,7 @@ fun TvTopMenuBar(
             destinations.forEach { destination ->
                 when (destination) {
                     TvRootDestination.Home -> TvTopMenuTab(
-                        label = "Home",
+                        label = stringResource(CommonR.string.topBar_home),
                         isSelected = selectedRoot == TvRootDestination.Home,
                         isFocused = focusedButton == TvTopMenuFocus.Home,
                         canFocus = canFocusButton(TvTopMenuFocus.Home),
@@ -576,7 +572,7 @@ fun TvTopMenuBar(
                         val type = destination.type
                         val panel = TvTopMenuPanel.Root(destination)
                         TvTopMenuTab(
-                            label = type.title,
+                            label = stringResource(type.titleRes),
                             isSelected = selectedRoot == destination,
                             isFocused = focusedButton == TvTopMenuFocus.Tab(type),
                             canFocus = canFocusButton(TvTopMenuFocus.Tab(type)),
@@ -600,7 +596,7 @@ fun TvTopMenuBar(
                     }
 
                     TvRootDestination.ForYou -> TvTopMenuTab(
-                        label = "For You",
+                        label = stringResource(CommonR.string.topBar_forYou),
                         isSelected = selectedRoot == TvRootDestination.ForYou,
                         isFocused = focusedButton == TvTopMenuFocus.ForYou,
                         canFocus = canFocusButton(TvTopMenuFocus.ForYou),
@@ -622,7 +618,7 @@ fun TvTopMenuBar(
                     )
 
                     TvRootDestination.Calendar -> TvTopMenuTab(
-                        label = "Calendar",
+                        label = stringResource(CommonR.string.topBar_calendar),
                         isSelected = selectedRoot == TvRootDestination.Calendar,
                         isFocused = focusedButton == TvTopMenuFocus.Calendar,
                         canFocus = canFocusButton(TvTopMenuFocus.Calendar),
@@ -635,22 +631,6 @@ fun TvTopMenuBar(
                             }
                         },
                         onClick = { onSelectRoot(TvRootDestination.Calendar) },
-                    )
-
-                    TvRootDestination.Requests -> TvTopMenuTab(
-                        label = "Requests",
-                        isSelected = selectedRoot == TvRootDestination.Requests,
-                        isFocused = focusedButton == TvTopMenuFocus.Requests,
-                        canFocus = canFocusButton(TvTopMenuFocus.Requests),
-                        focusRequester = requestsFocusRequester,
-                        onFocusChanged = { hasFocus ->
-                            focusedButton = if (hasFocus) {
-                                TvTopMenuFocus.Requests
-                            } else {
-                                focusedButton.takeUnless { it == TvTopMenuFocus.Requests }
-                            }
-                        },
-                        onClick = { onSelectRoot(TvRootDestination.Requests) },
                     )
                 }
             }
@@ -687,21 +667,27 @@ fun TvTopMenuBar(
 
 /** Minimal account view-data the menu bar + profile dropdown render. */
 data class TvAccountState(
-    val displayName: String = "Profile",
+    /** The profile's name, else the account's username; null shows "Profile" ([shownName]). */
+    val displayName: String? = null,
     /** Avatar ref + server-resolved URL, kept together so neither is lost. */
     val avatar: ProfileAvatarRef = ProfileAvatarRef.None,
-    /** Secondary line under the name in the dropdown header (role / username). */
-    val subtitle: String = "",
-    /** Active server display name, shown in the dropdown header. */
+    /** Shown after the server's name in the dropdown header (role / username); null shows none. */
+    val subtitle: UiText? = null,
+    /** Active server display name, first on the line under the name in the dropdown header. */
     val serverName: String = "",
 )
+
+/** [TvAccountState.displayName], or "Profile" before a profile or user is known. */
+@Composable
+internal fun TvAccountState.shownName(): String =
+    displayName ?: stringResource(CommonR.string.topBar_profileFallback)
 
 /** The Silo brand lockup image, sized to the bar. */
 @Composable
 private fun TvSiloWordmark() {
     Image(
         painter = painterResource(id = R.drawable.silo_wordmark),
-        contentDescription = "Silo",
+        contentDescription = stringResource(CommonR.string.app_name),
         contentScale = ContentScale.Fit,
         modifier = Modifier
             .height(TvSiloWordmarkHeight)
@@ -709,7 +695,7 @@ private fun TvSiloWordmark() {
     )
 }
 
-/** Brand lockup height inside the 32dp bar; the PNG is 764×400. */
+/** Brand lockup height inside the 32dp bar; the drawable is 764:400. */
 private val TvSiloWordmarkHeight = 26.dp
 private const val TvSiloWordmarkAspect = 764f / 400f
 
@@ -915,8 +901,9 @@ private fun TvTopMenuAvatar(
     accountState: TvAccountState,
     isFocused: Boolean,
 ) {
-    val avatarText = remember(accountState.avatar, accountState.displayName) {
-        profileAvatarDisplayText(accountState.avatar, accountState.displayName)
+    val displayName = accountState.shownName()
+    val avatarText = remember(accountState.avatar, displayName) {
+        profileAvatarDisplayText(accountState.avatar, displayName)
     }
     val avatarImage = rememberProfileAvatarImage(accountState.avatar)
     // The avatar circle plus a decorative unread badge anchored to its top-end
@@ -939,7 +926,7 @@ private fun TvTopMenuAvatar(
                 ThumbhashImage(
                     url = avatarImage.url,
                     thumbhash = null,
-                    contentDescription = accountState.displayName,
+                    contentDescription = displayName,
                     modifier = Modifier.fillMaxHeight(),
                     contentScale = ContentScale.Crop,
                     transparent = true,

@@ -22,6 +22,8 @@ import org.siloserver.silo.tv.ui.screens.detail.TvCastCard
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
 import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Cast and crew matching the search, drawn with the detail page's circular
@@ -55,7 +57,7 @@ internal fun TvSearchPeopleRow(
             .padding(top = Spacing.xs),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        TvSectionHeader(title = "People")
+        TvSectionHeader(title = stringResource(CommonR.string.search_people))
         TvRailScrollBehavior {
             LazyRow(
                 state = rowState,

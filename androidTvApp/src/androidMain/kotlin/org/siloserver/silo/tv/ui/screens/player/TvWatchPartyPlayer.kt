@@ -17,6 +17,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import org.siloserver.silo.common.R as CommonR
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import org.koin.compose.koinInject
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.isActive
 import org.siloserver.silo.common.player.watchparty.IssuedSeekTracker
 import org.siloserver.silo.common.player.watchparty.WatchPartyPlayback
+import org.siloserver.silo.common.player.watchparty.watchPartyNoticeRes
 import org.siloserver.silo.common.player.watchparty.watchPartyNoticeText
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.model.watchtogether.RoomPhase
@@ -59,6 +61,8 @@ data class TvRoomRefusal(
     val fileId: Int,
     val reason: String,
     val message: String,
+    /** When set, the error screen shows this catalog string for [message]. */
+    @androidx.annotation.StringRes val messageRes: Int? = null,
 )
 
 /** The room playback-control port, mapped onto the TV player's ViewModel. */
@@ -158,14 +162,14 @@ internal class TvWatchPartyScreenController(
      * the room's permission decision; Stop and terminate end only this
      * device's engagement. Returns whether the command was accepted.
      */
-    fun onRemoteTransport(action: PlaybackAction, exit: () -> Unit): Boolean = when (action) {
+    fun onRemoteTransport(action: PlaybackAction, exit: (notice: String?) -> Unit): Boolean = when (action) {
         PlaybackAction.Pause -> setPlaying(play = false)
         PlaybackAction.Unpause -> setPlaying(play = true)
         PlaybackAction.TogglePlayPause -> togglePlayPause()
         is PlaybackAction.SeekTo -> seek(action.positionSeconds)
-        PlaybackAction.Stop -> {
+        is PlaybackAction.Stop -> {
             leave()
-            exit()
+            exit(action.notice)
             true
         }
         else -> false
@@ -211,6 +215,7 @@ internal class TvWatchPartyScreenController(
             isPlaying = player.isPlaying,
             playbackState = player.playbackState,
             suppressed = player.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE,
+            playbackSpeed = player.playbackParameters.speed.toDouble(),
         )
     }
 }
@@ -374,15 +379,20 @@ internal fun TvWatchPartyEffects(
             if (room != null) return@collectLatest
             delay(ROOM_MISSING_EXIT_MS)
             if (watchParty.playback.ended.value == null) {
-                Toast.makeText(context, "This Watch Party isn't available anymore.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(CommonR.string.player_watchParty_unavailable), Toast.LENGTH_SHORT).show()
                 latestPartyEnded()
             }
         }
     }
 
+    // An in-place audio track switch may change the output path: rate support is measured again.
+    LaunchedEffect(watchParty) {
+        viewModel.roomAudioTrackChanges.collect { watchParty.playback.binding.onAudioTrackChanged() }
+    }
+
     LaunchedEffect(watchParty) {
         watchParty.playback.notices.collect { notice ->
-            viewModel.showPlayerMessage(watchPartyNoticeText(notice))
+            viewModel.showPlayerMessage(watchPartyNoticeText(notice), textRes = watchPartyNoticeRes(notice))
         }
     }
     // Transient server rejections (a refused request) never end the party.
@@ -449,22 +459,28 @@ internal fun tvRoomStartContext(
 }
 
 /**
- * Whether reaching [targetPlayerSeconds] needs no new media: it must lie
- * between a second behind the playhead and the buffered position of the
- * mounted item, all in player time.
+ * Whether [targetPlayerSeconds] is reachable without rebuilding the stream:
+ * no further ahead than the buffered position of the mounted item, and
+ * behind the playhead either within [behindToleranceSeconds] or, when the
+ * mounted window is seekable ([seekableBehindPlayhead]), anywhere in it. All
+ * in player time.
  */
 internal fun tvRoomPositionBuffered(
     targetPlayerSeconds: Double,
     currentPlayerSeconds: Double,
     bufferedPlayerSeconds: Double,
     behindToleranceSeconds: Double = 1.0,
+    seekableBehindPlayhead: Boolean = false,
 ): Boolean {
     if (!targetPlayerSeconds.isFinite() || !currentPlayerSeconds.isFinite() || !bufferedPlayerSeconds.isFinite()) {
         return false
     }
     if (bufferedPlayerSeconds < currentPlayerSeconds) return false
-    return targetPlayerSeconds >= currentPlayerSeconds - behindToleranceSeconds &&
-        targetPlayerSeconds <= bufferedPlayerSeconds
+    if (targetPlayerSeconds > bufferedPlayerSeconds) return false
+    // Behind the playhead, a seekable item reaches any earlier point with a
+    // native seek, as on Apple and web.
+    return targetPlayerSeconds >= currentPlayerSeconds - behindToleranceSeconds ||
+        (seekableBehindPlayhead && targetPlayerSeconds >= 0.0)
 }
 
 /** The room player state for a Media3 playback state. */
@@ -488,7 +504,7 @@ internal fun tvSiloCastPlaybackSpeed(inWatchParty: Boolean, requested: Double): 
 
 /**
  * One step down the same file's quality ladder: the highest rung below the
- * current height. With no known height (Auto or Original), the top rung.
+ * current height. With no known height (Auto), the top rung.
  */
 internal fun tvLowerQualityOption(
     options: List<VideoQualityOption>,

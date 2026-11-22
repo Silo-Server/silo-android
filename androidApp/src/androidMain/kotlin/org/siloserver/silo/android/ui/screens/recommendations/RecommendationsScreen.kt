@@ -1,5 +1,8 @@
 package org.siloserver.silo.android.ui.screens.recommendations
 
+import org.siloserver.silo.android.ui.navigation.ReportBottomNavPageTop
+import org.siloserver.silo.android.ui.components.ReportTabHeaderScrim
+import org.siloserver.silo.android.ui.components.TabPillRowHeight
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -48,6 +51,9 @@ import org.siloserver.silo.android.ui.screens.personal.rememberPersonalListContr
 import org.siloserver.silo.viewmodel.PersonalListUiState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -60,12 +66,13 @@ import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrol
 import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSurface
-import org.siloserver.silo.android.ui.theme.SiloOnOpaqueControl
-import org.siloserver.silo.android.ui.theme.SiloOpaqueControl
-import org.siloserver.silo.android.ui.theme.SiloOpaqueControlBorder
-import org.siloserver.silo.android.ui.theme.SiloOpaqueControlSelected
+import org.siloserver.silo.android.ui.theme.SiloBackground
+import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.screens.personal.currentQuery
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Phone Recommendations ("For You") screen.
@@ -144,7 +151,7 @@ fun RecommendationsScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = contentTopPadding + 16.dp),
+                    .padding(top = contentTopPadding),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
                 Box(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -171,19 +178,19 @@ fun RecommendationsScreen(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = state.error ?: "Failed to load recommendations",
+                    text = state.error?.text() ?: stringResource(CommonR.string.home_forYou_loadFailed),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Try reloading your personalized feed.",
+                    text = stringResource(CommonR.string.home_forYou_loadFailedBody),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(20.dp))
                 Button(onClick = { viewModel.loadRecommendations() }) {
-                    Text("Retry")
+                    Text(stringResource(CommonR.string.common_retry))
                 }
             }
         }
@@ -203,7 +210,7 @@ fun RecommendationsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "No recommendations yet — showing your saved titles.",
+                        text = stringResource(CommonR.string.home_forYou_savedFallback),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -212,7 +219,7 @@ fun RecommendationsScreen(
                     // embedded grids carry their own pull-to-refresh, so we do
                     // NOT wrap them in another PullToRefreshBox (nesting misbehaves).
                     OutlinedButton(onClick = { viewModel.refresh() }) {
-                        Text("Check again")
+                        Text(stringResource(CommonR.string.home_forYou_checkAgain))
                     }
                 }
             }
@@ -253,16 +260,19 @@ fun RecommendationsScreen(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     val listState = rememberLazyListState()
+                    ReportTabHeaderScrim(listState)
+                    ReportBottomNavPageTop(listState)
                     DeferImagePresentationWhileScrolling(listState) {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
                         // Content starts under the header glass and keeps room for
                         // the floating bottom nav while preserving iOS section
-                        // rhythm inside the list. Top = header + the grid's own
-                        // 16dp inset so the pills sit at the same y in both modes.
+                        // rhythm inside the list. The pills sit in the shared pill
+                        // band, at the same y as in the saved-list grid and as
+                        // Libraries' subtabs; the first row follows at TabContentTop.
                         contentPadding = PaddingValues(
-                            top = contentTopPadding + 16.dp,
+                            top = contentTopPadding,
                             bottom = 24.dp + LocalBottomChromeInset.current,
                         ),
                         // iOS sectionSpacing (phone) = largePadding (24).
@@ -275,8 +285,7 @@ fun RecommendationsScreen(
                             items = state.sections,
                             key = { it.id },
                         ) { section ->
-                            // No "See All" — iOS has no such affordance, so the
-                            // row omits it when onSeeAllClick is null.
+                            // For You rows have no full page, so no "Explore all".
                             HomeSectionRow(
                                 section = section,
                                 onItemClick = onItemClick,
@@ -300,11 +309,14 @@ fun RecommendationsScreen(
 enum class ForYouList { Watchlist, Favorites }
 
 /** Header title for the current For You content. */
-fun ForYouList?.headerTitle(): String = when (this) {
-    null -> "For You"
-    ForYouList.Watchlist -> "Watchlist"
-    ForYouList.Favorites -> "Favorites"
-}
+@Composable
+fun ForYouList?.headerTitle(): String = stringResource(
+    when (this) {
+        null -> CommonR.string.home_forYou_title
+        ForYouList.Watchlist -> CommonR.string.personal_watchlist_title
+        ForYouList.Favorites -> CommonR.string.personal_favorites_title
+    },
+)
 
 @Composable
 private fun SavedListGrid(
@@ -352,7 +364,8 @@ private fun SavedListGrid(
 /**
  * Watchlist / Favorites pill row. Mirrors iOS `SavedShortcutsRow` (phone):
  * HStack spacing 12, capsule pills 40 tall with 15 horizontal padding, a
- * 1.5pt white-30% border, and a 14sp-semibold title with a 13sp-semibold icon.
+ * 1.5pt white border (30%, 70% when selected), and a 14sp-semibold title with
+ * a 13sp-semibold icon.
  */
 @Composable
 private fun SavedShortcutsRow(
@@ -363,18 +376,20 @@ private fun SavedShortcutsRow(
     selection: ForYouList? = null,
 ) {
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(TabPillRowHeight),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SavedShortcutPill(
-            title = "Watchlist",
+            title = stringResource(CommonR.string.personal_watchlist_title),
             icon = Icons.Filled.Bookmark,
             onClick = onWatchlistClick,
             selected = selection == ForYouList.Watchlist,
         )
         SavedShortcutPill(
-            title = "Favorites",
+            title = stringResource(CommonR.string.personal_favorites_title),
             icon = Icons.Filled.Favorite,
             onClick = onFavoritesClick,
             selected = selection == ForYouList.Favorites,
@@ -393,12 +408,17 @@ private fun SavedShortcutPill(
         onClick = onClick,
         shape = CircleShape,
         contentPadding = PaddingValues(horizontal = 15.dp),
-        border = BorderStroke(1.dp, SiloOpaqueControlBorder),
+        // iOS SavedShortcutButtonBody: only the chosen list gets the solid
+        // capsule, so a row with nothing chosen reads as options.
+        border = BorderStroke(1.5.dp, Color.White.copy(alpha = if (selected) 0.70f else 0.30f)),
         colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = SiloOnOpaqueControl,
-            containerColor = if (selected) SiloOpaqueControlSelected else SiloOpaqueControl,
+            contentColor = if (selected) SiloBackground else SiloOnSurface,
+            containerColor = if (selected) SiloOnSurface.copy(alpha = 0.96f) else Color.Transparent,
         ),
-        modifier = Modifier.height(40.dp),
+        // The colors alone don't reach TalkBack; announce the chosen list.
+        modifier = Modifier
+            .height(40.dp)
+            .semantics { this.selected = selected },
     ) {
         Icon(
             imageVector = icon,

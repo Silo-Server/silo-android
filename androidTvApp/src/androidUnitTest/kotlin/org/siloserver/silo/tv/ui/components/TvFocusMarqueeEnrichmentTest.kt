@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.components
 
+import android.app.Application
+import androidx.compose.ui.test.junit4.createComposeRule
 import org.siloserver.silo.model.catalog.CastMember
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.section.SectionItem
@@ -7,14 +9,30 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * §9 marquee detail-enrichment port of tvOS `TVMarqueeEnrichment` /
  * `TVFocusMarqueeModel.backdropURL`: the aired/cast line applies to every item;
  * the series-backdrop upgrade applies to episodes only.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [35])
 class TvFocusMarqueeEnrichmentTest {
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    /** The marquee's detail line as it shows in English ([tvMarqueeDetailLine]); once per test. */
+    private fun shownDetailLine(airDate: String?, detailLine: String?): String? {
+        var shown: String? = null
+        composeRule.setContent { shown = tvMarqueeDetailLine(airDate, detailLine) }
+        composeRule.waitForIdle()
+        return shown
+    }
 
     @Test
     fun `focus rest delay matches tvOS`() {
@@ -74,7 +92,7 @@ class TvFocusMarqueeEnrichmentTest {
                 ),
             ),
         )
-        assertEquals("Aired Jan 5, 2013 · First, Second, Third", enrichment.detailLine)
+        assertEquals("Aired Jan 5, 2013 · First, Second, Third", shownDetailLine(enrichment.airDate, enrichment.detailLine))
     }
 
     @Test
@@ -82,13 +100,13 @@ class TvFocusMarqueeEnrichmentTest {
         val enrichment = TvMarqueeEnrichment.from(
             detail(airDate = "not-a-date", cast = listOf(CastMember(name = "Only", order = 0))),
         )
-        assertEquals("Only", enrichment.detailLine)
+        assertEquals("Only", shownDetailLine(enrichment.airDate, enrichment.detailLine))
     }
 
     @Test
     fun `detail line is null when both aired and cast are empty`() {
         val enrichment = TvMarqueeEnrichment.from(detail(airDate = null, cast = emptyList()))
-        assertNull(enrichment.detailLine)
+        assertNull(shownDetailLine(enrichment.airDate, enrichment.detailLine))
     }
 
     @Test
@@ -107,7 +125,7 @@ class TvFocusMarqueeEnrichmentTest {
         )
         assertEquals("https://art/series.jpg", enriched.heroBackdropUrl)
         assertEquals("seriesHash", enriched.heroBackdropThumbhash)
-        assertEquals("Aired Jan 5, 2013 · Star", enriched.detailLine)
+        assertEquals("Aired Jan 5, 2013 · Star", shownDetailLine(enriched.airDate, enriched.detailLine))
     }
 
     @Test
@@ -122,7 +140,7 @@ class TvFocusMarqueeEnrichmentTest {
             ),
         )
         assertEquals("https://still/movie.jpg", enriched.heroBackdropUrl)
-        assertEquals("Aired Jan 5, 2013", enriched.detailLine)
+        assertEquals("Aired Jan 5, 2013", shownDetailLine(enriched.airDate, enriched.detailLine))
     }
 
     @Test

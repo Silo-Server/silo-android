@@ -10,11 +10,12 @@ import org.siloserver.silo.network.*
 class LibrarySectionItemsV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
     suspend fun capture(): AuthScopeSnapshot? = tokens.captureProfileScope()
     suspend fun current(owner: AuthScopeSnapshot): Boolean = owner.stillOwns(tokens, OwnerPolicy.FULL)
-    suspend fun read(libraryId: Int, sectionId: String, owner: AuthScopeSnapshot): ApiResult<HomeSectionItemsResponse> {
+    suspend fun read(libraryId: Int, sectionId: String, owner: AuthScopeSnapshot,
+        widths: ArtworkWidths? = null): ApiResult<HomeSectionItemsResponse> {
         if (libraryId <= 0 || sectionId.isBlank()) return ApiResult.Error(422, "validation_failed", "Invalid library section.")
         return ownedV2Call<JsonObject, HomeSectionItemsResponse>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
             client.get("/api/v2/library/$libraryId/sections/${sectionId.encodeURLPathPart()}/items") {
-                authScope(scope!!); requireSiloAuth()
+                authScope(scope!!); requireSiloAuth(); artworkWidths(widths, scope)
             }
         }) { row ->
             val section = decodeSectionV2(row)
@@ -22,10 +23,16 @@ class LibrarySectionItemsV2Api(private val client: HttpClient, private val token
             HomeSectionItemsResponse(section, section.items)
         }
     }
-    suspend fun list(libraryId: Int, owner: AuthScopeSnapshot): ApiResult<SectionsResponse> {
+    /** [itemLimit] is sent only when the server advertised it; see [sectionItemLimitParam]. */
+    suspend fun list(libraryId: Int, owner: AuthScopeSnapshot, widths: ArtworkWidths? = null,
+        itemLimit: Int? = null): ApiResult<SectionsResponse> {
         if (libraryId <= 0) return ApiResult.Error(422, "validation_failed", "Invalid library.")
+        var rejected = false
         return ownedV2Call<JsonObject, SectionsResponse>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
-            client.get("/api/v2/library/$libraryId/sections") { authScope(scope!!); requireSiloAuth() }
-        }) { decodeSectionsV2(it) }
+            client.get("/api/v2/library/$libraryId/sections") {
+                authScope(scope!!); requireSiloAuth(); artworkWidths(widths, scope)
+                itemLimit?.let { parameter("item_limit", it) }
+            }.also { rejected = itemLimit != null && it.rejectsQueryParameter("item_limit") }
+        }) { decodeSectionsV2(it) }.tagItemLimitRejection(rejected)
     }
 }

@@ -66,7 +66,7 @@ remux, or cross-node cases.
 | D3 | No new foreground service keeps the room socket alive. Background behavior follows the table under "Background and process death". Background hosting is not promised. | 2-minute host grace | Adopted |
 | D4 | Invitations: room code everywhere; phone share and copy of the server's `https` invitation link (custom-scheme links aren't clickable in Messages or email); a paste parser; a TV QR code of the link. The app link is `silo://watch-party?server=<server URL>&token=<join token>`, and it resolves to the same invitation as the web link. Tapping a shared `https` link opens the app only after the server's join page offers that app link. | Server `invite_path`; [Apple #409](https://github.com/Silo-Server/silo-apple/issues/409); format proposed in [Apple #412](https://github.com/Silo-Server/silo-apple/pull/412) | Not final. Build against #412's format; freeze it before the M5 link handling merges |
 | D5 | While engaged, solo playback (detail Play, extras, launcher and deep links, SiloCast launch) asks the user to leave the party first. An invitation that arrives while engaged explains that the user must leave first. | Invitation message from Apple #347; the solo-playback guard is an Android decision (one shared service player) | Adopted |
-| D6 | Catch-up follows the server policy and the web client: 2-second buffering grace, rate convergence between 0.9x and 1.25x kept separate from user speed, paced correction reloads, and a lower-quality offer. User playback speed is a session-only 1x. | Server sync doc; web client | Adopted |
+| D6 | Catch-up follows the server policy and the web client: 2-second buffering grace, rate nudges between 0.96x and 1.04x kept separate from user speed, paced correction reloads, and a lower-quality offer. User playback speed is a session-only 1x. | Server sync doc; web client | Adopted |
 | D7 | Party PiP, Google Cast, and external players stay disabled in rooms until each route is qualified. Starting party playback ends a solo PiP session. The party player blocks Cast connection. | Apple disables party PiP and AirPlay and ends solo PiP; Cast and external players are the Android equivalents | Adopted |
 | D8 | In a party, intro and credits never skip automatically. Members who may seek get the Skip Intro offer (sent as a room seek) even when their setting is Always. Members who may not seek get no intro or credits pill. | Apple #347 | Adopted |
 | D9 | Suggestions work in both modes. In a host-pick lobby, the host's **Queue** stages a suggestion and labels it "Up next"; it never promotes. While engaged, a guest's detail page offers **Suggest to Party**. The host's detail action stages the item in the lobby and selects it while playing. Android adds a confirmation before a selection that replaces what everyone is watching. | Web client; Apple #347 (Apple selects without a confirmation) | Adopted |
@@ -206,10 +206,10 @@ strings; socket frames send several of them as numbers.
 | --- | --- |
 | Server | Ticket lifetime ≤ 30 s (`expires_in` is 0 when the access token or the room proof has under a second left). Socket closes at the earliest of 5 min, access-token expiry, or proof expiry. Room proof is an HS256 JWT with `exp` 24 h after issue. Authority recheck every 15 s |
 | Server | Host-disconnect grace 2 min. Presence lease 45 s. Idle room expiry 24 h. Socket write queue 64 frames; a full queue closes the socket |
-| Server | Waiting deadline 10 s, and only once at least one attached member is ready; past it, the first `ready` resumes the room. Seek tolerance: guest 1 s, host 15 s (a host more than 1 s away re-anchors the room). Maximum command lead 5 s |
-| Server | Buffering pauses the room only if the viewer has not stalled in 5 min, the room has not paused for buffering in 1 min, and the viewer is not already catching up. A lone viewer's stall always pauses and waits past the deadline. A buffering member gets no corrections for up to 30 s. A `state_report` within 1 s of the room with the same pause state marks the member ready. A host drifting 2 s or less is corrected like a guest; a larger jump or a pause mismatch moves the room |
+| Server | Waiting deadline 10 s, and only once at least one attached member is ready; past it, the first `ready` resumes the room. Seek tolerance: guest 1 s for a room seek and 5 s for the guest's own catch-up seek when `ready` names that seek's `command_id` ([server #2488](https://github.com/Silo-Server/silo-server/pull/2488)), host 15 s (a host more than 1 s away re-anchors the room). Android gates a guest's `ready` at 5 s and leaves the per-command tolerance to the server. Maximum command lead 5 s |
+| Server | Buffering pauses the room only if the viewer has not stalled in 5 min, the room has not paused for buffering in 1 min, and the viewer is not already catching up. A lone viewer's stall always pauses and waits past the deadline. A buffering member gets no corrections for up to 30 s. A `state_report` within 1 s of the room with the same pause state marks the member ready. A guest or host whose reports sit more than 1 s off the room twice in a row is corrected, at most every 10 s. A host drifting 10 s or less is corrected like a guest; a larger jump or a pause mismatch moves the room |
 | Server | `max_member_state_ids` = 200. Picker rows are capped at 20 and 30. Suggestion pages default to 50 |
-| Client (web reference; tune only with evidence) | State reports every 1.5 s. Readiness retry every 500 ms. Ping every 15 s. Command quiet period 250 ms. Buffering report after 2 s of unplayable media. Catch-up band 2 s, deadband 0.35 s, rate 0.9–1.25x at `1 + drift / 8 s`. Reload budget: one at a time, 10 s doubling to 60 s, 30 s stale limit, lead ≤ 10 s, capped at the media duration. Reconnect notice after 2 s disconnected. Lower-quality offer after 2 sustained stalls within 5 min |
+| Client (web reference; tune only with evidence) | State reports every 1.5 s. Readiness retry every 500 ms. Ping every 2 s until 4 clock samples, then every 15 s. Command quiet period 250 ms. Buffering report after 2 s of unplayable media. Deadband 0.4 s, settle 0.1 s, hard seek 5 s, paused seek 1 s (in place only), rate 0.96–1.04x at `1 + sign(d) * clamp(abs(d) / 25 s, 0.01, 0.04)` in 0.005 steps, drift loop every 0.5 s after a 1 s settle. Reload budget: one at a time, 10 s doubling to 60 s, 30 s stale limit, lead ≤ 10 s, capped at the media duration. Reconnect notice after 2 s disconnected. Lower-quality offer after 2 sustained stalls within 5 min |
 
 ### Errors
 
@@ -350,8 +350,17 @@ ready. Room playback must not.
   transport requests, so they are never echoed back as intent.
 - Sample the clock with ping and pong from socket open, before a player
   attaches. Stamp pong receipt at transport ingress and fence samples by
-  connection epoch. Reject invalid samples and detect clock discontinuities.
-  Pings run every 15 s.
+  connection epoch. Count a round trip of -2 ms to 0 as 0 (millisecond
+  truncation) and reject the rest below 0 or above 5 s. Use the offset of the
+  lowest round trip among the last 8 samples, the newest on a tie. A new
+  sample whose offset differs from the best one's by more than half their
+  round trips plus 50 ms means a clock stepped: drop the older samples, as
+  web and Apple do. A step in the wall clock relative to the monotonic clock
+  drops every sample too; Android's monotonic clock stops in deep sleep, so
+  the step's size is not a usable correction. Either drop restarts the ping
+  warm-up. Ping on open, every 2 s until the connection has supplied 4
+  samples, then every 15 s. Samples survive a reconnect to the same
+  room and clear on leave.
 - Schedule with the server-clock estimate and a monotonic delay (at most the
   5 s lead). A late Play advances its target by the elapsed server time. With
   no valid sample, stay paused at the snapshot anchor, obtain one, and bound
@@ -395,16 +404,59 @@ ready. Room playback must not.
 
 ### Corrections
 
-Follow `decideRoomCatchup` in the web client:
+Every client follows the shared Watch Party sync spec (v2). A command's
+`position_seconds` is the room position at `execute_at`; while it plays, the
+room is at `position + (now - execute_at)`. The latest applied command is the
+room reference; snapshots never move the playhead. Drift is room position
+minus local position, measured when the command executes, never when it
+arrives. Rate and play state change only at execution.
 
-1. Explicit seek commands always seek, immediately, outside any budget.
-2. Drift within 0.35 s: do nothing.
-3. A target the player can reach in the current stream: seek.
-4. A pause correction that needs new media: do nothing. The next Play realigns.
-5. Drift over 2 s: seek, including a re-anchor or replan.
-6. Otherwise converge by rate: `1 + drift / 8 s`, clamped to 0.9–1.25x,
-   tracking the room position as it advances, until within 0.35 s. Then reset
-   to exactly 1x.
+1. Seek: always seek to the projected target, outside any budget, at 1x.
+2. Pause: return to 1x, pause, then seek only above 5 s, or above 1 s when the
+   target is reachable without rebuilding the stream.
+3. Play while already playing: within 0.4 s do nothing; up to 5 s start a rate
+   nudge, even when the target is buffered; above 5 s seek in the buffer or
+   reload through the budget.
+4. Play from rest: seek under the pause rule, then play at 1x.
+
+The host executes commands with 2 s in place of 5 s: a released server
+(before [server #2481](https://github.com/Silo-Server/silo-server/pull/2481))
+takes a host report more than 2 s off the room as the host's decision and
+re-anchors everyone to it. Guests and the drift loop keep 5 s.
+
+A drift loop runs every 0.5 s while the room, the reference, and the player
+are all playing and ready, no command is pending, the last command finished at
+least 1 s ago, and no reload is in flight. It starts a nudge beyond 0.4 s and
+ends it within 0.1 s. The rate is `1 + sign(d) * clamp(abs(d) / 25 s, 0.01, 0.04)`,
+quantized to 0.005. On a mount that honours rate it never seeks. It returns
+to exactly 1x when its conditions stop holding; a pending command freezes it, rate included. Drift
+above 5 s is left to the server's correction. A reload older than its 30 s
+stale limit counts as finished.
+
+Media3 applies speed only to PCM output that is not tunneled, and a device
+too slow to decode faster than real time reports the rate without reaching
+it. When the engine still reports 1x a second after a nudge starts, or the
+playhead's measured advance over at least 5 s (once the rate should have
+gained 0.25 s) gains less than half of what the rate asks, the mount is
+rate-unsupported until the next mount, epoch, quality change, audio track
+change, or reload; a native seek within the mounted item does not clear it.
+Nudges then become in-place seeks beyond 1 s, from commands and from the loop
+alike; a command whose target is out of
+reach in place reloads through the budget instead. Each seek aims ahead by the
+shortfall the previous one left once it landed (at most 3 s). A seek that
+leaves more than 1 s doubles the wait before the next, from 1 s up to 16 s;
+one that converges resets it. A member that wants to play but is still
+buffering reloads a gap above 5 s through the budget, like a playing member,
+and runs a held reload once the budget allows, without waiting to play.
+
+"In place" means a native seek within the mounted item: ahead of the playhead
+only as far as it is buffered, and behind it anywhere in a seekable item, so a
+member stopped ahead of a paused room seeks back.
+
+After a command executes, ordinary reports wait until the player shows the
+command's play state with no seek or mount in flight (at least 250 ms, at most
+3 s), and name the command only from then on. A host's stale "playing" sample
+must never read as its decision after its own pause.
 
 A Play correction whose target isn't buffered, and so needs a range request or
 a stream rebuild, goes through the reload budget. Only one runs at a time. The
@@ -895,14 +947,14 @@ source-string assertions.
 | T12 | Same-profile replacement on the same API and on different APIs | The displaced client stops without retries; the winner continues; Rejoin works | Unit, live, cross-node |
 | T13 | Room socket vs playback-control socket loss | Only the affected socket recovers; no duplicate player or false attachment | Unit, fault injection |
 | T14 | Failed attach, stale echo, mid-play session replacement (quality, 404 renewal, replan) | Reports wait for the right echo; the new session reattaches; the room does not pause | Unit, native delivery |
-| T15 | A second seek on the same session; a seek while already waiting | Readiness re-arms; guest within 1 s; host re-anchors within 15 s | Unit, real seeks |
+| T15 | A second seek on the same session; a seek while already waiting | Readiness re-arms; guest within 1 s of a room seek (5 s of its own catch-up seek); host re-anchors within 15 s | Unit, real seeks |
 | T16 | Lost or rejected `ready`; old `is_ready` snapshot | `state_report` healing; barrier released only on fresh acknowledgement | Unit, integration fixture |
 | T17 | Duplicate, out-of-order, and late commands; superseded Play; missing or skewed clock | One current intent runs; late Play advanced; stale work cancelled | Clock and player tests, burst run |
 | T18 | Stall under 2 s | No buffering report; local convergence | Player fixture, live shaping |
 | T19 | First sustained stall | The room waits up to 10 s; the overlay names the viewer; resumes on recovery | Live shaping |
 | T20 | Deadline passes | `self_ignore_wait`; `ready` in playing and paused rooms, retried every 500 ms; fresh target; no reports while unplayable | Unit, live shaping |
 | T21 | Stall again within 5 min or within 1 min of the last pause; a lone viewer stalls | The room keeps playing; a lone viewer always pauses it and the room waits; a lone catching-up viewer resumes from its own position | Unit, live |
-| T22 | Rate convergence; host drift of 2 s or less | 0.9–1.25x until within 0.35 s, then exactly 1x; host corrected, not re-anchored; passthrough falls back to seek; saved speed untouched | Unit, TV and phone |
+| T22 | Rate convergence; host drift of 10 s or less | 0.96–1.04x from beyond 0.4 s until within 0.1 s, then exactly 1x; host corrected, not re-anchored; a mount whose engine still reports 1x a second after a nudge starts (tunneling, passthrough audio), or whose playhead gains less than half of the nudge over at least 5 s (a slow decoder), is marked rate-unsupported until the next mount, epoch, quality change, audio track change, or reload, and then corrects with in-place seeks beyond 1 s that aim ahead by the last seek's measured shortfall (at most 3 s) and back off from 1 s to 16 s while they miss; saved speed untouched | Unit, TV and phone |
 | T23 | Unbuffered corrections on a slow link, including copy remux | One reload at a time; backoff from 10 s to 60 s; lead up to 10 s, capped at duration; explicit seeks bypass; no replan loop ([server #1259](https://github.com/Silo-Server/silo-server/issues/1259)) | Unit, live shaping |
 | T24 | Two sustained stalls within 5 min | Offer one lower quality of the same file, once per quality | Unit, live |
 | T25 | Host local suspensions (focus loss, noisy, sleep timer, TV pause, subtitle preparation, Cast attempt) | Room unaffected; the host resyncs before reporting | Unit, native |

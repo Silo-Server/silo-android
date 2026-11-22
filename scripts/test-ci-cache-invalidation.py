@@ -12,17 +12,6 @@ logs = root / "build/ci-cache-invalidation"
 logs.mkdir(parents=True, exist_ok=True)
 probes = [
     (
-        "workflow",
-        ":androidTvApp:testDebugUnitTest",
-        "org.siloserver.silo.tv.ui.screens.player.TvFireTvRcFeedbackOwnershipTest",
-        "release display version keeps the complete tag",
-        root / ".github/workflows/release.yml",
-        lambda text: text.replace(
-            "SILO_DISPLAY_VERSION: ${{ needs.setup.outputs.version }}",
-            "SILO_DISPLAY_VERSION: ${{ needs.setup.outputs.version_name }}",
-        ),
-    ),
-    (
         "sibling-manifest",
         ":androidApp:testDebugUnitTest",
         "org.siloserver.silo.android.auth.NativeSignInManifestTest",

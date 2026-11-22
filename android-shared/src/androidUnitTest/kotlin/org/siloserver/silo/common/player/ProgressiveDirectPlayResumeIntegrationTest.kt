@@ -62,23 +62,22 @@ class ProgressiveDirectPlayResumeIntegrationTest {
     }
 
     @Test
-    fun `progressive source resumes exact byte range and ends without player error`() {
-        val dispatcher = RangeFixtureDispatcher(fixture, ResumeResponse.COMPLETE)
-        val harness = prepareHarness(dispatcher)
-
-        awaitResumeRequest(harness.player, dispatcher)
-        TestPlayerRunHelper.play(harness.player).untilState(Player.STATE_ENDED)
+    fun `progressive source resumes both interruptions at their byte offsets`() {
+        val movie = seekableWavFixture(sampleRate = 48_000, pcmBytes = 2 * 1024 * 1024)
+        val dispatcher = RangeFixtureDispatcher(movie, ResumeResponse.SECOND_CUT)
+        var resumedReads = 0
+        val harness = prepareHarness(dispatcher) {
+            if (dispatcher.requests.size >= 2 && resumedReads++ > 0) 660_000L else 0L
+        }
+        TestPlayerRunHelper.play(harness.player).ignoringNonFatalErrors().untilState(Player.STATE_ENDED)
 
         assertNull(harness.player.playerError)
-        assertEquals(2, dispatcher.requests.size)
-        assertEquals(1, harness.loadErrors.size)
-        assertFalse(harness.loadErrors.single().wasCanceled)
-        assertNull(dispatcher.requests[0].getHeader("Range"))
+        assertEquals(listOf(false, false), harness.loadErrors.map { it.wasCanceled })
         assertEquals(
-            "bytes=${fixture.size / 2}-",
-            dispatcher.requests[1].getHeader("Range"),
+            listOf(null, "bytes=${movie.size / 2}-", "bytes=${movie.size * 3 / 4}-"),
+            dispatcher.requests.map { it.getHeader("Range") },
         )
-        assertEquals("\"fixture-v1\"", dispatcher.requests[1].getHeader("If-Range"))
+        dispatcher.requests.drop(1).forEach { assertEquals("\"fixture-v1\"", it.getHeader("If-Range")) }
     }
 
     @Test
@@ -180,7 +179,10 @@ class ProgressiveDirectPlayResumeIntegrationTest {
         return harness.loadErrors[1]
     }
 
-    private fun prepareHarness(dispatcher: Dispatcher): ProgressiveHarness {
+    private fun prepareHarness(
+        dispatcher: Dispatcher,
+        nowMs: () -> Long = android.os.SystemClock::elapsedRealtime,
+    ): ProgressiveHarness {
         val server = MockWebServer().also {
             it.dispatcher = dispatcher
             it.start()
@@ -202,12 +204,12 @@ class ProgressiveDirectPlayResumeIntegrationTest {
                 isResumableDirectPlayUri = { it == mediaUri },
             )
         }
-        val mediaSourceFactory = ProgressiveMediaSource.Factory(guardedFactory)
-            .setLoadErrorHandlingPolicy(
-                SiloMediaLoadErrorHandlingPolicy(
-                    isResumableProgressiveDirectPlay = { it == mediaUri },
-                ),
-            )
+        val policy = SiloMediaLoadErrorHandlingPolicy(
+            isResumableProgressiveDirectPlay = { it == mediaUri },
+            nowMs = nowMs,
+        )
+        val mediaSourceFactory = ProgressiveMediaSource.Factory(policy.trackDirectPlayReads(guardedFactory))
+            .setLoadErrorHandlingPolicy(policy)
         val context = ApplicationProvider.getApplicationContext<Context>()
         val mediaSource = mediaSourceFactory.createMediaSource(
             MediaItem.fromUri(mediaUri),
@@ -256,7 +258,7 @@ class ProgressiveDirectPlayResumeIntegrationTest {
     )
 
     private enum class ResumeResponse {
-        COMPLETE,
+        SECOND_CUT,
         NO_PROGRESS,
         ENTITY_CHANGED,
         RANGE_NOT_SATISFIABLE,
@@ -281,8 +283,10 @@ class ProgressiveDirectPlayResumeIntegrationTest {
                     ?.toInt()
                     ?: return MockResponse().setResponseCode(400)
                 when (resumeResponse) {
-                    ResumeResponse.COMPLETE ->
-                        partialResponse(start, etag = "\"fixture-v1\"")
+                    ResumeResponse.SECOND_CUT ->
+                        partialResponse(start, etag = "\"fixture-v1\"").apply {
+                            if (requests.size == 2) setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY)
+                        }
                     ResumeResponse.NO_PROGRESS ->
                         partialResponse(start, etag = "\"fixture-v1\"", body = byteArrayOf())
                             .setHeader("Content-Length", fixture.size - start)
@@ -323,9 +327,8 @@ class ProgressiveDirectPlayResumeIntegrationTest {
         generateSequence(this as Throwable?) { it.cause }.filterIsInstance<T>().firstOrNull()
 
     private companion object {
-        fun seekableWavFixture(): ByteArray {
-            val sampleRate = 8_000
-            val pcm = ByteArray(sampleRate / 4) { index ->
+        fun seekableWavFixture(sampleRate: Int = 8_000, pcmBytes: Int = sampleRate / 4): ByteArray {
+            val pcm = ByteArray(pcmBytes) { index ->
                 (128 + (index % 64) - 32).toByte()
             }
             return ByteArrayOutputStream(44 + pcm.size).apply {

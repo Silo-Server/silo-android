@@ -2,12 +2,35 @@ package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class MobileSubtitleAutoSelectionTest {
+
+    @Test
+    fun sidecarRowTheServerBurnsInStaysSelected() {
+        // A sidecar pick the server can only burn in commits as burn-in of
+        // that same server track; the menu still marks the row the viewer picked.
+        val rows = listOf(
+            subtitle(0, "Full Subs (ASS)", "en", codec = "ass")
+                .copy(serverTrackId = "file:11:subtitle:0", serverDelivery = SUBTITLE_DELIVERY_SIDECAR),
+            subtitle(1, "English (SRT)", "en")
+                .copy(serverTrackId = "file:11:subtitle:1", serverDelivery = SUBTITLE_DELIVERY_SIDECAR),
+        )
+        val picked = mobileSubtitleIdentity(rows[0]) as SubtitleIdentity.ServerSidecar
+        val burnedIn = SubtitleIdentity.ServerBurnIn(picked.serverIndex, picked.media)
+
+        assertEquals(0, resolveMobileSubtitleOrdinal(burnedIn, rows))
+        // A saved burn-in whose index now holds another track is not that row.
+        val reindexed = listOf(rows[1].copy(index = 0))
+        assertEquals(null, resolveMobileSubtitleOrdinal(burnedIn, reindexed))
+        // The same track at another index is still that row.
+        val moved = listOf(rows[1].copy(index = 0), rows[0].copy(index = 1))
+        assertEquals(1, resolveMobileSubtitleOrdinal(burnedIn, moved))
+    }
 
     @Test
     fun downloadedSelectionUsesPersistentDownloadIdentity() {
@@ -635,6 +658,178 @@ class MobileSubtitleAutoSelectionTest {
                 preferredLanguage = "en",
                 subtitleMode = "always",
                 showForcedSubtitles = false,
+            ),
+        )
+    }
+
+    @Test
+    fun forcedTextTrackDoesNotOutrankTheFullTrackWhenSubtitlesAreWanted() {
+        // "English – Always" with forced on: the full English track, not the
+        // forced one listed first (the shared rule the TV player applies).
+        val subtitles = listOf(
+            subtitle(index = 1, label = "English Forced", language = "en", forced = true),
+            subtitle(index = 2, label = "English", language = "en"),
+        )
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(1),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "always",
+                showForcedSubtitles = true,
+            ),
+        )
+    }
+
+    @Test
+    fun phoneAndSharedResolverPickTheSameTrack() {
+        // The TV player resolves over inventoryAutoSubtitleCandidates with the
+        // shared resolver; the phone must land on the same row for each case.
+        val rows = listOf(
+            subtitle(index = 0, label = "English Forced", language = "en", forced = true),
+            subtitle(index = 1, label = "English SDH", language = "en"),
+            subtitle(index = 2, label = "English", language = "en"),
+            subtitle(index = 3, label = "Español", language = "es"),
+            subtitle(index = 4, label = "Signs", language = "es", forced = true),
+        )
+        val cases = listOf(
+            Triple("en", "always", "ja"),
+            Triple("en", "auto", "ja"),
+            Triple("en", "auto", "en"),
+            Triple("es", "auto", "es"),
+            Triple("es", "always", "en"),
+            Triple("fr", "always", "en"),
+            Triple("en", "off", "ja"),
+        )
+        for ((language, mode, audioLanguage) in cases) {
+            for (forced in listOf(true, false)) {
+                val shared = org.siloserver.silo.model.playback.resolveAutoSubtitle(
+                    org.siloserver.silo.model.playback.inventoryAutoSubtitleCandidates(rows),
+                    org.siloserver.silo.model.playback.AutoSubtitleContext(language, mode, forced, audioLanguage),
+                )
+                val expected = when (shared) {
+                    org.siloserver.silo.model.playback.AutoSubtitleResolution.NoChange -> MobileSubtitleAutoSelection.NoChange
+                    org.siloserver.silo.model.playback.AutoSubtitleResolution.Disable -> MobileSubtitleAutoSelection.Disable
+                    is org.siloserver.silo.model.playback.AutoSubtitleResolution.Select ->
+                        MobileSubtitleAutoSelection.Select(rows.indexOfFirst { it.index == shared.candidate.selectionIndex })
+                }
+                assertEquals(
+                    expected,
+                    resolveMobileAutoSubtitleSelection(
+                        audioTracks = listOf(audio(language = audioLanguage)),
+                        selectedAudioIndex = 0,
+                        subtitles = rows,
+                        preferredLanguage = language,
+                        subtitleMode = mode,
+                        showForcedSubtitles = forced,
+                    ),
+                    "language=$language mode=$mode audio=$audioLanguage forced=$forced",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun preferenceAndTrackLanguagesMatchAcrossIso639Forms() {
+        // The preference says "it", the server row says "ita" (and the other
+        // way round): the phone matched these before it moved to the shared
+        // resolver, and must still.
+        fun resolve(preferred: String, trackLanguage: String) = resolveMobileAutoSubtitleSelection(
+            audioTracks = listOf(audio(language = "en")),
+            selectedAudioIndex = 0,
+            subtitles = listOf(
+                subtitle(index = 0, label = "English", language = "en"),
+                subtitle(index = 1, label = "Other", language = trackLanguage),
+            ),
+            preferredLanguage = preferred,
+            subtitleMode = "always",
+            showForcedSubtitles = false,
+        )
+        assertEquals(MobileSubtitleAutoSelection.Select(1), resolve("it", "ita"))
+        assertEquals(MobileSubtitleAutoSelection.Select(1), resolve("por", "pt"))
+        assertEquals(MobileSubtitleAutoSelection.Select(1), resolve("ru", "rus"))
+    }
+
+    @Test
+    fun subtitlesOffStillStartTheForcedTrackForTheAudioThatPlays() {
+        // Series (or profile) set to Off with "Show forced subtitles" on: the
+        // next episode starts on the forced English line, as on web and TV.
+        val rows = listOf(
+            subtitle(index = 0, label = "English", language = "en"),
+            subtitle(index = 1, label = "English Forced", language = "en", forced = true),
+        )
+        fun resolve(audio: String, forced: Boolean) = resolveMobileAutoSubtitleSelection(
+            audioTracks = listOf(audio(language = audio)),
+            selectedAudioIndex = 0,
+            subtitles = rows,
+            preferredLanguage = "",
+            subtitleMode = "off",
+            showForcedSubtitles = forced,
+        )
+        assertEquals(MobileSubtitleAutoSelection.Select(1), resolve("eng", forced = true))
+        assertEquals(MobileSubtitleAutoSelection.Disable, resolve("eng", forced = false))
+        assertEquals(MobileSubtitleAutoSelection.Disable, resolve("fra", forced = true))
+    }
+
+    @Test
+    fun theSeriesChoiceSignaturePicksTheRememberedTrack() {
+        // The viewer chose English SDH for the series; this episode lists the
+        // tracks in another order. The signature finds SDH, not plain English.
+        val rows = listOf(
+            subtitle(index = 0, label = "English", language = "en"),
+            subtitle(index = 1, label = "English SDH", language = "en"),
+        )
+        val signature = org.siloserver.silo.model.playback.SubtitleTrackSignature(
+            language = "en", codec = "srt", label = "English SDH", hearingImpaired = true,
+        )
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(1),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = rows,
+                preferredLanguage = "en",
+                subtitleMode = "always",
+                showForcedSubtitles = false,
+                trackSignature = signature,
+            ),
+        )
+        // Off for the series stays off, whatever the signature says.
+        assertEquals(
+            MobileSubtitleAutoSelection.Disable,
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = rows,
+                preferredLanguage = "",
+                subtitleMode = "off",
+                showForcedSubtitles = false,
+                trackSignature = signature,
+            ),
+        )
+    }
+
+    @Test
+    fun theServersSdhFlagFindsAnSdhTrackLabelledLikeThePlainOne() {
+        val rows = listOf(
+            subtitle(index = 0, label = "English", language = "en"),
+            subtitle(index = 1, label = "English", language = "en").copy(hearingImpaired = true),
+        )
+        val signature = org.siloserver.silo.model.playback.SubtitleTrackSignature(
+            language = "en", codec = "srt", label = "English", hearingImpaired = true,
+        )
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(1),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = rows,
+                preferredLanguage = "en",
+                subtitleMode = "always",
+                showForcedSubtitles = false,
+                trackSignature = signature,
             ),
         )
     }

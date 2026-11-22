@@ -1,7 +1,7 @@
 repository=https://github.com/Silo-Server/silo-server
 path=contracts/api/v2/fixtures
-commit=51953b6c138a45aaca05a81b3234ef12d4bdd9c8
-ref=HEAD
+commit=93794454b84aa818979bee19b8e192944395635a
+ref=main
 snapshot=committed
 api_major=2
 

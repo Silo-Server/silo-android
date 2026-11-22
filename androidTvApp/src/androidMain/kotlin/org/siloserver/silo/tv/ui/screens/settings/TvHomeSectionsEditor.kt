@@ -41,6 +41,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,6 +60,11 @@ import androidx.tv.material3.Text
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.displayUppercase
+import org.siloserver.silo.common.i18n.sectionTitle
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.tv.data.preferences.TvHomeSectionPreferences
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
@@ -136,6 +143,13 @@ internal fun TvHomeSectionsEditor(
 
     BackHandler(onBack = ::close)
 
+    // The editor lists Home's rows, so realtime and language updates reach
+    // them while it is open, as they do on Home itself.
+    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
+        viewModel.onShown()
+        onPauseOrDispose { viewModel.onHidden() }
+    }
+
     LaunchedEffect(preferences, viewModel) {
         preferences.refresh()
         // The shell normally already owns populated Home state. A direct
@@ -172,7 +186,7 @@ internal fun TvHomeSectionsEditor(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    text = "Home Sections",
+                    text = stringResource(CommonR.string.settings_homeSections_title),
                     style = MaterialTheme.typography.displaySmall.copy(
                         fontSize = 22.sp,
                         lineHeight = 26.sp,
@@ -181,7 +195,7 @@ internal fun TvHomeSectionsEditor(
                     color = Color.White,
                 )
                 Text(
-                    text = "HOME SECTIONS",
+                    text = stringResource(CommonR.string.settings_homeSections_title).displayUppercase(),
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontFamily = FontFamily.Monospace,
                         fontSize = 14.sp,
@@ -205,7 +219,7 @@ internal fun TvHomeSectionsEditor(
                             verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
                             Text(
-                                text = "Home Sections",
+                                text = stringResource(CommonR.string.settings_homeSections_title),
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontSize = 15.sp,
                                     lineHeight = 18.sp,
@@ -215,9 +229,9 @@ internal fun TvHomeSectionsEditor(
                             )
                             Text(
                                 text = if (isEditing) {
-                                    "Move rows into your preferred order."
+                                    stringResource(CommonR.string.settings_homeSections_editingHint)
                                 } else {
-                                    "Choose which rows appear on Home."
+                                    stringResource(CommonR.string.settings_homeSections_hint)
                                 },
                                 style = MaterialTheme.typography.bodyMedium.copy(
                                     fontSize = 14.sp,
@@ -227,12 +241,12 @@ internal fun TvHomeSectionsEditor(
                             )
                         }
                         HomeSectionsControlButton(
-                            label = if (isEditing) "Done Editing" else "Edit",
+                            label = if (isEditing) stringResource(CommonR.string.settings_homeSections_doneEditing) else stringResource(CommonR.string.settings_homeSections_edit),
                             onClick = { isEditing = !isEditing },
                             enabled = arrangedSections.size >= 2,
                         )
                         HomeSectionsControlButton(
-                            label = "Done",
+                            label = stringResource(CommonR.string.common_done),
                             onClick = ::close,
                             focusRequester = doneFocusRequester,
                         )
@@ -241,15 +255,13 @@ internal fun TvHomeSectionsEditor(
 
                 when {
                     arrangedSections.isEmpty() && homeState.isLoading -> {
-                        HomeSectionsMessage("Loading Home sections…")
+                        HomeSectionsMessage(stringResource(CommonR.string.settings_homeSections_loading))
                     }
                     arrangedSections.isEmpty() && homeState.error != null -> {
-                        HomeSectionsMessage(
-                            "Silo couldn’t refresh the Home rows. Try again when the server is reachable.",
-                        )
+                        HomeSectionsMessage(stringResource(CommonR.string.settings_homeSections_loadFailed))
                     }
                     arrangedSections.isEmpty() -> {
-                        HomeSectionsMessage("Home has no populated rows to arrange yet.")
+                        HomeSectionsMessage(stringResource(CommonR.string.settings_homeSections_empty))
                     }
                     else -> {
                         LazyColumn(
@@ -286,9 +298,9 @@ internal fun TvHomeSectionsEditor(
                         }
                         Text(
                             text = if (isEditing) {
-                                "Use the arrow buttons to move rows. The new order saves immediately."
+                                stringResource(CommonR.string.settings_homeSections_moveFooter)
                             } else {
-                                "Open eye: visible on Home. Closed eye: hidden. Hidden rows leave no gap."
+                                stringResource(CommonR.string.settings_homeSections_visibilityFooter)
                             },
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontSize = 14.sp,
@@ -350,6 +362,7 @@ private fun HomeSectionEditorRow(
     onMoveDown: () -> Unit,
     onToggleVisibility: () -> Unit,
 ) {
+    val title = sectionTitle(section)
     HomeSectionsCard {
         Row(
             modifier = Modifier
@@ -365,7 +378,7 @@ private fun HomeSectionEditorRow(
                 verticalArrangement = Arrangement.spacedBy(1.dp),
             ) {
                 Text(
-                    text = section.title,
+                    text = title,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontSize = 14.sp,
                         lineHeight = 17.sp,
@@ -376,7 +389,12 @@ private fun HomeSectionEditorRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "${section.items.size} item${if (section.items.size == 1) "" else "s"}",
+                    text = if (section.isCollectionRow) {
+                        val count = section.collections.size
+                        pluralStringResource(CommonR.plurals.home_editor_collectionCount, count, count, LocaleFormat.integer(count))
+                    } else {
+                        pluralStringResource(CommonR.plurals.rowPage_item, section.items.size, section.items.size)
+                    },
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -385,7 +403,7 @@ private fun HomeSectionEditorRow(
             if (editing) {
                 HomeSectionsControlButton(
                     icon = Icons.Filled.KeyboardArrowUp,
-                    contentDescription = "Move ${section.title} earlier",
+                    contentDescription = stringResourceWithNames(CommonR.string.settings_homeSections_moveEarlier, title),
                     onClick = onMoveUp,
                     enabled = canMoveUp,
                     compact = true,
@@ -394,7 +412,7 @@ private fun HomeSectionEditorRow(
                 )
                 HomeSectionsControlButton(
                     icon = Icons.Filled.KeyboardArrowDown,
-                    contentDescription = "Move ${section.title} later",
+                    contentDescription = stringResourceWithNames(CommonR.string.settings_homeSections_moveLater, title),
                     onClick = onMoveDown,
                     enabled = canMoveDown,
                     compact = true,
@@ -405,9 +423,9 @@ private fun HomeSectionEditorRow(
             HomeSectionsControlButton(
                 icon = if (visible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
                 contentDescription = if (visible) {
-                    "Hide ${section.title}"
+                    stringResourceWithNames(CommonR.string.settings_homeSections_hide, title)
                 } else {
-                    "Show ${section.title}"
+                    stringResourceWithNames(CommonR.string.settings_homeSections_show, title)
                 },
                 onClick = onToggleVisibility,
                 compact = true,

@@ -163,7 +163,7 @@ class SubtitlesApiTest {
     }
 
     @Test
-    fun `translate posts body without session_id and decodes 202 job envelope`() = runTest {
+    fun `translate without a playback session omits session_id and decodes 202 job envelope`() = runTest {
         val (api, captured) = api(
             status = HttpStatusCode.Accepted,
             responseBody = """
@@ -188,7 +188,7 @@ class SubtitlesApiTest {
 
         assertEquals("/api/v2/subtitles/ai/translate", captured.path)
         val sent = SiloJson.parseToJsonElement(captured.body).jsonObject
-        assertFalse("session_id" in sent.keys)       // Android polls; never streams live cues
+        assertFalse("session_id" in sent.keys)       // no playback session to attach
         assertEquals(
             setOf("media_file_id", "kind", "source_index", "source_language", "target_language", "start_position"),
             sent.keys,

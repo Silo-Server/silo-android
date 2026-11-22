@@ -16,7 +16,10 @@ import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.playback.isClientMountableBitmapCodecFamily
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 
-/** Mounts only the selected artifact. Explicit embedded decisions mount none. */
+/**
+ * Mounts only the selected artifact. Explicit embedded decisions, including a
+ * track the HLS stream carries as a rendition, mount none.
+ */
 fun subtitlesForVideoMediaMount(
     subtitles: List<PlayerSubtitleInfo>,
     playbackPlan: PlaybackExecutionPlan?,
@@ -35,7 +38,8 @@ fun subtitlesForVideoMediaMount(
                     }
                 }
                 ?.takeUnless { row ->
-                    preferMuxedTracks && row.isMuxedInDirectPlayStream(playbackPlan)
+                    row.hlsRendition != null ||
+                        preferMuxedTracks && row.isMuxedInDirectPlayStream(playbackPlan)
                 }
         }
         is SubtitleIdentity.Downloaded -> subtitles.singleOrNull { subtitle ->
@@ -152,6 +156,12 @@ data class VideoPlayerMediaSpec(
      * derived from the plan's decision reason. Drives renderer decoder routing.
      */
     val activeClaims: List<String> = emptyList(),
+    /**
+     * Whether this stream may take the active server's local route. False for
+     * Watch Party playback, which stays on the saved address it can always
+     * remount from.
+     */
+    val allowsLocalRoute: Boolean = false,
 ) {
     val startPositionMs: Long
         get() {

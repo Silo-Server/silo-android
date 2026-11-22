@@ -69,7 +69,19 @@ internal data class ServerConnectionsV2(
     val allowed: Boolean? = null,
     @SerialName("server_id") val serverId: String,
     val endpoints: List<Endpoint> = emptyList(),
+    @SerialName("local_route") val localRoute: LocalRouteDocument? = null,
 ) {
+    /**
+     * How to reach the API server directly on the local network: the pin of
+     * the key its listener presents over TLS, and the admin-set local address
+     * when there is one. Absent on servers without the feature.
+     */
+    @Serializable
+    internal data class LocalRouteDocument(
+        @SerialName("spki_sha256") val spkiSha256: String = "",
+        val url: String? = null,
+    )
+
     @Serializable
     internal data class Endpoint(
         val kind: String,

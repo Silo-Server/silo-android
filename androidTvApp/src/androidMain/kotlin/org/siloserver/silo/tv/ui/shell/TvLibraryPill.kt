@@ -1,11 +1,13 @@
 package org.siloserver.silo.tv.ui.shell
 
+import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.ui.graphics.vector.ImageVector
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * A section ("pill") offered within a library type's cascade flyout (§3 /
@@ -31,16 +33,17 @@ enum class TvLibraryPill {
     Series;
 
     /** Pill / flyout-row label. */
-    val title: String
+    @get:StringRes
+    val titleRes: Int
         get() = when (this) {
-            Recommended -> "Recommended"
-            Collections -> "Collections"
-            Browse -> "Browse"
-            Genres -> "Genres"
-            Alphabet -> "A-Z"
-            RecentlyAdded -> "Recently Added"
-            Authors -> "Authors"
-            Series -> "Series"
+            Recommended -> CommonR.string.library_recommended
+            Collections -> CommonR.string.library_collections
+            Browse -> CommonR.string.library_browse
+            Genres -> CommonR.string.menu_section_genres
+            Alphabet -> CommonR.string.menu_section_alphabet
+            RecentlyAdded -> CommonR.string.menu_section_recentlyAdded
+            Authors -> CommonR.string.menu_section_authors
+            Series -> CommonR.string.menu_section_bookSeries
         }
 
     /** Glyph shown beside the section name in the cascade flyout (§5.3). */

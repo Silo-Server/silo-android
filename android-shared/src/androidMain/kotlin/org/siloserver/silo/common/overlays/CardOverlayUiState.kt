@@ -11,13 +11,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.overlays.CardOverlayPrefs
+import org.siloserver.silo.overlays.OverlayImage
 import org.siloserver.silo.overlays.OverlaySchema
 
 /**
  * Ambient card-overlay configuration published once near the app shell and
  * consumed by every poster/still card. Keeps cards from each injecting the
  * [OverlayPrefsStore] (and re-hydrating it) per instance — the shell hydrates
- * once and provides the resolved [enabled] + [prefs] down the tree.
+ * once and provides the resolved [enabled], render prefs and image URLs
+ * down the tree.
  *
  * Default is disabled with registry-default prefs, so any card rendered
  * outside a [ProvideCardOverlays] scope simply draws no overlay layer.
@@ -25,8 +27,39 @@ import org.siloserver.silo.overlays.OverlaySchema
 @Immutable
 data class CardOverlayUiState(
     val enabled: Boolean,
+    /**
+     * The document to render ([OverlayPrefsStore.cardPrefs]): every image ref
+     * it holds is listed, so [imageUrl] resolves it.
+     */
     val prefs: CardOverlayPrefs,
-)
+    /** Uploaded-image URLs by ref; see [imageUrl]. */
+    private val imageUrls: Map<String, String> = emptyMap(),
+) {
+    /**
+     * The URL of the uploaded image [ref] names, or null when the server's
+     * library does not list it (draw the badge without the image then, as on
+     * web).
+     *
+     * The URL is absolute, on the server that listed it
+     * (`<origin>/api/v2/overlay-images/<ref>`). That endpoint needs no
+     * credentials and its bytes never change for a ref, so load it like any
+     * artwork URL: `AsyncImage(model = url, ...)` through the app's singleton
+     * Coil loader (`buildSiloImageLoader`), which sends no Silo auth headers
+     * and keeps it in the disk cache. The image is WebP, up to 600x300; size
+     * it from the badge's text height, and fall back to the image-less badge
+     * when the load fails (the image was deleted since the list was read).
+     */
+    fun imageUrl(ref: String): String? = imageUrls[ref]
+
+    companion object {
+        /** [imageUrl]'s lookup for [images]; the first of a repeated ref wins. */
+        fun imageUrlsOf(images: List<OverlayImage>): Map<String, String> = buildMap {
+            for (image in images) {
+                if (image.url.isNotBlank() && image.ref !in this) put(image.ref, image.url)
+            }
+        }
+    }
+}
 
 val LocalCardOverlayUiState: ProvidableCompositionLocal<CardOverlayUiState> =
     staticCompositionLocalOf {
@@ -34,7 +67,8 @@ val LocalCardOverlayUiState: ProvidableCompositionLocal<CardOverlayUiState> =
     }
 
 /**
- * Hydrates the [store], collects `enabled` + `prefs`, and publishes them via
+ * Hydrates the [store], collects `enabled`, `cardPrefs` and `images`, and
+ * publishes them via
  * [LocalCardOverlayUiState] for the [content] subtree. Place this high in each
  * client (app shell / main screen) so the prefs are loaded once per session.
  * The caller injects the singleton [OverlayPrefsStore] (each client has Koin
@@ -63,7 +97,11 @@ fun ProvideCardOverlays(
         if (sessionKey != null) store.hydrateIfNeeded()
     }
     val enabled by store.enabled.collectAsState()
-    val prefs by store.prefs.collectAsState()
-    val state = remember(enabled, prefs) { CardOverlayUiState(enabled = enabled, prefs = prefs) }
+    val prefs by store.cardPrefs.collectAsState()
+    val images by store.images.collectAsState()
+    val imageUrls = remember(images) { CardOverlayUiState.imageUrlsOf(images) }
+    val state = remember(enabled, prefs, imageUrls) {
+        CardOverlayUiState(enabled = enabled, prefs = prefs, imageUrls = imageUrls)
+    }
     CompositionLocalProvider(LocalCardOverlayUiState provides state, content = content)
 }

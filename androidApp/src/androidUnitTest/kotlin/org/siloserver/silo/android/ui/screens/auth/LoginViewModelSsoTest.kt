@@ -8,6 +8,8 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondError
 import io.ktor.http.HttpStatusCode
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +32,7 @@ import org.siloserver.silo.android.auth.NativeSignInMessages
 import org.siloserver.silo.android.auth.NativeSignInPurpose
 import org.siloserver.silo.android.auth.NativeSignInStart
 import org.siloserver.silo.android.auth.PendingNativeSignIn
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.auth.AccountIdentities
 import org.siloserver.silo.model.auth.AccountIdentity
 import org.siloserver.silo.model.auth.AccountIdentityLinkTicket
@@ -56,16 +59,27 @@ import org.siloserver.silo.repository.ExternalSignInRepository
 import org.siloserver.silo.repository.ServerIdentityRepository
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.text
 
 /** The phone sign-in screen's provider paths: discovery, starting a flow, and the flow's result. */
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 @OptIn(ExperimentalCoroutinesApi::class)
 class LoginViewModelSsoTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
+    /** The sign-in screen's text in English (the screen also isolates names in right-to-left). */
+    private fun UiText.inEnglish(): String = text(resources)
+
     private val dispatcher = StandardTestDispatcher()
 
     @BeforeTest fun setUp() = Dispatchers.setMain(dispatcher)
@@ -198,7 +212,7 @@ class LoginViewModelSsoTest {
         advanceUntilIdle()
         vm.onProviderClick(keycloak)
         advanceUntilIdle()
-        assertEquals("Couldn't confirm this server's identity. Check your connection and try again.", vm.uiState.value.error)
+        assertEquals("Couldn't confirm this server's identity. Check your connection and try again.", vm.uiState.value.error?.inEnglish())
         assertNull(vm.uiState.value.browserLaunch)
         assertNull(vm.uiState.value.providerBusy)
         assertNull(f.store.load())
@@ -469,8 +483,8 @@ class LoginViewModelSsoTest {
         assertEquals(tailscale, vm.uiState.value.networkProvider)
         assertEquals(listOf(keycloak), vm.uiState.value.providers, "the network provider is not a browser sign-in")
         assertTrue(vm.uiState.value.showPasswordForm, "the password form stays")
-        assertEquals("Continue as Alice Example", continueAsLabel(tailscale))
-        assertEquals("via Tailscale", continueViaLabel(tailscale))
+        assertEquals("Continue as Alice Example", continueAsLabel(tailscale).inEnglish())
+        assertEquals("via Tailscale", continueViaLabel(tailscale)?.inEnglish())
 
         vm.onNetworkSignIn()
         assertTrue(vm.uiState.value.networkSignInBusy)
@@ -494,7 +508,7 @@ class LoginViewModelSsoTest {
         advanceUntilIdle()
         vm.onNetworkSignIn()
         advanceUntilIdle()
-        assertEquals("Open this server at its Tailscale address to sign in this way.", vm.uiState.value.error)
+        assertEquals("Open this server at its Tailscale address to sign in this way.", vm.uiState.value.error?.inEnglish())
         assertFalse(vm.uiState.value.loginSuccess)
         assertFalse(vm.uiState.value.networkSignInBusy, "the button can be pressed again")
         assertNull(f.tokens.getAccessToken())
@@ -502,7 +516,7 @@ class LoginViewModelSsoTest {
         f.networkAnswer = ApiResult.NetworkError(RuntimeException("offline"))
         vm.onNetworkSignIn()
         advanceUntilIdle()
-        assertEquals("Network error. Please check your connection.", vm.uiState.value.error)
+        assertEquals("Network error. Please check your connection.", vm.uiState.value.error?.inEnglish())
         assertEquals(2, f.networkCalls.size)
         vm.close(); f.close()
     }
@@ -552,9 +566,9 @@ class LoginViewModelSsoTest {
     @Test
     fun theButtonNamesTheProviderWhenItNamesNobody() {
         val nobody = tailscale.copy(networkIdentity = NetworkIdentity("", ""))
-        assertEquals("Continue with Tailscale", continueAsLabel(nobody))
+        assertEquals("Continue with Tailscale", continueAsLabel(nobody).inEnglish())
         assertNull(continueViaLabel(nobody))
-        assertEquals("Continue as alice", continueAsLabel(tailscale.copy(networkIdentity = NetworkIdentity("", "alice"))))
+        assertEquals("Continue as alice", continueAsLabel(tailscale.copy(networkIdentity = NetworkIdentity("", "alice"))).inEnglish())
     }
 
     @Test
@@ -571,7 +585,7 @@ class LoginViewModelSsoTest {
             429 to "rate_limited",
             500 to "internal",
         )
-        val texts = cases.map { (status, code) -> networkSignInMessage(ApiResult.Error(status, code, "server detail"), "Tailscale") }
+        val texts = cases.map { (status, code) -> networkSignInMessage(ApiResult.Error(status, code, "server detail"), "Tailscale").inEnglish() }
         assertEquals(texts.size, texts.toSet().size, texts.joinToString("\n"))
         texts.forEach { assertFalse(it.contains("server detail"), "the server's detail is never shown") }
         assertEquals("Tailscale doesn't allow this device on this server.", texts[1])
@@ -589,15 +603,15 @@ class LoginViewModelSsoTest {
     fun passwordRefusalsFromADirectoryHaveTheirOwnText() {
         assertEquals(
             NativeSignInMessages.forReason("email_in_use", "Directory"),
-            passwordLoginMessage(org.siloserver.silo.network.ApiResult.Error(409, "email_in_use", "raw"), directoryName = "Directory"),
+            passwordLoginMessage(org.siloserver.silo.network.ApiResult.Error(409, "email_in_use", "raw"), directoryName = "Directory").inEnglish(),
         )
         assertEquals(
             NativeSignInMessages.forReason("identity_linked_elsewhere", "Directory"),
-            passwordLoginMessage(ApiResult.Error(409, "identity_linked_elsewhere", "raw"), directoryName = "Directory"),
+            passwordLoginMessage(ApiResult.Error(409, "identity_linked_elsewhere", "raw"), directoryName = "Directory").inEnglish(),
         )
         assertEquals(
             NativeSignInMessages.forReason(NativeSignInMessages.RATE_LIMITED),
-            passwordLoginMessage(ApiResult.Error(429, "", "raw")),
+            passwordLoginMessage(ApiResult.Error(429, "", "raw")).inEnglish(),
         )
     }
 

@@ -1,5 +1,7 @@
 package org.siloserver.silo.playback
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -20,8 +22,9 @@ data class SubtitleSyncNotice(
     /** Stays the same while one job runs, so the card updates in place. */
     val id: String,
     val tone: Tone,
-    val title: String,
-    val detail: String? = null,
+    /** The card shows it with its first letter capitalized (`titleText()` in android-shared). */
+    val title: UiText,
+    val detail: UiText? = null,
     /** 0..100 while a job runs. */
     val percent: Int? = null,
 ) {
@@ -32,7 +35,7 @@ data class SubtitleSyncNotice(
 data class SubtitleSyncWatched(
     val key: String,
     /** The subtitle's language name, or null when it has none to show. */
-    val name: String?,
+    val name: UiText?,
     val job: SubtitleSyncJob,
     val timing: SubtitleTiming,
     /** The subtitle's cue revision now. */
@@ -70,7 +73,7 @@ data class SubtitleSyncFeedbackState(
     data class Applying(
         val key: String,
         val jobId: String,
-        val detail: String,
+        val detail: UiText,
         /** The track's cue revision when the job started; a later one that loads shows the result. */
         val startRevision: Int,
     )
@@ -87,39 +90,44 @@ fun SubtitleSyncFeedbackState.finishApplying(): SubtitleSyncFeedbackState {
         notice = SubtitleSyncNotice(
             id = applying.jobId,
             tone = SubtitleSyncNotice.Tone.Success,
-            title = "Subtitles synced",
+            title = UiText.Key(SharedString.SubtitleSyncNoticeSynced),
             detail = applying.detail,
         ),
     )
 }
 
-private fun subtitlesOf(name: String?): String = name?.let { "$it subtitles" } ?: "subtitles"
+/**
+ * "[name] subtitles …", or "Subtitles …" for a subtitle with no name. The card
+ * capitalizes a title's first letter, so a name that opens it reads as one.
+ */
+private fun subtitlesText(name: UiText?, named: SharedString, unnamed: SharedString): UiText =
+    name?.let { UiText.Key(named, listOf(it)) } ?: UiText.Key(unnamed)
 
 private fun outcomeNotice(watched: SubtitleSyncWatched): SubtitleSyncNotice? {
     val job = watched.job
-    val subject = subtitlesOf(watched.name).replaceFirstChar(Char::uppercaseChar)
+    val name = watched.name
     return when (job.status) {
         SubtitleSyncJob.SYNCED -> SubtitleSyncNotice(
             id = job.id,
             tone = SubtitleSyncNotice.Tone.Success,
-            title = "$subject synced",
+            title = subtitlesText(name, SharedString.SubtitleSyncNoticeNamedSynced, SharedString.SubtitleSyncNoticeSynced),
             detail = describeSyncTiming(watched.timing),
         )
         SubtitleSyncJob.ALREADY_SYNCED -> SubtitleSyncNotice(
             id = job.id,
             tone = SubtitleSyncNotice.Tone.Info,
-            title = "$subject already match the audio",
+            title = subtitlesText(name, SharedString.SubtitleSyncNoticeAlreadyMatches, SharedString.SubtitleSyncNoticeAlreadyMatchesUnnamed),
         )
         SubtitleSyncJob.NO_MATCH -> SubtitleSyncNotice(
             id = job.id,
             tone = SubtitleSyncNotice.Tone.Warning,
-            title = "$subject don't match the audio",
-            detail = "They're probably for another release. The timing wasn't changed.",
+            title = subtitlesText(name, SharedString.SubtitleSyncNoticeNoMatch, SharedString.SubtitleSyncNoticeNoMatchUnnamed),
+            detail = UiText.Key(SharedString.SubtitleSyncNoticeNoMatchDetail),
         )
         SubtitleSyncJob.FAILED -> SubtitleSyncNotice(
             id = job.id,
             tone = SubtitleSyncNotice.Tone.Warning,
-            title = "Couldn't sync ${subtitlesOf(watched.name)}",
+            title = subtitlesText(name, SharedString.SubtitleSyncNoticeFailed, SharedString.SubtitleSyncNoticeFailedUnnamed),
             detail = syncFailureMessage(job.failure),
         )
         else -> null
@@ -151,7 +159,7 @@ fun SubtitleSyncFeedbackState.step(input: SubtitleSyncFeedbackInput): SubtitleSy
                 SubtitleSyncNotice(
                     id = job.id,
                     tone = SubtitleSyncNotice.Tone.Progress,
-                    title = "Syncing ${subtitlesOf(watched.name)}",
+                    title = subtitlesText(watched.name, SharedString.SubtitleSyncNoticeSyncing, SharedString.SubtitleSyncNoticeSyncingUnnamed),
                     detail = syncPhaseLabel(job),
                     percent = syncProgressPercent(job) ?: 0,
                 ),
@@ -167,7 +175,7 @@ fun SubtitleSyncFeedbackState.step(input: SubtitleSyncFeedbackInput): SubtitleSy
                         startRevision = next.startRevision[job.id] ?: watched.revision,
                     ),
                 )
-                show(SubtitleSyncNotice(job.id, SubtitleSyncNotice.Tone.Progress, "Applying new timing…", percent = 100))
+                show(SubtitleSyncNotice(job.id, SubtitleSyncNotice.Tone.Progress, UiText.Key(SharedString.SubtitleSyncNoticeApplying), percent = 100))
             } else {
                 show(outcomeNotice(watched))
             }
@@ -207,7 +215,7 @@ fun SubtitleSyncFeedbackState.step(input: SubtitleSyncFeedbackInput): SubtitleSy
                 SubtitleSyncNotice(
                     id = "timing:$activeKey:${input.activeRevision}",
                     tone = SubtitleSyncNotice.Tone.Info,
-                    title = "Subtitle timing updated",
+                    title = UiText.Key(SharedString.SubtitleSyncNoticeTimingUpdated),
                 ),
             )
         }
@@ -229,12 +237,12 @@ fun SubtitleSyncUiState.feedbackInput(
     activeKey: String?,
     cueRevisions: Map<String, Int>,
     loadedCueRevisions: Map<String, Int>,
-    nameOf: (SubtitleSyncState) -> String?,
+    nameOf: (SubtitleSyncState) -> UiText?,
 ): SubtitleSyncFeedbackInput {
     val watched = watchedEntry()?.let { entry ->
         SubtitleSyncWatched(
             key = entry.state.key,
-            name = nameOf(entry.state)?.takeIf(String::isNotBlank),
+            name = nameOf(entry.state),
             job = entry.state.sync ?: return@let null,
             timing = entry.state.timing,
             revision = cueRevisions[entry.state.key] ?: 0,

@@ -1,8 +1,12 @@
 package org.siloserver.silo.tv.ui.navigation
 
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.tv.ui.screens.boxset.TvBoxSetScreen
 import androidx.compose.foundation.layout.fillMaxWidth
 import android.net.Uri
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -29,8 +33,10 @@ import org.siloserver.silo.common.ui.marquee.MarqueeBackdrop
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
+import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.tv.profiles.noAccountOpenButAnotherSignedIn
+import org.siloserver.silo.tv.profiles.onlyOpenTileIsActive
 import org.siloserver.silo.network.TokenManager
-import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfilePromptAction
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.ProfileVerificationRecovery
@@ -41,6 +47,8 @@ import org.siloserver.silo.tv.ui.screens.audiobook.TvAudiobookPlayerScreen
 import org.siloserver.silo.tv.ui.screens.auth.TvLoginScreen
 import org.siloserver.silo.tv.ui.screens.auth.TvPairDeviceScreen
 import org.siloserver.silo.tv.ui.screens.auth.TvServerSetupScreen
+import org.siloserver.silo.tv.ui.screens.auth.TvPairedSessionDestination
+import org.siloserver.silo.tv.ui.screens.auth.pairedSessionDestination
 import org.siloserver.silo.tv.ui.screens.auth.TvSetupScreen
 import org.siloserver.silo.tv.ui.screens.auth.TvSignupScreen
 import org.siloserver.silo.tv.ui.screens.profiles.TvCreateProfileScreen
@@ -49,9 +57,15 @@ import org.siloserver.silo.tv.ui.screens.collections.TvCollectionDetailScreen
 import org.siloserver.silo.tv.ui.screens.detail.TvItemDetailScreen
 import org.siloserver.silo.tv.ui.screens.people.TvPersonDetailScreen
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryCollectionDetailScreen
+import org.siloserver.silo.tv.ui.screens.library.TvSectionBrowseScreen
+import org.siloserver.silo.viewmodel.SectionBrowseArgs
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerScreen
 import org.siloserver.silo.tv.ui.screens.profiles.TvProfileSelectionScreen
-import org.siloserver.silo.tv.ui.screens.servers.TvServerListScreen
+import org.siloserver.silo.tv.ui.screens.profiles.asProfile
+import org.siloserver.silo.model.profile.householdPrimary
+import org.siloserver.silo.viewmodel.MenuAddProfileSession
+import org.siloserver.silo.tv.ui.screens.servers.TvAccountsScreen
+import org.siloserver.silo.tv.ui.screens.servers.TvChangeAccountScreen
 import org.siloserver.silo.tv.ui.screens.servers.TvServerSwitchDestination
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsPromptScreen
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsReportScreen
@@ -74,15 +88,21 @@ import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.tv.watchnext.WatchNextSeeder
 import org.siloserver.silo.tv.cast.RemotePlaybackIdentityManager
+import org.siloserver.silo.tv.auth.TvSignOut
+import org.siloserver.silo.tv.auth.TvSignOutResult
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.ProfileSelectionPrompt
+import org.siloserver.silo.common.profiles.profileSelectionPrompt
 import org.siloserver.silo.tv.profiles.TvActiveProfileReset
 import org.siloserver.silo.common.profiles.ProfileAwayTracker
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.tv.ui.screens.cast.TvSiloCastStandbyView
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.siloserver.silo.common.player.playbackDisplayId
@@ -365,6 +385,43 @@ private fun NavHostController.navigateToWatchParty(
 private fun tvHasLiveWatchParty(repository: WatchTogetherRepository, roomId: String?): Boolean =
     roomId != null && repository.roomSnapshot.value?.roomId == roomId
 
+/** Set on a detail entry that a title's Related Movies or Recommended Series rail opened. */
+private const val OPENED_FROM_RELATED_RAIL_KEY = "openedFromRelatedRail"
+
+/**
+ * Opens a title picked from another title's Related Movies or Recommended
+ * Series rail. The first hop from a title pushes, so Back returns to that
+ * title. A hop from a page such a rail opened replaces that page, so however
+ * many recommendations someone follows, two Backs leave the chain: one to the
+ * title it started from, one to wherever that title was opened. Picking the
+ * starting title again goes back to it instead of opening a second copy.
+ */
+private fun NavHostController.navigateToTvRelatedItemDetail(contentId: String) {
+    val current = currentBackStackEntry
+    // A second Select on the same card, or on the title just returned to,
+    // can arrive while the page is still changing; it opens nothing.
+    if (current?.destination?.route == TvRoute.ItemDetail.ROUTE &&
+        current.arguments?.getString(TvRoute.ItemDetail.ARG_CONTENT_ID) == contentId
+    ) {
+        return
+    }
+    if (current?.savedStateHandle?.get<Boolean>(OPENED_FROM_RELATED_RAIL_KEY) == true) {
+        val start = previousBackStackEntry?.takeIf { it.destination.route == TvRoute.ItemDetail.ROUTE }
+        if (start?.arguments?.getString(TvRoute.ItemDetail.ARG_CONTENT_ID) == contentId) {
+            popBackStack()
+            return
+        }
+        // No launchSingleTop: popUpTo removes the current page first, so
+        // single-top would have nothing left to match.
+        navigate(TvRoute.ItemDetail(contentId).route) {
+            popUpTo(TvRoute.ItemDetail.ROUTE) { inclusive = true }
+        }
+    } else {
+        navigateToTvItemDetail(contentId)
+    }
+    currentBackStackEntry?.takeIf { it !== current }?.savedStateHandle?.set(OPENED_FROM_RELATED_RAIL_KEY, true)
+}
+
 /** Pushes item detail, collapsing only an exact repeat of the current page. */
 private fun NavHostController.navigateToTvItemDetail(
     contentId: String,
@@ -425,11 +482,13 @@ private val tvMarqueeRoutes: Set<String> = setOf(
     TvRoute.Signup.route,
     TvRoute.Login.ROUTE,
     TvRoute.ProfileSelection.route,
+    TvRoute.ChangeAccount.ROUTE,
 )
 
 /** The profile picker and its screens, where a prompt has nothing to add. */
 private val TvProfilePromptPickerRoutes: Set<String> = setOf(
     TvRoute.ProfileSelection.route,
+    TvRoute.ChangeAccount.ROUTE,
     TvRoute.CreateProfile.route,
     TvRoute.EditProfile.ROUTE,
 )
@@ -468,7 +527,7 @@ fun TvAppNavigation(
     // the entry it produced. Only used to collapse an immediate repeat.
     val lastPlaybackNavigation = remember { mutableStateOf<TvPlaybackNavigation?>(null) }
     val tokenManager: TokenManager = koinInject()
-    val authRepository: AuthRepository = koinInject()
+    val serverRegistry: ServerRegistry = koinInject()
     val profileRepository: ProfileRepository = koinInject()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
@@ -487,14 +546,19 @@ fun TvAppNavigation(
     val profileAwayTracker: ProfileAwayTracker = koinInject()
     val profileLaunchPreferences: ProfileLaunchPreferences = koinInject()
     val activeProfileReset: TvActiveProfileReset = koinInject()
+    val authRepository: org.siloserver.silo.repository.AuthRepository = koinInject()
     val remotePlaybackIdentityManager: RemotePlaybackIdentityManager = koinInject()
+    val tvSignOut: TvSignOut = koinInject()
     val playbackLifecycle: PlaybackSessionLifecycle = koinInject()
+    /** The profile menu's Add Profile in progress; a second press waits for it. */
+    val addProfileJob = remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     // Android can restore Silo's previous back stack over the start route
     // MainTvActivity chose: after a configuration change while Silo was away,
     // or after its process was killed in the background. When Profile
     // Selection has already cleared the profile, that brings back Home with
-    // no profile behind it, so go to Who's Watching instead.
+    // no profile behind it, so go to Who's Watching instead, or to Change
+    // Account when that is the start route MainTvActivity chose.
     LaunchedEffect(navController) {
         navController.currentBackStackEntryFlow.first()
         val restoredMain = runCatching { navController.getBackStackEntry(TvRoute.Main.route) }.isSuccess
@@ -502,7 +566,9 @@ fun TvAppNavigation(
             !tokenManager.getAccessToken().isNullOrBlank() &&
             tokenManager.getProfileId().isNullOrBlank()
         ) {
-            navController.navigate(TvRoute.ProfileSelection.route) {
+            val changeAccount = TvRoute.ChangeAccount().route
+            val target = if (startDestination == changeAccount) changeAccount else TvRoute.ProfileSelection.route
+            navController.navigate(target) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
             }
@@ -511,7 +577,8 @@ fun TvAppNavigation(
 
     // Profile Selection's return rule (silo-apple `applyProfileReturnPolicy`):
     // when Silo comes back from the background and the setting asks, Who's
-    // Watching replaces whatever was on screen, as Switch Profile does.
+    // Watching replaces whatever was on screen, as Switch Profile does. With
+    // several accounts saved, Change Account replaces it instead.
     LaunchedEffect(profileAwayTracker) {
         kotlinx.coroutines.flow.combine(
             profileAwayTracker.selectionRequired,
@@ -553,10 +620,28 @@ fun TvAppNavigation(
                 profileAwayTracker.onSelectionHandled()
                 return@collect
             }
+            val prompt = profileSelectionPrompt(
+                selectionRequired = true,
+                savedAccounts = serverRegistry.accounts.value.size,
+                onlyProfileNeedsNoChoice = serverRegistry.onlyOpenTileIsActive(tokenManager),
+            )
+            // With one account saved, its only profile, with no PIN, is never
+            // asked for (multi-account spec §4.2): it is still the one open.
+            if (prompt == ProfileSelectionPrompt.None) {
+                profileLaunchPreferences.clearBackgroundedAt()
+                profileAwayTracker.onSelectionHandled()
+                return@collect
+            }
             // Leave the profile's screens before clearing its state (see
             // onSwitchProfile). MainTvActivity.onStop already flushed pending
-            // device-setting writes under this profile.
-            navController.navigate(TvRoute.ProfileSelection.route) {
+            // device-setting writes under this profile. Several accounts are
+            // saved: Change Account asks whose account first.
+            val target = if (prompt == ProfileSelectionPrompt.ChangeAccount) {
+                TvRoute.ChangeAccount().route
+            } else {
+                TvRoute.ProfileSelection.route
+            }
+            navController.navigate(target) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
             }
@@ -565,7 +650,10 @@ fun TvAppNavigation(
             // it once the previous profile's screens have faded out.
             withTimeoutOrNull(PROFILE_COVER_MAX_MS) {
                 navController.visibleEntries.first { entries ->
-                    entries.all { it.destination.route in preMainAuthRoutes }
+                    entries.all {
+                        val shown = it.destination.route
+                        shown in preMainAuthRoutes || shown == TvRoute.ChangeAccount.ROUTE
+                    }
                 }
             }
             profileAwayTracker.onSelectionHandled()
@@ -581,6 +669,7 @@ fun TvAppNavigation(
                 contentId = playback.contentId,
                 libraryId = playback.libraryId,
                 fileId = playback.fileId,
+                versionChosen = playback.pinsVersion == true,
                 resumePositionSeconds = if (playback.startFromBeginning) 0.0 else playback.resumePosition,
                 audioTrackIndex = playback.audioTrackIndex,
                 subtitleTrackIndex = playback.subtitleTrackIndex,
@@ -664,6 +753,10 @@ fun TvAppNavigation(
             // never go stale on an authenticated session.
             val route = entry.destination.route
             if (route == null || route in preMainAuthRoutes) return@collect // unauthenticated flow: keep queued until Main
+            // Change Account with no profile open stands in for Who's
+            // Watching (a launch or return with several accounts saved): keep
+            // the link queued until a profile is chosen, as the picker does.
+            if (route == TvRoute.ChangeAccount.ROUTE && tokenManager.getProfileId().isNullOrBlank()) return@collect
             // Profile Selection (silo-apple `handleDeepLink`): a link that
             // arrives while Silo is returning must not open the previous
             // profile's data before Who's Watching replaces it. Keep it queued
@@ -766,9 +859,23 @@ fun TvAppNavigation(
     // time this fires; we just route the user back to Login so they can
     // re-authenticate against the same server (the [ServerRegistry] entry is
     // preserved so they don't have to re-enter the URL).
+    //
+    // The expired account stays saved (multi-account spec §4.4). With another
+    // account's session to go to, Change Account is the root and shows it
+    // with "Sign in again" (owner decision 2026-11-02); otherwise its sign-in
+    // opens with its username filled in and refreshes that account.
     LaunchedEffect(Unit) {
         tokenManager.sessionExpired.collect {
-            navController.navigate(TvRoute.Login(sessionExpired = true).route) {
+            val expired = serverRegistry.activeAccount.value
+            val anotherSignedIn = serverRegistry.accounts.value.any {
+                !it.needsSignIn && it.localAccountId != expired?.localAccountId
+            }
+            val target = if (anotherSignedIn) {
+                TvRoute.ChangeAccount().route
+            } else {
+                TvRoute.Login(sessionExpired = true, username = expired?.username).route
+            }
+            navController.navigate(target) {
                 // Clear the entire back stack so the user can't press Back
                 // to return to a screen that has no credentials to render.
                 popUpTo(0) { inclusive = true }
@@ -856,6 +963,102 @@ fun TvAppNavigation(
             watchNextSeeder.updateImageProtection(launcherSpoilerState.prefs.hideImages)
         }
     }
+    // The root while no profile is open: the open account's picker; with no
+    // account open, Change Account while another account has a session
+    // (owner decision 2026-11-02); otherwise none, and sign-in is the root.
+    fun accountRootRoute(): String? = when {
+        serverRegistry.activeAccount.value?.needsSignIn == false -> TvRoute.ProfileSelection.route
+        serverRegistry.noAccountOpenButAnotherSignedIn() -> TvRoute.ChangeAccount().route
+        else -> null
+    }
+
+    // The active server's sign-in, for no account or for an expired one.
+    fun activeSignInRoute(username: String? = null): String {
+        val active = serverRegistry.activeAccount.value
+        return TvRoute.Login(
+            sessionExpired = active?.needsSignIn == true && username == null,
+            username = username ?: active?.takeIf { it.needsSignIn }?.username,
+        ).route
+    }
+
+    // A sign-in for the active server started from Settings › Accounts. The
+    // account root sits under it, so Back returns there; a finished sign-in
+    // replaces both (see onLoginSuccess).
+    fun navigateToSignIn(username: String?) {
+        val root = accountRootRoute()
+        if (root == null) {
+            navController.navigate(activeSignInRoute(username)) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+            return
+        }
+        navController.navigate(root) {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+        navController.navigate(TvRoute.Login(username = username).route)
+    }
+
+    // The picker found no account open: Change Account, or the sign-in.
+    fun navigateToAccountRoot() {
+        navController.navigate(accountRootRoute() ?: activeSignInRoute()) {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+
+    // Where the TV goes once the active server changed or was signed out of:
+    // one landing for Manage Servers and Sign Out, so both do the same cleanup.
+    fun navigateToServerDestination(destination: TvServerSwitchDestination) {
+        val target = when (destination) {
+            TvServerSwitchDestination.Home -> TvRoute.Main.route
+            TvServerSwitchDestination.ProfileSelection -> TvRoute.ProfileSelection.route
+            TvServerSwitchDestination.ChangeAccount -> TvRoute.ChangeAccount().route
+            TvServerSwitchDestination.Login -> activeSignInRoute()
+            TvServerSwitchDestination.ServerSetup -> TvRoute.ServerSetup.route
+        }
+        // Landing straight on Home means the target server is already
+        // authenticated, so no Login/ProfileSelection callback fires to
+        // refresh state. Do the hygiene here: drop the previous
+        // server's per-profile caches and re-seed Watch Next so its
+        // launcher tiles and cached prefs don't ghost. The
+        // Login/ProfileSelection destinations re-seed via their own
+        // callbacks — only the already-authed path needs this.
+        if (destination == TvServerSwitchDestination.Home) {
+            libraryPlaybackPrefsStore.clear()
+            overlayPrefsStore.clear()
+            cardPresentationStore.clear()
+            // Not seekIntervalStore.clear() or episodeSpoilerStore.clear():
+            // their identity flow already reset them for the new server
+            // and is hydrating; clearing would drop that.
+            watchNextSeeder.clear()
+            watchNextSeeder.seedNow()
+            watchNextSeeder.enqueuePeriodic()
+        }
+        navController.navigate(target) {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+
+    // A sign-out runs in TvSignOut, past this screen's lifetime; its outcome
+    // is handled here once, including after the Activity is recreated.
+    val signOutContext = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(tvSignOut) {
+        tvSignOut.result.filterNotNull().collect { result ->
+            tvSignOut.consume(result)
+            when (result) {
+                is TvSignOutResult.SignedOut -> {
+                    result.notice?.let { Toast.makeText(signOutContext, it, Toast.LENGTH_LONG).show() }
+                    navigateToServerDestination(result.destination)
+                }
+                is TvSignOutResult.Refused ->
+                    Toast.makeText(signOutContext, result.message, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     ProvideTitleArt(store = titleArtStore, sessionKey = overlaySessionKey) {
     Box(modifier = Modifier.fillMaxSize()) {
     // The first-run screens draw over one shared brand-light backdrop that
@@ -892,12 +1095,46 @@ fun TvAppNavigation(
                         }
                     },
                     onNeedsSetup = { navController.navigate(TvRoute.Setup.route) },
+                    // A saved server this TV is still signed in to.
+                    onSignedIn = {
+                        navController.navigate(TvRoute.ProfileSelection.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    },
                     // Companion pairing pushed a server AND completed device-login,
                     // so the TV is already authenticated — skip the login screen and
                     // go straight to profile selection (same as a successful sign-in).
-                    onPairedSignIn = {
-                        navController.navigate(TvRoute.ProfileSelection.route) {
-                            popUpTo(TvRoute.ServerSetup.route) { inclusive = true }
+                    // Every account the phone signed in is saved. One opens its
+                    // picker; several open Change Account on the first, made
+                    // the open account first so Back opens its picker.
+                    onPairedAccounts = { accounts ->
+                        scope.launch {
+                            val destination = pairedSessionDestination(accounts)
+                            if (destination is TvPairedSessionDestination.ChangeAccount) {
+                                val first = destination.first
+                                // Opening the first is only the ordering: every
+                                // account is signed in either way, and Change
+                                // Account lets the person choose. So a failed
+                                // switch still goes on, on whichever is open.
+                                try {
+                                    if (serverRegistry.activeServerId.value != first.serverId ||
+                                        serverRegistry.activeAccountId.value != first.accountId
+                                    ) {
+                                        activeProfileReset.clearProfileCaches()
+                                        authRepository.switchToAccount(first.serverId, first.accountId)
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    Log.w("TvPairing", "Couldn't open the first paired account", e)
+                                }
+                            }
+                            navController.navigate(TvRoute.ProfileSelection.route) {
+                                popUpTo(0) { inclusive = true }
+                            }
+                            if (destination is TvPairedSessionDestination.ChangeAccount) {
+                                navController.navigate(TvRoute.ChangeAccount().route) { launchSingleTop = true }
+                            }
                         }
                     },
                 )
@@ -929,45 +1166,29 @@ fun TvAppNavigation(
             }
         }
 
+        // Settings › Accounts (multi-account spec §4.5), where the server list was.
         composable(TvRoute.ServerList.route) {
-            TvServerListScreen(
+            TvAccountsScreen(
                 onAddServer = {
                     navController.navigate(TvRoute.ServerSetup.route)
                 },
-                onSwitched = { destination ->
-                    // Land on the deepest route the new server's stored
-                    // credentials support — keeps the user signed in across
-                    // a server switch when tokens already exist for the target.
-                    val target = when (destination) {
-                        TvServerSwitchDestination.Home -> TvRoute.Main.route
-                        TvServerSwitchDestination.ProfileSelection ->
-                            TvRoute.ProfileSelection.route
-                        TvServerSwitchDestination.Login -> TvRoute.Login().route
-                    }
-                    // Landing straight on Home means the target server is already
-                    // authenticated, so no Login/ProfileSelection callback fires to
-                    // refresh state. Do the hygiene here: drop the previous
-                    // server's per-profile caches and re-seed Watch Next so its
-                    // launcher tiles and cached prefs don't ghost. The
-                    // Login/ProfileSelection destinations re-seed via their own
-                    // callbacks — only the already-authed path needs this.
-                    if (destination == TvServerSwitchDestination.Home) {
-                        libraryPlaybackPrefsStore.clear()
-                        overlayPrefsStore.clear()
-                        cardPresentationStore.clear()
-                        // Not seekIntervalStore.clear() or episodeSpoilerStore.clear():
-                        // their identity flow already reset them for the new server
-                        // and is hydrating; clearing would drop that.
-                        watchNextSeeder.clear()
-                        watchNextSeeder.seedNow()
-                        watchNextSeeder.enqueuePeriodic()
-                    }
-                    navController.navigate(target) {
-                        popUpTo(0) { inclusive = true }
-                        launchSingleTop = true
+                onSignIn = ::navigateToSignIn,
+                onSwitched = ::navigateToServerDestination,
+                onBack = {
+                    // An account change here that didn't end on another
+                    // screen (a refused sign-out) leaves no profile for the
+                    // screens behind: choose a tile instead.
+                    scope.launch {
+                        if (tokenManager.getProfileId().isNullOrBlank()) {
+                            navController.navigate(TvRoute.ProfileSelection.route) {
+                                popUpTo(0) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        } else {
+                            navController.popBackStack()
+                        }
                     }
                 },
-                onBack = { navController.popBackStack() },
             )
         }
 
@@ -982,14 +1203,21 @@ fun TvAppNavigation(
                     type = NavType.BoolType
                     defaultValue = false
                 },
+                navArgument(TvRoute.Login.ARG_USERNAME) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { backStack ->
             val signupEnabled = backStack.arguments?.getBoolean(TvRoute.Login.ARG_SIGNUP_ENABLED) ?: false
             val sessionExpired = backStack.arguments?.getBoolean(TvRoute.Login.ARG_SESSION_EXPIRED) ?: false
+            val prefillUsername = backStack.arguments?.getString(TvRoute.Login.ARG_USERNAME)
             TvSelectToShowImeHost {
                 TvLoginScreen(
                     signupEnabled = signupEnabled,
                     sessionExpired = sessionExpired,
+                    prefillUsername = prefillUsername,
                     onCreateAccount = { navController.navigate(TvRoute.Signup.route) },
                     // Point this TV at a different server — drop Login so Back from
                     // setup can't return to a credential form with no server bound.
@@ -1000,8 +1228,10 @@ fun TvAppNavigation(
                         }
                     },
                     onLoginSuccess = {
+                        // Replaces a picker the sign-in started from too: the
+                        // new one opens on the account just signed in.
                         navController.navigate(TvRoute.ProfileSelection.route) {
-                            popUpTo(TvRoute.Login.ROUTE) { inclusive = true }
+                            popUpTo(0) { inclusive = true }
                         }
                         // Seed Watch Next now and schedule periodic refresh; the user has
                         // just authenticated so /api/v1/home/sections will return their
@@ -1015,7 +1245,14 @@ fun TvAppNavigation(
 
         composable(TvRoute.ProfileSelection.route) {
             TvProfileSelectionScreen(
-                onProfileSelected = {
+                onProfileSelected = onProfileSelected@{
+                    // A tile whose session the server already revoked expires
+                    // while it is being chosen: the expiry routes to sign-in,
+                    // and the selection finishing afterwards must not push Home
+                    // over it with no session.
+                    if (navController.currentBackStackEntry?.destination?.route != TvRoute.ProfileSelection.route) {
+                        return@onProfileSelected
+                    }
                     // A chosen profile ends any away interval (silo-apple
                     // `remember`), which lets Watch Next and held links through.
                     profileLaunchPreferences.clearBackgroundedAt()
@@ -1046,26 +1283,95 @@ fun TvAppNavigation(
                         launchSingleTop = true
                     }
                 },
-                onChangeServer = {
-                    navController.navigate(TvRoute.ServerList.route) { launchSingleTop = true }
+                onChangeAccount = { addAccountOn ->
+                    navController.navigate(TvRoute.ChangeAccount(addAccountOn).route) { launchSingleTop = true }
                 },
-                onSignOut = {
-                    scope.launch {
-                        authRepository.logout()
-                        watchNextSeeder.clear()
-                        navController.navigate(TvRoute.ServerSetup.route) {
+                onAddServer = {
+                    navController.navigate(TvRoute.ServerSetup.route) { launchSingleTop = true }
+                },
+                onNoAccountOpen = ::navigateToAccountRoot,
+                onSignOut = { removeServer -> tvSignOut.start(removeServer) },
+            )
+        }
+
+        // Change Account (owner decision 2026-11-02, Roku spec §7.5): pushed
+        // from the picker and the profile menu, and the root while no account
+        // is open but another has a session, or while Profile Selection asks
+        // with several accounts saved (no profile is open then).
+        composable(
+            route = TvRoute.ChangeAccount.ROUTE,
+            arguments = listOf(
+                navArgument(TvRoute.ChangeAccount.ARG_ADD) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { backStack ->
+            val isRoot = remember(backStack) { navController.previousBackStackEntry == null }
+            TvChangeAccountScreen(
+                addAccountOn = backStack.arguments?.getString(TvRoute.ChangeAccount.ARG_ADD),
+                isRoot = isRoot,
+                onOpenPicker = { switched ->
+                    val behind = navController.previousBackStackEntry?.destination?.route
+                    when {
+                        // Another account: the screens behind belong to the old one.
+                        // As the root, nothing is behind and no profile is open.
+                        switched || isRoot -> navController.navigate(TvRoute.ProfileSelection.route) {
                             popUpTo(0) { inclusive = true }
-                            launchSingleTop = true
+                        }
+                        behind == TvRoute.ProfileSelection.route -> navController.popBackStack()
+                        // The open account from the profile menu: as Switch Profile.
+                        else -> scope.launch {
+                            navController.navigate(TvRoute.ProfileSelection.route) {
+                                popUpTo(0) { inclusive = true }
+                            }
+                            activeProfileReset.clearActiveProfile()
                         }
                     }
+                },
+                onSignIn = { username, switched ->
+                    if (switched) {
+                        // Everything behind belonged to the old account; Back
+                        // from the sign-in returns to Change Account.
+                        navController.navigate(TvRoute.ChangeAccount().route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
+                    navController.navigate(TvRoute.Login(username = username).route)
+                },
+                onAddServer = {
+                    navController.navigate(TvRoute.ServerSetup.route) { launchSingleTop = true }
                 },
             )
         }
 
         composable(TvRoute.CreateProfile.route) {
+            // Opened from the picker, or by the profile menu's Add Profile
+            // over Home. From the menu, a new profile leads to the picker as
+            // Switch Profile opens it, Back returns to the screen the menu
+            // was on, and the management session the menu started ends once
+            // this entry leaves the back stack.
+            val fromPicker = remember {
+                navController.previousBackStackEntry?.destination?.route == TvRoute.ProfileSelection.route
+            }
+            if (!fromPicker) {
+                androidx.lifecycle.viewmodel.compose.viewModel { MenuAddProfileSession(profileRepository) }
+            }
             TvCreateProfileScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onProfileCreated = { navController.popBackStack() },
+                onProfileCreated = {
+                    if (fromPicker) {
+                        navController.popBackStack()
+                    } else {
+                        scope.launch {
+                            navController.navigate(TvRoute.ProfileSelection.route) {
+                                popUpTo(TvRoute.Main.route) { inclusive = true }
+                            }
+                            activeProfileReset.clearActiveProfile()
+                        }
+                    }
+                },
             )
         }
 
@@ -1108,6 +1414,9 @@ fun TvAppNavigation(
                 onOpenItemDetail = { contentId ->
                     navController.navigateToTvItemDetail(contentId)
                 },
+                onOpenBoxSet = { boxSet ->
+                    navController.navigate(TvRoute.BoxSet(boxSet.id, boxSet.libraryId).route) { launchSingleTop = true }
+                },
                 onOpenItemDetailSelection = { contentId, seasonNumber, episodeContentId ->
                     navController.navigateToTvItemDetail(
                         contentId = contentId,
@@ -1128,36 +1437,40 @@ fun TvAppNavigation(
                         launchSingleTop = true
                     }
                 },
-                onSignedOut = {
-                    scope.launch {
-                        // Full sign-out teardown — parity with the Settings and
-                        // ProfileSelection sign-out paths. Clearing Watch Next
-                        // alone left the tokens, profileId, and server session
-                        // alive, so a relaunch resumed the previous user. Drop
-                        // credentials and per-profile caches before navigating.
-                        // The Settings sign-out path may have already logged out
-                        // server-side and cleared tokens — only hit the network
-                        // when a session still exists so we don't 401 a second
-                        // logout. The local clears below are idempotent and run
-                        // unconditionally (the Settings path doesn't clear
-                        // Watch Next, so that teardown must still happen here).
-                        if (!tokenManager.getAccessToken().isNullOrBlank()) {
-                            authRepository.logout()
-                        }
-                        profileRepository.clearProfile()
-                        tokenManager.clearTokens()
-                        libraryPlaybackPrefsStore.clear()
-                        overlayPrefsStore.clear()
-                        cardPresentationStore.clear()
-                        seekIntervalStore.clear()
-                        episodeSpoilerStore.clear()
-                        titleArtStore.clear()
-                        // Drop our Watch Next rows + cancel the periodic refresh so
-                        // the launcher doesn't keep showing the signed-out user's
-                        // progress.
-                        watchNextSeeder.clear()
-                        navController.navigate(TvRoute.ServerSetup.route) {
-                            popUpTo(TvRoute.Main.route) { inclusive = true }
+                onOpenSectionBrowse = { sectionId, title, libraryId, mediaScope ->
+                    navController.navigate(TvRoute.SectionBrowse(sectionId, title, libraryId, mediaScope).route) {
+                        launchSingleTop = true
+                    }
+                },
+                onSignOut = { removeServer -> tvSignOut.start(removeServer) },
+                // Where Switch Server was: other accounts and servers.
+                onChangeAccount = {
+                    navController.navigate(TvRoute.ChangeAccount().route) { launchSingleTop = true }
+                },
+                // The profile menu's Add Profile, offered while the open
+                // account has one profile. Household management acts as the
+                // account's primary profile, as the picker's Add does, and
+                // asks for its PIN first when it has one
+                // (TvHouseholdReverifyHost shows the prompt). With no primary
+                // known, the picker opens instead, where Add runs the same
+                // steps.
+                onAddProfile = {
+                    if (addProfileJob.value?.isActive != true) {
+                        addProfileJob.value = scope.launch {
+                            val primary = serverRegistry.activeAccount.value?.cachedProfiles.orEmpty()
+                                .map { it.asProfile() }
+                                .householdPrimary()
+                            if (primary == null) {
+                                navController.navigate(TvRoute.ProfileSelection.route) {
+                                    popUpTo(TvRoute.Main.route) { inclusive = true }
+                                }
+                                activeProfileReset.clearActiveProfile()
+                                return@launch
+                            }
+                            val identity = profileRepository.captureIdentityScope()
+                            if (profileRepository.householdManagement.beginVerified(primary, identity)) {
+                                navController.navigate(TvRoute.CreateProfile.route) { launchSingleTop = true }
+                            }
                         }
                     }
                 },
@@ -1171,14 +1484,6 @@ fun TvAppNavigation(
                             popUpTo(TvRoute.Main.route) { inclusive = true }
                         }
                         activeProfileReset.clearActiveProfile()
-                    }
-                },
-                // Android TV is now multi-server (parity with tvOS). "Switch
-                // Server" opens the server list; the user picks an existing
-                // saved server or chooses Add to enter a new URL.
-                onSwitchServer = {
-                    navController.navigate(TvRoute.ServerList.route) {
-                        launchSingleTop = true
                     }
                 },
                 onPairDevice = {
@@ -1285,7 +1590,10 @@ fun TvAppNavigation(
                 onShuffleStarted = { shuffle ->
                     navController.navigateToTvShufflePlayback(shuffle, libraryId, lastPlaybackNavigation)
                 },
-                onPlay = { playContentId, fileId, audioTrackIndex, audioPicked, subtitleSelection, itemType, resumePositionSeconds ->
+                onPlay = {
+                        playContentId, fileId, versionChosen, audioTrackIndex, audioPicked, subtitleSelection, itemType,
+                        resumePositionSeconds,
+                    ->
                     // A fast Select after entering detail can overlap the route
                     // transition. Collapse an identical second Play request
                     // instead of creating two player ViewModels and two
@@ -1300,6 +1608,7 @@ fun TvAppNavigation(
                             audioPickedThisSession = audioPicked,
                             subtitleSelection = subtitleSelection,
                             libraryId = libraryId,
+                            versionChosen = versionChosen,
                         ),
                         contentId = playContentId,
                         lastPlaybackNavigation = lastPlaybackNavigation,
@@ -1310,6 +1619,10 @@ fun TvAppNavigation(
                     // open them unscoped. The helper pushes different items and
                     // collapses exact repeats, preserving Back restoration.
                     navController.navigateToTvItemDetail(itemContentId)
+                },
+                // Recommendations are global too, so they also open unscoped.
+                onSimilarItemDetail = { itemContentId ->
+                    navController.navigateToTvRelatedItemDetail(itemContentId)
                 },
                 // Season switching replaces the current detail entry so paging
                 // through seasons never stacks pages — one Back returns to the
@@ -1357,6 +1670,62 @@ fun TvAppNavigation(
                     }
                 },
                 onBack = { navController.popBackStack() },
+                onOpenBoxSet = { boxSetId, boxSetLibraryId ->
+                    navController.navigate(TvRoute.BoxSet(boxSetId, boxSetLibraryId).route) { launchSingleTop = true }
+                },
+                onBoxSetMovie = { movieContentId, boxSetLibraryId ->
+                    navController.navigateToTvItemDetail(movieContentId, libraryId = boxSetLibraryId.toIntOrNull())
+                },
+                onOpenCollection = { card, libraryType ->
+                    val collectionLibraryId = card.libraryIdInt
+                    if (card.isUserCollection) {
+                        navController.navigate(TvRoute.CollectionDetail(card.id, card.title).route) { launchSingleTop = true }
+                    } else if (collectionLibraryId != null) {
+                        // The library's type picks the page's sorts and
+                        // filters, as a Home collection card does.
+                        navController.navigate(
+                            TvRoute.LibraryCollectionDetail(
+                                collectionLibraryId, card.id, card.title, libraryType, "library_collection", null,
+                            ).route,
+                        ) { launchSingleTop = true }
+                    }
+                },
+                onCollectionItem = { itemContentId ->
+                    navController.navigateToTvItemDetail(itemContentId)
+                },
+            )
+        }
+
+        composable(
+            route = TvRoute.BoxSet.ROUTE,
+            arguments = listOf(
+                navArgument(TvRoute.BoxSet.ARG_BOX_SET_ID) { type = NavType.StringType },
+                navArgument(TvRoute.BoxSet.ARG_LIBRARY_ID) { type = NavType.StringType },
+            ),
+        ) { backStack ->
+            val boxSetId = backStack.arguments?.getString(TvRoute.BoxSet.ARG_BOX_SET_ID).orEmpty()
+            val boxSetLibraryId = backStack.arguments?.getString(TvRoute.BoxSet.ARG_LIBRARY_ID).orEmpty()
+            val libraryId = boxSetLibraryId.toIntOrNull()
+            TvBoxSetScreen(
+                boxSetId = boxSetId,
+                libraryId = boxSetLibraryId,
+                onBack = { navController.popBackStack() },
+                onPlayMovie = { contentId, resumePositionSeconds ->
+                    navController.navigateToTvPlayback(
+                        destination = tvPlayDestinationFor(
+                            itemType = "movie",
+                            contentId = contentId,
+                            fileId = null,
+                            resumePositionSeconds = resumePositionSeconds,
+                            libraryId = libraryId,
+                        ),
+                        contentId = contentId,
+                        lastPlaybackNavigation = lastPlaybackNavigation,
+                    )
+                },
+                onOpenMovie = { contentId ->
+                    navController.navigateToTvItemDetail(contentId, libraryId = libraryId)
+                },
             )
         }
 
@@ -1420,6 +1789,11 @@ fun TvAppNavigation(
                     // Keep StringType because the query param is serialized as
                     // a string in [TvRoute.Player] and may be absent; NavType
                     // IntType can't represent "missing". We parse at the edge.
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument(TvRoute.Player.ARG_VERSION_CHOSEN) {
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
@@ -1511,6 +1885,8 @@ fun TvAppNavigation(
             val preferredFileId = backStack.arguments
                 ?.getString(TvRoute.Player.ARG_FILE_ID)
                 ?.toIntOrNull()
+            val versionChosen = backStack.arguments
+                ?.getString(TvRoute.Player.ARG_VERSION_CHOSEN) == "true"
             val preferredQuality = backStack.arguments
                 ?.getString(TvRoute.Player.ARG_QUALITY)
             val roomId = backStack.arguments
@@ -1576,6 +1952,7 @@ fun TvAppNavigation(
                 libraryId = backStack.arguments?.getString("libraryId")?.toIntOrNull(),
                 contentId = contentId,
                 preferredFileId = preferredFileId,
+                versionChosen = versionChosen,
                 preferredQuality = preferredQuality,
                 roomId = roomId,
                 resumePositionOverride = resumePositionOverride,
@@ -1796,6 +2173,55 @@ fun TvAppNavigation(
         }
 
         composable(
+            route = TvRoute.SectionBrowse.ROUTE,
+            arguments = listOf(
+                navArgument(TvRoute.SectionBrowse.ARG_SECTION_ID) { type = NavType.StringType },
+                navArgument(TvRoute.SectionBrowse.ARG_TITLE) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument(TvRoute.SectionBrowse.ARG_LIBRARY_ID) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument(TvRoute.SectionBrowse.ARG_MEDIA_SCOPE) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+            ),
+        ) { backStack ->
+            val sectionId = backStack.arguments
+                ?.getString(TvRoute.SectionBrowse.ARG_SECTION_ID)
+                ?.takeIf { it.isNotBlank() }
+                ?: return@composable
+            val libraryId = backStack.arguments?.getString(TvRoute.SectionBrowse.ARG_LIBRARY_ID)?.toIntOrNull()
+            TvSectionBrowseScreen(
+                args = SectionBrowseArgs(
+                    sectionId = sectionId,
+                    title = backStack.arguments?.getString(TvRoute.SectionBrowse.ARG_TITLE).orEmpty(),
+                    libraryId = libraryId,
+                    mediaScope = backStack.arguments?.getString(TvRoute.SectionBrowse.ARG_MEDIA_SCOPE)
+                        ?.takeIf { it in setOf("movie", "series") },
+                ),
+                // An episode opens its series at that episode, as Home's rows do.
+                onItemClick = { item ->
+                    val seriesId = item.seriesId?.takeIf { it.isNotBlank() }
+                    if (item.type.equals("episode", ignoreCase = true) && seriesId != null && item.seasonNumber != null) {
+                        navController.navigateToTvItemDetail(
+                            contentId = seriesId,
+                            seasonNumber = item.seasonNumber,
+                            episodeContentId = item.contentId,
+                            libraryId = libraryId,
+                        )
+                    } else {
+                        navController.navigateToTvItemDetail(item.contentId, libraryId = libraryId)
+                    }
+                },
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(
             route = TvRoute.CollectionDetail.ROUTE,
             arguments = listOf(
                 navArgument(TvRoute.CollectionDetail.ARG_COLLECTION_ID) {
@@ -1825,10 +2251,29 @@ fun TvAppNavigation(
         }
     }
     val membershipRepository: org.siloserver.silo.repository.PersonalDataRepository = koinInject()
-    org.siloserver.silo.common.ui.MembershipStatusBanner(
-        membershipRepository.memberships,
-        Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
-    )
+    org.siloserver.silo.common.ui.MembershipNoticeHost(
+        actions = membershipRepository.memberships,
+        deferred = currentEntry?.destination?.route in tvPlayerRoutes,
+        legacyModifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
+    ) { notice ->
+        // OK comes first so it takes focus: a stray Select closes the notice.
+        org.siloserver.silo.tv.ui.components.TvDialog(
+            title = notice.title,
+            message = notice.message,
+            onDismissRequest = notice.onDismiss,
+            actions = listOf(
+                org.siloserver.silo.tv.ui.components.TvDialogAction(
+                    label = stringResource(CommonR.string.shell_notice_ok),
+                    onClick = notice.onDismiss,
+                ),
+                org.siloserver.silo.tv.ui.components.TvDialogAction(
+                    label = notice.actionLabel,
+                    onClick = notice.onAction,
+                    style = org.siloserver.silo.tv.ui.components.TvDialogActionStyle.Primary,
+                ),
+            ),
+        )
+    }
 
     org.siloserver.silo.tv.ui.screens.profiles.TvHouseholdReverifyHost(profileRepository)
     siloCastStandby?.let { state ->

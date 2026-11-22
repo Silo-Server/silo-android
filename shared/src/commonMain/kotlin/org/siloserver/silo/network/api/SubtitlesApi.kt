@@ -5,6 +5,7 @@ import org.siloserver.silo.model.subtitles.SubtitleAiJobResponse
 import org.siloserver.silo.model.subtitles.SubtitleAiJobsResponse
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
 import org.siloserver.silo.model.subtitles.SubtitleAiStatus
+import org.siloserver.silo.model.subtitles.SubtitleProviderStatus
 import org.siloserver.silo.model.subtitles.SubtitleDownloadRequest
 import org.siloserver.silo.model.subtitles.SubtitleDownloadResponse
 import org.siloserver.silo.model.subtitles.SubtitleSearchRequest
@@ -32,6 +33,9 @@ interface SubtitlesApi {
 
     /** GET /api/v2/subtitles/{media_file_id} — subtitles already stored server-side. */
     suspend fun list(mediaFileId: Int): ApiResult<DownloadedSubtitlesResponse>
+
+    /** GET /api/v2/subtitles/providers/status — whether provider search is available. */
+    suspend fun providerStatus(): ApiResult<SubtitleProviderStatus>
 
     /** GET /api/v2/subtitles/ai/status — both flags false when AI is unconfigured. */
     suspend fun aiStatus(): ApiResult<SubtitleAiStatus>
@@ -67,6 +71,8 @@ class DefaultSubtitlesApi(
 
     override suspend fun list(mediaFileId: Int): ApiResult<DownloadedSubtitlesResponse> =
         reads.list(mediaFileId)
+
+    override suspend fun providerStatus(): ApiResult<SubtitleProviderStatus> = reads.providerStatus()
 
     override suspend fun aiStatus(): ApiResult<SubtitleAiStatus> = reads.aiStatus()
 

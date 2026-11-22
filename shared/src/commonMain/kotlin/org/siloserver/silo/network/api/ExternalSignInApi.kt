@@ -1,5 +1,6 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.network.localroute.stayOnSavedAddress
 import io.ktor.client.HttpClient
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -28,6 +29,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.apiv2.Problem
+import org.siloserver.silo.network.apiv2.ProblemText
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.safeApiV2Call
 import org.siloserver.silo.network.authScope
@@ -227,6 +229,9 @@ class DefaultExternalSignInApi(
     }) {
         client.post("/api/v2/account/identities/link-network") {
             authScope(scope); freshSiloAuth(); singleAttempt()
+            // The server links only a request that came through the network
+            // provider's own address, never one on the local route.
+            stayOnSavedAddress()
             contentType(ContentType.Application.Json)
             setBody(LinkNetworkRequestV2(installationId = installationId, password = password))
         }
@@ -279,7 +284,8 @@ class DefaultExternalSignInApi(
                 status == 422 && "body.password" in locations -> WRONG_PASSWORD
                 else -> problem?.code.orEmpty()
             }
-            return ApiResult.Error(status, code, problem?.detail.orEmpty())
+            val detail = problem?.detail.orEmpty()
+            return ApiResult.Error(status, code, problem?.let { ProblemText.message(it) } ?: detail, detail)
         }
     }
 }

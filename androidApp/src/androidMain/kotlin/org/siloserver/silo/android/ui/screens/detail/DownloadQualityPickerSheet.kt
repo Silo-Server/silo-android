@@ -22,9 +22,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import org.siloserver.silo.android.ui.util.formatBytes
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.download.DownloadSizeEstimate
 
@@ -58,13 +60,13 @@ fun DownloadQualityPickerSheet(
                 .padding(bottom = 24.dp),
         ) {
             Text(
-                text = "Download Quality",
+                text = stringResource(CommonR.string.detail_downloadQuality_title),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
             )
             Text(
-                text = "Choose the source file or a smaller bitrate for this download.",
+                text = stringResource(CommonR.string.detail_downloadQuality_subtitle),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp),
@@ -125,20 +127,21 @@ fun DownloadQualityPickerSheet(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 4.dp),
             ) {
-                Text("Cancel")
+                Text(stringResource(CommonR.string.common_cancel))
             }
         }
     }
 }
 
 /** "2.1 GB–5.4 GB" for a range, "5.4 GB" exact — mirrors iOS sizeLabel. */
+@Composable
 private fun downloadEstimateSizeLabel(estimate: DownloadSizeEstimate): String {
     val max = formatBytes(estimate.maxBytes)
     val label = if (estimate.isRange) "${formatBytes(estimate.minBytes)}\u2013$max" else max
     return if (estimate.isRange) {
-        "Estimated size: $label depending on server choice"
+        stringResource(CommonR.string.detail_downloadQuality_estimatedSize, label)
     } else {
-        "Source file size: $label"
+        stringResource(CommonR.string.detail_downloadQuality_sourceSize, label)
     }
 }
 
@@ -147,6 +150,7 @@ private fun downloadEstimateSizeLabel(estimate: DownloadSizeEstimate): String {
  * large-download caveat (never blocks the download). Free space of 0 means
  * the lookup failed, which never warns.
  */
+@Composable
 internal fun downloadEstimateWarning(
     estimate: DownloadSizeEstimate,
     availableBytes: Long,
@@ -155,19 +159,24 @@ internal fun downloadEstimateWarning(
     if (estimate.exceedsAvailableSpace(availableBytes)) {
         val free = formatBytes(availableBytes)
         return if (estimate.isRange) {
-            "This download may be up to $size, but only $free is free on this device."
+            stringResource(CommonR.string.detail_downloadQuality_lowSpaceUpTo, size, free)
         } else {
-            "This download is $size, but only $free is free on this device."
+            stringResource(CommonR.string.detail_downloadQuality_lowSpace, size, free)
         }
     }
     if (estimate.exceedsLargeThreshold) {
-        return if (estimate.isRange) "This download may be up to $size." else "This download is $size."
+        return if (estimate.isRange) {
+            stringResource(CommonR.string.detail_downloadQuality_largeUpTo, size)
+        } else {
+            stringResource(CommonR.string.detail_downloadQuality_large, size)
+        }
     }
     return null
 }
 
+@Composable
 private fun downloadQualityDescription(quality: DownloadQuality): String =
     when (quality) {
-        DownloadQuality.Original -> "Source quality, with compatibility fallback if needed."
-        else -> "Prepared on the server when the original is larger."
+        DownloadQuality.Original -> stringResource(CommonR.string.detail_downloadQuality_originalDescription)
+        else -> stringResource(CommonR.string.detail_downloadQuality_presetDescription)
     }

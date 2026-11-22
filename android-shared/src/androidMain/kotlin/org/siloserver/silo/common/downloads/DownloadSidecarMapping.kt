@@ -24,9 +24,10 @@ import kotlinx.serialization.json.Json
  */
 private val mappingJson = Json { ignoreUnknownKeys = true }
 
-fun DownloadSidecar.toEntity(serverId: String, profileId: String): DownloadEntity =
+fun DownloadSidecar.toEntity(serverId: String, accountId: String, profileId: String): DownloadEntity =
     DownloadEntity(
         serverId = serverId,
+        accountId = accountId,
         profileId = profileId,
         mediaFileId = record.mediaFileId,
         recordId = record.id,

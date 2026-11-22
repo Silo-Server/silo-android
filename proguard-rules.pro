@@ -48,6 +48,12 @@
 -keep class androidx.media3.decoder.ffmpeg.** { *; }
 -dontwarn androidx.media3.decoder.ffmpeg.**
 
+# Playback diagnostics name player and load failures by exception class
+# (InvalidResponseCodeException, StreamResetException, ...). Keep the class
+# names readable in release bundles; unused classes can still be removed.
+-keepnames class androidx.media3.** extends java.lang.Throwable
+-keepnames class okhttp3.** extends java.lang.Throwable
+
 # --- libass Media3 integration ------------------------------------------------
 # ass-media's Matroska extractor reads these Media3 internals by exact field
 # name so it can intercept ASS packets and MKV font attachments. Preserve the
@@ -83,6 +89,13 @@
 # --- OkHttp / Okio (ship their own rules; silence optional platform refs) -----
 -dontwarn okhttp3.**
 -dontwarn okio.**
+
+# --- Local route trust manager -------------------------------------------------
+# X509TrustManagerExtensions (and with it OkHttp's Android certificate chain
+# cleaner) finds the hostname-aware check by name through reflection.
+-keepclassmembers class org.siloserver.silo.network.localroute.PinningTrustManager {
+    public java.util.List checkServerTrusted(java.security.cert.X509Certificate[], java.lang.String, java.lang.String);
+}
 
 # --- Coil3 / zxing (R8-friendly; silence optional desktop/J2SE references) -----
 -dontwarn coil3.**

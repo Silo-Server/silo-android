@@ -1,7 +1,5 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
-import android.os.Build
-import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -9,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,7 +15,10 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
@@ -24,6 +26,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -31,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.InputMode
@@ -40,22 +44,32 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.discovery.DiscoveredServer
+import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.common.discovery.LanServerDiscovery
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.pairing.PairingAdvertisement
 import org.siloserver.silo.common.pairing.PairingReceiver
 import org.siloserver.silo.common.pairing.PairingReceiverStatus
 import org.siloserver.silo.common.pairing.TvPairingAdvertiser
+import org.siloserver.silo.common.pairing.TvDeviceName
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
 import org.siloserver.silo.common.ui.marquee.ServerBranding
 import org.siloserver.silo.common.ui.marquee.SignInHandoff
-import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.TvHideStockImeOnDispose
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeBody
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButton
@@ -69,6 +83,7 @@ import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeStatusChip
 import org.siloserver.silo.tv.ui.components.marquee.TvUsePhoneCard
 import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
 import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
+import org.siloserver.silo.common.network.ServerSetupScheme
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
@@ -86,15 +101,32 @@ import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 fun TvServerSetupScreen(
     onContinueToLogin: (signupEnabled: Boolean) -> Unit,
     onNeedsSetup: () -> Unit,
-    onPairedSignIn: () -> Unit = {},
+    /**
+     * A phone's session ended after signing in [accounts] (the saved accounts,
+     * in the order they signed in). Opens the only one's picker, or Change
+     * Account on the first when there are several.
+     */
+    onPairedAccounts: (accounts: List<org.siloserver.silo.common.pairing.PairingCommittedAccount>) -> Unit,
     /** A saved server this TV is still signed in to: straight to its profiles. */
-    onSignedIn: () -> Unit = onPairedSignIn,
+    onSignedIn: () -> Unit,
     viewModel: TvServerSetupViewModel = koinViewModel(),
     pairingReceiver: PairingReceiver = koinInject(),
     pairingAdvertiser: TvPairingAdvertiser = koinInject(),
+    discovery: LanServerDiscovery = koinInject(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    val pairingStatus by pairingReceiver.status.collectAsState()
+    // Silo servers on this network, listed on both pages while setup is on screen.
+    LifecycleStartEffect(discovery) {
+        discovery.start()
+        onStopOrDispose { discovery.stop() }
+    }
+    val found by discovery.servers.collectAsState()
+    val liveStatus by pairingReceiver.status.collectAsState()
+    // Once the session is finished, keep its summary on screen: stopping the
+    // advertiser returns the receiver to Idle, and opening the first account
+    // can take a moment before navigation, which flashed the setup page.
+    var finishedStatus by remember { mutableStateOf<PairingReceiverStatus?>(null) }
+    val pairingStatus = finishedStatus ?: liveStatus
     val isActivePairing = pairingStatus.isActivePairing
     var enteringAddress by rememberSaveable { mutableStateOf(false) }
 
@@ -110,11 +142,20 @@ fun TvServerSetupScreen(
         advertiserToken = token
         onDispose { pairingAdvertiser.stop(token) }
     }
+    // The dwell and the Continue button both finish; only the first counts.
+    var pairingFinished by remember { mutableStateOf(false) }
     val finishPairing = {
-        pairingAdvertiser.stop(advertiserToken)
-        // A one-profile household with no PIN goes straight to Home.
-        SignInHandoff.skipsSingleProfilePicker = true
-        onPairedSignIn()
+        if (!pairingFinished) {
+            pairingFinished = true
+            // Read before stopping: stopping returns the receiver to Idle.
+            val completed = pairingReceiver.status.value as? PairingReceiverStatus.Completed
+            finishedStatus = completed
+            val accounts = completed?.accounts.orEmpty()
+            pairingAdvertiser.stop(advertiserToken)
+            // A one-profile household with no PIN goes straight to Home.
+            SignInHandoff.skipsSingleProfilePicker = true
+            onPairedAccounts(accounts)
+        }
     }
     LaunchedEffect(pairingStatus) {
         if (pairingStatus is PairingReceiverStatus.Completed) {
@@ -144,23 +185,22 @@ fun TvServerSetupScreen(
     state.pendingCleartextUrl?.let { origin ->
         AlertDialog(
             onDismissRequest = viewModel::cancelCleartextConnection,
-            title = { androidx.compose.material3.Text("Connect without encryption?") },
+            title = { androidx.compose.material3.Text(stringResource(CommonR.string.setup_cleartext_title)) },
             text = {
                 androidx.compose.material3.Text(
-                    "Your password and what you watch will be sent unencrypted to " +
-                        "${ServerBranding.hostLabel(origin)}. Only do this on a network you trust.",
+                    stringResourceWithNames(CommonR.string.setup_cleartext_body, ServerBranding.hostLabel(origin)),
                 )
             },
             confirmButton = {
                 TvMarqueeButton(
-                    text = "Connect",
+                    text = stringResource(CommonR.string.setup_cleartext_connect),
                     onClick = viewModel::confirmCleartextConnection,
                     enabled = !state.isLoading,
                 )
             },
             dismissButton = {
                 TvMarqueeButton(
-                    text = "Cancel",
+                    text = stringResource(CommonR.string.common_cancel),
                     onClick = viewModel::cancelCleartextConnection,
                     kind = TvMarqueeButtonKind.Plain,
                 )
@@ -190,10 +230,22 @@ fun TvServerSetupScreen(
                     onUseAlternate = pairingReceiver::useAlternateAddress,
                     onRetryAddress = pairingReceiver::retryPushedAddress,
                 )
-                SetupPage.Phone -> PhoneFirst(onEnterAddress = { enteringAddress = true })
+                SetupPage.Phone -> PhoneFirst(
+                    state = state,
+                    found = found,
+                    onPickFound = viewModel::connectTo,
+                    // A found server may be connecting; leaving now would let
+                    // its result land behind manual entry.
+                    onEnterAddress = { if (!state.isLoading) enteringAddress = true },
+                )
                 SetupPage.Address -> AddressEntry(
                     state = state,
+                    found = found,
+                    onPickFound = viewModel::connectTo,
                     onServerUrlChanged = viewModel::onServerUrlChanged,
+                    onSchemeSelected = viewModel::onSchemeSelected,
+                    onPortChanged = viewModel::onPortChanged,
+                    onToggleAdvancedOptions = viewModel::onToggleAdvancedOptions,
                     onConnect = viewModel::onConnectClick,
                     // Leaving mid-probe would let a late connect pull the app on.
                     onBack = { if (!state.isLoading) enteringAddress = false },
@@ -209,15 +261,7 @@ private enum class SetupPage { Phone, Address, Pairing }
 @Composable
 private fun rememberTvName(): String {
     val context = LocalContext.current
-    return remember(context) {
-        // DEVICE_NAME arrived in API 25; older TVs show the generic name.
-        val named = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
-            Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
-        } else {
-            null
-        }
-        named?.takeIf { it.isNotBlank() } ?: "Android TV"
-    }
+    return remember(context) { TvDeviceName.current(context) }
 }
 
 /**
@@ -243,7 +287,12 @@ internal fun ClaimInitialFocus(requester: FocusRequester, isFocused: () -> Boole
 }
 
 @Composable
-private fun PhoneFirst(onEnterAddress: () -> Unit) {
+private fun PhoneFirst(
+    state: TvServerSetupUiState,
+    found: List<DiscoveredServer>,
+    onPickFound: (DiscoveredServer) -> Unit,
+    onEnterAddress: () -> Unit,
+) {
     val enterAddressFocus = remember { FocusRequester() }
     var enterAddressFocused by remember { mutableStateOf(false) }
     ClaimInitialFocus(enterAddressFocus, { enterAddressFocused }, "serverSetup.phone")
@@ -251,25 +300,29 @@ private fun PhoneFirst(onEnterAddress: () -> Unit) {
         accessory = { TvMarqueeStatusChip(rememberTvName(), icon = Icons.Outlined.Tv) },
         copy = {
             TvMarqueeStatusChip(
-                stringResource(R.string.tv_setup_phone_looking),
+                stringResource(CommonR.string.tvSetup_phoneLooking),
                 showsSpinner = true,
                 modifier = Modifier.padding(bottom = 18.dp),
             )
-            TvMarqueeHeadline("Set up with\nyour phone")
+            TvMarqueeHeadline(stringResource(CommonR.string.setup_phone_headline))
             TvMarqueeBody(
-                "It's the easiest way. There's nothing to type with the remote.",
+                stringResource(CommonR.string.setup_phone_body),
                 size = 16.sp,
                 modifier = Modifier.padding(top = 14.dp),
             )
             Text(
-                "No phone nearby?",
+                stringResource(CommonR.string.setup_phone_aside),
                 color = MarqueeColors.InkTertiary,
                 fontSize = 14.sp,
                 modifier = Modifier.padding(top = 32.dp),
             )
+            // Servers found on this network connect with one press, above the
+            // way to type an address.
+            FoundServerRows(found, state, onPickFound, Modifier.padding(top = 9.dp))
+            state.discoveryError?.let { TvMarqueeErrorText(it.text(), Modifier.width(380.dp).padding(top = 8.dp)) }
             Row(Modifier.fillMaxWidth().padding(top = 9.dp)) {
                 TvMarqueeButton(
-                    text = "Enter server address",
+                    text = stringResource(CommonR.string.setup_phone_enterAddress),
                     onClick = onEnterAddress,
                     kind = TvMarqueeButtonKind.Glass,
                     icon = Icons.Outlined.Language,
@@ -285,7 +338,12 @@ private fun PhoneFirst(onEnterAddress: () -> Unit) {
 @Composable
 private fun AddressEntry(
     state: TvServerSetupUiState,
+    found: List<DiscoveredServer>,
+    onPickFound: (DiscoveredServer) -> Unit,
     onServerUrlChanged: (String) -> Unit,
+    onSchemeSelected: (ServerSetupScheme) -> Unit,
+    onPortChanged: (String) -> Unit,
+    onToggleAdvancedOptions: () -> Unit,
     onConnect: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -294,19 +352,20 @@ private fun AddressEntry(
     val fieldFocus = remember { FocusRequester() }
     var fieldFocused by remember { mutableStateOf(false) }
     ClaimInitialFocus(fieldFocus, { fieldFocused }, "serverSetup.address")
-    val connect = { if (canSubmitTvServerUrl(state.serverUrl, state.isLoading)) onConnect() }
+    // A blank address still answers, with "Please enter a server host."
+    val connect = { if (!state.isLoading) onConnect() }
     TvMarqueeScreen(
         copyScroll = rememberTvImeAwareFormScrollState(),
         accessory = { TvMarqueeStatusChip(rememberTvName(), icon = Icons.Outlined.Tv) },
         copy = {
-            TvMarqueeHeadline("Enter your\nserver address")
-            TvMarqueeBody("Type the address you use for Silo.", modifier = Modifier.padding(top = 11.dp))
+            TvMarqueeHeadline(stringResource(CommonR.string.setup_headline))
+            TvMarqueeBody(stringResource(CommonR.string.setup_body), modifier = Modifier.padding(top = 11.dp))
             Box(Modifier.width(380.dp).padding(top = 20.dp).tvImeAwareFieldContext()) {
                 TvMarqueeField(
                     value = state.serverUrl,
                     onValueChange = onServerUrlChanged,
                     icon = Icons.Outlined.Language,
-                    placeholder = "media.example.com",
+                    placeholder = stringResource(CommonR.string.setup_placeholder),
                     keyboardType = KeyboardType.Uri,
                     imeAction = ImeAction.Go,
                     onImeAction = connect,
@@ -318,53 +377,144 @@ private fun AddressEntry(
                     onFocusChange = { fieldFocused = it },
                 )
             }
-            state.error?.let { TvMarqueeErrorText(it, Modifier.width(380.dp).padding(top = 8.dp)) }
-            // Typing aids for the remote's keyboard.
-            Row(Modifier.fillMaxWidth().padding(top = 11.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                ServerUrlShortcuts.forEach { shortcut ->
-                    TvMarqueeButton(
-                        text = shortcut,
-                        onClick = { if (!state.isLoading) onServerUrlChanged(applyServerUrlShortcut(state.serverUrl, shortcut)) },
-                        kind = TvMarqueeButtonKind.Glass,
-                        compact = true,
-                    )
-                }
+            state.error?.let { TvMarqueeErrorText(it.text(), Modifier.width(380.dp).padding(top = 8.dp)) }
+            TvMarqueeButton(
+                text = stringResource(if (state.showsAdvancedOptions) CommonR.string.setup_advanced_hide else CommonR.string.setup_advanced_show),
+                onClick = { if (!state.isLoading) onToggleAdvancedOptions() },
+                kind = TvMarqueeButtonKind.Plain,
+                compact = true,
+                icon = Icons.Outlined.Settings,
+                modifier = Modifier.padding(top = 9.dp),
+            )
+            if (state.showsAdvancedOptions) {
+                AdvancedOptions(state, onSchemeSelected, onPortChanged, onSubmit = connect, Modifier.padding(top = 7.dp))
             }
             Text(
-                if (state.usesCleartext) {
-                    "This address uses unencrypted HTTP. Fine on a trusted home network; avoid it on public Wi-Fi."
-                } else {
-                    "Secure HTTPS is tried automatically."
-                },
+                stringResource(
+                    if (state.usesCleartext) CommonR.string.setup_cleartext_warning else CommonR.string.tvSignIn_server_httpsNote,
+                ),
                 color = if (state.usesCleartext) MarqueeColors.Warning else MarqueeColors.InkTertiary,
                 fontSize = 14.sp,
                 modifier = Modifier.width(380.dp).padding(top = 9.dp),
             )
             Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(11.dp)) {
                 TvMarqueeButton(
-                    text = if (state.isLoading) "Connecting…" else "Connect",
+                    text = stringResource(if (state.isLoading) CommonR.string.setup_connecting else CommonR.string.common_connect),
                     onClick = connect,
                     isLoading = state.isLoading,
                 )
                 TvMarqueeButton(
-                    text = "Back",
+                    text = stringResource(CommonR.string.common_back),
                     onClick = onBack,
                     kind = TvMarqueeButtonKind.Plain,
                 )
             }
+            if (found.isNotEmpty()) {
+                Text(
+                    stringResource(CommonR.string.setup_foundNearby),
+                    color = MarqueeColors.InkTertiary,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(top = 24.dp),
+                )
+                FoundServerRows(found, state, onPickFound, Modifier.padding(top = 9.dp))
+            }
+            state.discoveryError?.let { TvMarqueeErrorText(it.text(), Modifier.width(380.dp).padding(top = 8.dp)) }
         },
         card = {
-            TvUsePhoneCard("Open Silo on a phone or tablet on the same Wi‑Fi and tap Set up. It finishes this for you.")
+            TvUsePhoneCard(stringResource(CommonR.string.tvSignIn_server_phoneCard))
         },
     )
 }
 
-private val ServerUrlShortcuts = listOf("https://", "http://", ".com")
-
-private fun applyServerUrlShortcut(value: String, shortcut: String): String =
-    when {
-        shortcut.endsWith("://") &&
-            (value.startsWith("http://", ignoreCase = true) || value.startsWith("https://", ignoreCase = true)) -> value
-        shortcut.endsWith("://") -> shortcut + value.trimStart()
-        else -> value + shortcut
+/**
+ * Up to two one-press rows for servers found on this network, each showing
+ * its name and address. Rows stay enabled while connecting so the focused
+ * one keeps focus; the view model ignores repeat presses. Renders nothing
+ * until a server is confirmed.
+ */
+@Composable
+private fun FoundServerRows(
+    found: List<DiscoveredServer>,
+    state: TvServerSetupUiState,
+    onPick: (DiscoveredServer) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (found.isEmpty()) return
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        found.take(2).forEach { server ->
+            // Keyed by server, so focus stays on the same server when the list re-sorts.
+            key(server.serverId) {
+                val rowDescription = stringResourceWithNames(CommonR.string.connect_discovery_serverRow, server.name, server.detail)
+                TvMarqueeButton(
+                    onClick = { onPick(server) },
+                    kind = TvMarqueeButtonKind.Glass,
+                    isLoading = state.isLoading && state.connectingServerUrl == server.url,
+                    modifier = Modifier.semantics { contentDescription = rowDescription },
+                ) { ink ->
+                    Text(server.name, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        server.detail,
+                        color = ink.copy(alpha = 0.62f),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
     }
+}
+
+/**
+ * The protocol to try (Auto, HTTPS, HTTP) and an optional port, as Apple TV's
+ * Advanced options. Auto tries HTTPS, then HTTP, then Silo's port 8090.
+ */
+@Composable
+private fun AdvancedOptions(
+    state: TvServerSetupUiState,
+    onSchemeSelected: (ServerSetupScheme) -> Unit,
+    onPortChanged: (String) -> Unit,
+    onSubmit: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ServerSetupScheme.entries.forEach { scheme ->
+            val selected = state.selectedScheme == scheme
+            TvMarqueeButton(
+                text = scheme.displayLabel(),
+                onClick = { if (!state.isLoading) onSchemeSelected(scheme) },
+                kind = TvMarqueeButtonKind.Glass,
+                compact = true,
+                icon = if (selected) Icons.Filled.Check else null,
+                modifier = Modifier.semantics { this.selected = selected },
+            )
+        }
+        Box(Modifier.width(130.dp).tvImeAwareFieldContext()) {
+            TvMarqueeField(
+                value = state.port,
+                onValueChange = onPortChanged,
+                icon = Icons.Outlined.Tag,
+                placeholder = stringResource(CommonR.string.setup_port_placeholder),
+                keyboardType = KeyboardType.Number,
+                imeAction = ImeAction.Go,
+                onImeAction = onSubmit,
+                enabled = !state.isLoading,
+            )
+        }
+    }
+}
+
+/** The protocol choice's label; [ServerSetupScheme.label] stays the English name. */
+@Composable
+private fun ServerSetupScheme.displayLabel(): String = stringResource(
+    when (this) {
+        ServerSetupScheme.Auto -> CommonR.string.setup_scheme_auto
+        ServerSetupScheme.Https -> CommonR.string.setup_scheme_https
+        ServerSetupScheme.Http -> CommonR.string.setup_scheme_http
+    },
+)

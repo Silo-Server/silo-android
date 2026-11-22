@@ -2,7 +2,7 @@ name: Android Builds
 
 # CI gate: tests, lint, and release readiness on main pushes and pull requests.
 # Release artifacts (Play Store bundles, sideload APKs, GitHub releases) are owned by
-# release.yml — triggered by v* tags or its workflow_dispatch.
+# release.yml, which only releases a commit this workflow passed on main.
 
 on:
   push:

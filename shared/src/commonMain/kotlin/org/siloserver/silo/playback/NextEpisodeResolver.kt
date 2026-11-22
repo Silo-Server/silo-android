@@ -16,10 +16,11 @@ import org.siloserver.silo.model.catalog.EpisodeListItem
  *
  * Caller note (B4): build the pool in PLAYBACK order — the current season's
  * episodes plus the next regular season's. Don't merge `Season.isSpecials`
- * seasons in display order (which sorts specials last); this resolver keys on
- * numeric season 0 < 1, so a special season appended after regular seasons
- * wouldn't be reachable as "next". Ties on (season, episode) resolve to the
- * first matching input element (catalog tuples are expected unique).
+ * seasons into the pool from the display list (which lists Specials first);
+ * this resolver orders by numeric season, not display position, so a Specials
+ * season numbered above the current one would wrongly become "next". Ties on
+ * (season, episode) resolve to the first matching input element (catalog
+ * tuples are expected unique).
  */
 fun nextEpisodeAfter(
     episodes: List<EpisodeListItem>,

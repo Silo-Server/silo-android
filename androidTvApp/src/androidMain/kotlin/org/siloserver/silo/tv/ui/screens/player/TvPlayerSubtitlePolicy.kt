@@ -8,6 +8,7 @@ import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.audioTrackFingerprint
 import org.siloserver.silo.playback.SUBTITLE_OFF_FINGERPRINT
@@ -57,8 +58,10 @@ internal fun resolveTvFreshSubtitlePreference(
         typed is SubtitleIdentity.ServerBurnIn ||
         typed is SubtitleIdentity.Embedded
     ) {
+        // playsAs: a sidecar pick the server burned in was saved as burn-in
+        // of that row.
         val authoritativeMatches = hydratedRows.filter { row ->
-            tvSubtitleIdentity(row) == typed
+            tvSubtitleIdentity(row).playsAs(typed)
         }
         if (authoritativeMatches.size == 1) {
             return TvFreshSubtitlePreferenceResolution(
@@ -216,11 +219,13 @@ internal fun beginTvReplacementLoad(
 internal fun failTvReplacementLoad(
     state: TvPlayerViewModel.UiState,
     message: String,
+    messageRes: Int? = null,
 ): TvPlayerViewModel.UiState = state.copy(
     isLoading = false,
     error = null,
     serverUnreachable = false,
     subtitleFailureMessage = message,
+    subtitleFailureRes = messageRes?.let { TvPlayerErrorRes(message, it) },
 )
 
 internal fun tvAudioTrackPersistenceUpdate(
@@ -251,7 +256,7 @@ internal fun tvSubtitlePersistenceUpdate(
     committedIdentity: SubtitleIdentity,
     automaticIdentity: SubtitleIdentity?,
 ): TrackSelectionFingerprintUpdate =
-    if (automaticIdentity != null && committedIdentity == automaticIdentity) {
+    if (automaticIdentity != null && automaticIdentity.playsAs(committedIdentity)) {
         TrackSelectionFingerprintUpdate.Preserve
     } else {
         TrackSelectionFingerprintUpdate.Set(

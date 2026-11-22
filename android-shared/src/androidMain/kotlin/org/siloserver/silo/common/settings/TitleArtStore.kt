@@ -3,6 +3,7 @@ package org.siloserver.silo.common.settings
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.domain.settings.TitleArtController
 import org.siloserver.silo.domain.settings.TitleArtPreference
 import org.siloserver.silo.network.AndroidServerRegistry
@@ -81,7 +82,7 @@ interface TitleArtStore {
      * title art: Server error". Cleared by the next successful save, a fresh
      * read when Settings opens, and an identity change.
      */
-    val saveError: StateFlow<String?>
+    val saveError: StateFlow<SettingsSaveError?>
 
     /** Idempotent first load; seeds from the last-known answer first. */
     suspend fun hydrateIfNeeded()
@@ -135,9 +136,9 @@ class DefaultTitleArtStore private constructor(
     )
 
     private val _state = MutableStateFlow(TitleArtState())
-    private val _saveError = MutableStateFlow<String?>(null)
+    private val _saveError = MutableStateFlow<SettingsSaveError?>(null)
     override val state: StateFlow<TitleArtState> = _state.asStateFlow()
-    override val saveError: StateFlow<String?> = _saveError.asStateFlow()
+    override val saveError: StateFlow<SettingsSaveError?> = _saveError.asStateFlow()
 
     private val lock = Any()
 
@@ -388,7 +389,7 @@ class DefaultTitleArtStore private constructor(
                         result.resolved != null
                     }
                     is TitleArtController.WriteResult.Failed -> {
-                        _saveError.value = saveErrorText(result.message)
+                        _saveError.value = saveError(result.message)
                         // Every change queued behind this one was built on its
                         // unsaved state (which scope to write, which value to
                         // carry). Drop them all, show the confirmed state, and
@@ -444,19 +445,24 @@ class DefaultTitleArtStore private constructor(
 
     internal companion object {
         const val PREFS_NAME = "silo_title_art"
+        /** A write's failure when the profile changed under it; shown as a translated reason, never as this text. */
         const val IDENTITY_CHANGED = "The acting account or profile changed."
 
-        /** Same wording as the skip-interval save error. */
-        fun saveErrorText(message: String?): String =
-            "Couldn't save title art" + (message?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ".")
+        /** A failed write as shown (same wording as the skip-interval save error). */
+        fun saveError(message: String?): SettingsSaveError =
+            SettingsSaveError.TitleArt(
+                detail = message?.takeIf { it.isNotBlank() && it != IDENTITY_CHANGED },
+                identityChanged = message == IDENTITY_CHANGED,
+            )
 
-        /** The cache key for this snapshot's server and profile; null without a profile. */
+        /** The cache key for this snapshot's server, account and profile; null without a profile. */
         private fun AuthScopeSnapshot.cacheIdentity(): String? =
-            profileId?.takeIf { it.isNotBlank() }?.let { "$serverUrl|$it" }
+            profileId?.takeIf { it.isNotBlank() }?.let { AccountScopedKeys.identity(serverUrl, accountId, it) }
 
         /**
-         * Same server and profile, and the same sign-in when both are the
-         * saved account. Not [AuthScopeSnapshot.isSameIdentityAs]: its
+         * Same server, account and profile, and the same sign-in when both
+         * are the saved account. A snapshot without an account (an overlay)
+         * matches on server and profile alone. Not [AuthScopeSnapshot.isSameIdentityAs]: its
          * identity generation also moves when a remote-playback overlay starts
          * or ends, which leaves the profile a toggle addresses unchanged. An
          * overlay's snapshot carries no credential epoch (it is always 0), so
@@ -468,6 +474,7 @@ class DefaultTitleArtStore private constructor(
         private fun AuthScopeSnapshot.isSameProfileAs(other: AuthScopeSnapshot): Boolean {
             if (profileId != other.profileId) return false
             if (!AndroidServerRegistry.serverIdsMatch(serverId, other.serverId)) return false
+            if (accountId != null && other.accountId != null && accountId != other.accountId) return false
             val bothSavedAccount = credentialGenerationId == null && other.credentialGenerationId == null
             return !bothSavedAccount || credentialEpoch == other.credentialEpoch
         }

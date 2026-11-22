@@ -15,19 +15,24 @@ import org.siloserver.silo.repository.ProfileRepository
 
 // A one-shot enqueue pins the scope via input data; the periodic refresh
 // carries none and evaluates whatever scope is active when it fires, so a
-// server/profile switch never needs a reschedule. A lone input value is
-// stale data and must not mix scopes with the active session.
+// server/account/profile switch never needs a reschedule. A lone input value
+// is stale data and must not mix scopes with the active session.
 internal fun downloadSubscriptionScope(
     inputServerId: String?,
+    inputAccountId: String?,
     inputProfileId: String?,
     activeServerId: String?,
+    activeAccountId: String?,
     activeProfileId: String?,
-): Pair<String, String> =
+): Triple<String, String, String> =
     if (inputServerId != null && inputProfileId != null) {
-        inputServerId to inputProfileId
+        Triple(inputServerId, inputAccountId.orEmpty(), inputProfileId)
     } else {
-        (activeServerId ?: DownloadEnqueuer.DEFAULT_SERVER_ID) to
-            (activeProfileId ?: DownloadEnqueuer.DEFAULT_PROFILE_ID)
+        Triple(
+            activeServerId ?: DownloadEnqueuer.DEFAULT_SERVER_ID,
+            activeAccountId.orEmpty(),
+            activeProfileId ?: DownloadEnqueuer.DEFAULT_PROFILE_ID,
+        )
     }
 
 class DownloadSubscriptionWorker(
@@ -39,32 +44,36 @@ class DownloadSubscriptionWorker(
     private val profileRepository: ProfileRepository,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
-        val (serverId, profileId) = downloadSubscriptionScope(
+        val (serverId, accountId, profileId) = downloadSubscriptionScope(
             inputServerId = inputData.getString(KEY_SERVER_ID),
+            inputAccountId = inputData.getString(KEY_ACCOUNT_ID),
             inputProfileId = inputData.getString(KEY_PROFILE_ID),
             activeServerId = serverRegistry.activeServerId.value,
+            activeAccountId = serverRegistry.activeAccountId.value,
             activeProfileId = profileRepository.getActiveProfileId(),
         )
         val now = System.currentTimeMillis()
         val evaluator = evaluatorFactory.create()
 
-        repository.active(serverId, profileId).forEach { subscription ->
-            // A server/profile switch mid-run would make the enqueue tail file
-            // downloads under the NEW scope while the dedup snapshot belongs
+        repository.active(serverId, accountId, profileId).forEach { subscription ->
+            // A server/account/profile switch mid-run would make the enqueue tail
+            // file downloads under the NEW scope while the dedup snapshot belongs
             // to the old one — stop; the next periodic fire covers the rest.
             val liveServer = serverRegistry.activeServerId.value
+            val liveAccount = serverRegistry.activeAccountId.value.orEmpty()
             val liveProfile = profileRepository.getActiveProfileId()
             if (inputData.getString(KEY_SERVER_ID) == null &&
-                (liveServer != serverId || liveProfile != profileId)
+                (liveServer != serverId || liveAccount != accountId || liveProfile != profileId)
             ) {
                 return Result.success()
             }
             runCatching {
                 evaluator.evaluate(subscription)
-                repository.updateEvaluation(serverId, profileId, subscription.id, now, null, now)
+                repository.updateEvaluation(serverId, accountId, profileId, subscription.id, now, null, now)
             }.onFailure { error ->
                 repository.updateEvaluation(
                     serverId = serverId,
+                    accountId = accountId,
                     profileId = profileId,
                     id = subscription.id,
                     evaluatedAt = now,
@@ -78,6 +87,7 @@ class DownloadSubscriptionWorker(
 
     companion object {
         const val KEY_SERVER_ID = "server_id"
+        const val KEY_ACCOUNT_ID = "account_id"
         const val KEY_PROFILE_ID = "profile_id"
         private const val PERIODIC_UNIQUE_NAME = "download-subscriptions-periodic"
         private const val PERIODIC_INTERVAL_HOURS = 6L

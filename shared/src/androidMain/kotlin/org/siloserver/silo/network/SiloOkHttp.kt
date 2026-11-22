@@ -3,6 +3,7 @@ package org.siloserver.silo.network
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
+import org.siloserver.silo.network.localroute.localRoute
 import java.util.concurrent.TimeUnit
 
 /**
@@ -49,12 +50,14 @@ object SiloOkHttp {
     /**
      * Coil's network client. Shares [connectionPool] with the API clients but
      * owns its dispatcher (see class KDoc). No OkHttp `Cache` is attached —
-     * Coil owns disk caching for images.
+     * Coil owns disk caching for images. Artwork takes the active server's
+     * local route like the API clients; cache keys keep the saved address.
      */
     val imageClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .dispatcher(newDispatcher())
             .connectionPool(connectionPool)
+            .localRoute()
             .build()
     }
 }

@@ -22,8 +22,11 @@ class TvDetailFocusPolicyTest {
             "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/detail/TvDetailEpisodeRail.kt",
         ).readText()
 
-        assertTrue(source.contains("LaunchedEffect(episodeSetKey)"))
-        assertFalse(source.contains("LaunchedEffect(currentContentId, episodes.size)"))
+        // Keyed on the episode set and on whether the start episode has
+        // arrived, never on the focused episode, and it centers at most once.
+        assertTrue(source.contains("LaunchedEffect(episodeSetKey, currentIndex != null)"))
+        assertTrue(source.contains("if (initialCenterDone || rememberedFocusedContentId != null) return@LaunchedEffect"))
+        assertFalse(source.contains("LaunchedEffect(currentContentId"))
     }
 
     @Test
@@ -64,7 +67,7 @@ class TvDetailFocusPolicyTest {
         assertTrue(detailSource.contains("icon = Icons.Filled.BookmarkBorder"))
         assertTrue(detailSource.contains("key = \"favorite\""))
         assertTrue(detailSource.contains("key = \"watched\""))
-        assertTrue(selectorSource.contains("icon = Icons.Filled.Movie"))
+        assertTrue(selectorSource.contains("icon = Icons.Filled.VideoLibrary"))
         assertTrue(selectorSource.contains("icon = Icons.AutoMirrored.Filled.VolumeUp"))
         assertTrue(selectorSource.contains("icon = Icons.AutoMirrored.Filled.Chat"))
         assertTrue(selectorSource.contains("triggerStyle = TvSelectorTriggerStyle.CircularAction"))
@@ -87,8 +90,7 @@ class TvDetailFocusPolicyTest {
         assertFalse(detailSource.contains("private fun CircleAction("))
         assertTrue(detailSource.contains("iconActive = Icons.Filled.SkipPrevious"))
         assertTrue(detailSource.contains("Modifier.width(170.dp)"))
-        assertTrue(episodeSource.contains("text = \"NOW VIEWING\""))
-        assertTrue(episodeSource.contains("val eyebrowFontSize = if (usesSeriesGeometry) 11.sp else 14.sp"))
+        assertTrue(episodeSource.contains("EpisodeCardCaption.title(episode"))
         assertTrue(episodeSource.contains("fontSize = 11.5.sp"))
         assertTrue(episodeSource.contains("tvEpisodeCardWidth()"))
         assertTrue(episodeSource.contains("cardWidth * (9f / 16f)"))
@@ -126,9 +128,9 @@ class TvDetailFocusPolicyTest {
         assertTrue(editorial.lastIndexOf("HeroCreditLine(line)") < playback)
         assertTrue(heroSource.contains("fontSize = if (compact) 10.5.sp else 14.sp"))
         assertTrue(heroSource.contains("HERO_HEIGHT_FRACTION = 690f / 1080f"))
-        assertTrue(detailSource.contains("label = \"VERSION\""))
-        assertTrue(detailSource.contains("label = \"AUDIO\""))
-        assertTrue(detailSource.contains("label = \"SUBTITLES\""))
+        assertTrue(detailSource.contains("label = stringResource(CommonR.string.detail_readout_version)"))
+        assertTrue(detailSource.contains("label = stringResource(CommonR.string.detail_readout_audio)"))
+        assertTrue(detailSource.contains("label = stringResource(CommonR.string.detail_readout_subtitles)"))
         assertTrue(detailSource.contains("includePlaybackFormats = false"))
         assertTrue(playbackReadout.contains("Modifier.weight(1f)"))
         assertTrue(playbackReadout.contains("Arrangement.spacedBy(4.dp)"))
@@ -173,7 +175,10 @@ class TvDetailFocusPolicyTest {
             .substringBefore("private fun Modifier.seriesModeFocusRing")
 
         assertTrue(seriesPicker.contains("LaunchedEffect(selectedIndex, seasons.size)"))
-        assertTrue(seriesPicker.contains("listState.scrollToItem(selectedIndex)"))
+        assertTrue(seriesPicker.contains("val idx = selectedIndex ?: return@LaunchedEffect"))
+        assertTrue(seriesPicker.contains("listState.scrollToItem(idx)"))
+        // No tab holds the requester while seasons load or none is selected.
+        assertTrue(seriesPicker.contains("selectedIndex?.let {\n                    enter = { selectedFocusRequester }"))
         assertTrue(seriesPicker.contains("val viewportCenter"))
         assertTrue(seriesPicker.contains("val itemCenter"))
         assertTrue(seriesPicker.contains("listState.animateScrollBy(itemCenter - viewportCenter)"))

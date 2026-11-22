@@ -43,8 +43,12 @@ class SettingsV2Api(
 
     // ---- reads ----
 
-    suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> = read("/api/v2/settings/overlay-config") { body, _ ->
-        SiloJson.decodeFromJsonElement(OverlayConfigResponse.serializer(), body)
+    // Image urls are server-relative (`/api/v2/overlay-images/{ref}`); resolve
+    // them against the server that answered, as artwork is, so cards load
+    // them through the image loader without consulting the active server.
+    suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> = read("/api/v2/settings/overlay-config") { body, scope ->
+        val config = SiloJson.decodeFromJsonElement(OverlayConfigResponse.serializer(), body)
+        config.copy(images = config.images.map { it.copy(url = resolveArtworkUrl(it.url, scope.serverUrl)) })
     }
 
     suspend fun effectiveValues(keys: List<String>, libraries: List<Int>, series: List<String>, expected: AuthScopeSnapshot? = null): ApiResult<EffectiveSettingValuesResponse> =
@@ -70,6 +74,13 @@ class SettingsV2Api(
         exchange<SettingsContractCapabilities, SettingsContractCapabilities>(block = { owner ->
             client.get("/api/v2/settings/contract/capabilities") { authScope(owner); requireSiloAuth() }
         }) { capabilities, _ -> capabilities }
+
+    /** The keys the server's settings manifest defines: `definitions[].key` of `GET /settings/contract`. */
+    suspend fun contractKeys(): ApiResult<Set<String>> =
+        read("/api/v2/settings/contract") { manifest, _ ->
+            requireNotNull(manifest["definitions"]).jsonArray
+                .mapTo(mutableSetOf()) { it.jsonObject.getValue("key").jsonPrimitive.content }
+        }
 
     // ---- canonical scope writes ----
 
@@ -163,6 +174,70 @@ class SettingsV2Api(
     suspend fun deleteLibraryPreference(libraryId: Int): ApiResult<Unit> = exchange<Unit, Unit>(status = HttpStatusCode.NoContent, block = { owner ->
         client.delete("/api/v2/library-playback-prefs/$libraryId") { authScope(owner); requireSiloAuth() }
     }) { _, _ -> }
+
+    // ---- per-series subtitle choice ----
+
+    /**
+     * PUT /api/v2/subtitle-prefs/{series_id} (204): replaces the profile's
+     * remembered subtitle choice for a series (or a movie, keyed by its own
+     * content id). Pinned to [expected] — the profile that made the choice —
+     * so a write never lands on a profile switched to meanwhile.
+     */
+    suspend fun putSubtitlePreference(
+        seriesId: String,
+        choice: org.siloserver.silo.model.playback.SeriesSubtitleChoice,
+        expected: AuthScopeSnapshot? = null,
+    ): ApiResult<Unit> = exchange<Unit, Unit>(expected, HttpStatusCode.NoContent, block = { owner ->
+        client.put("/api/v2/subtitle-prefs/${seriesId.encodeURLPathPart()}") {
+            authScope(owner); requireSiloAuth()
+            contentType(ContentType.Application.Json)
+            setBody(
+                SiloJson.encodeToJsonElement(
+                    org.siloserver.silo.model.playback.SeriesSubtitleChoice.serializer(),
+                    choice,
+                ),
+            )
+        }
+    }) { _, _ -> }
+
+    /** DELETE /api/v2/subtitle-prefs/{series_id} (204, also when none was stored): back to automatic. */
+    suspend fun deleteSubtitlePreference(seriesId: String, expected: AuthScopeSnapshot? = null): ApiResult<Unit> =
+        exchange<Unit, Unit>(expected, HttpStatusCode.NoContent, block = { owner ->
+            client.delete("/api/v2/subtitle-prefs/${seriesId.encodeURLPathPart()}") { authScope(owner); requireSiloAuth() }
+        }) { _, _ -> }
+
+    // ---- per-series audio choice ----
+
+    /**
+     * PUT /api/v2/audio-prefs/{series_id} (204): replaces the profile's
+     * remembered audio track for a series (or a movie, keyed by its own
+     * content id). Pinned to [expected] like [putSubtitlePreference].
+     */
+    suspend fun putAudioPreference(
+        seriesId: String,
+        choice: org.siloserver.silo.model.playback.SeriesAudioChoice,
+        expected: AuthScopeSnapshot? = null,
+    ): ApiResult<Unit> = exchange<Unit, Unit>(expected, HttpStatusCode.NoContent, block = { owner ->
+        client.put("/api/v2/audio-prefs/${seriesId.encodeURLPathPart()}") {
+            authScope(owner); requireSiloAuth()
+            contentType(ContentType.Application.Json)
+            setBody(
+                SiloJson.encodeToJsonElement(
+                    org.siloserver.silo.model.playback.SeriesAudioChoice.serializer(),
+                    choice,
+                ),
+            )
+        }
+    }) { _, _ -> }
+
+    /**
+     * DELETE /api/v2/audio-prefs/{series_id} (204, also when none was stored):
+     * back to automatic. Also clears the series' `playback.audio_language`.
+     */
+    suspend fun deleteAudioPreference(seriesId: String, expected: AuthScopeSnapshot? = null): ApiResult<Unit> =
+        exchange<Unit, Unit>(expected, HttpStatusCode.NoContent, block = { owner ->
+            client.delete("/api/v2/audio-prefs/${seriesId.encodeURLPathPart()}") { authScope(owner); requireSiloAuth() }
+        }) { _, _ -> }
 
     private fun stringID(value: JsonElement): String {
         val primitive = value.jsonPrimitive

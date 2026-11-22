@@ -279,7 +279,7 @@ class SubtitleModelsSerializationTest {
     }
 
     @Test
-    fun `translate request omits nulls and never carries session_id`() {
+    fun `translate request omits nulls including a missing session_id`() {
         val encoded = json.encodeToString(
             SubtitleTranslateRequest.serializer(),
             SubtitleTranslateRequest(
@@ -290,7 +290,6 @@ class SubtitleModelsSerializationTest {
             ),
         )
         val obj = json.parseToJsonElement(encoded).jsonObject
-        // Android polls instead of streaming live cues, so session_id is never sent.
         assertFalse("session_id" in obj.keys)
         assertFalse("source_language" in obj.keys)  // null → omitted (explicitNulls=false)
         assertEquals(

@@ -123,6 +123,30 @@ class AudioReconcileTest {
         )
     }
 
+    /**
+     * A server remux or transcode mounts only the plan's audio row. Its main
+     * mix must not confirm a pick of the commentary, which matches it on
+     * language and codec: the main mix kept playing under the new pick.
+     */
+    @Test
+    fun aServerStreamCarriesOnlyThePlansAudioRow() {
+        val main = AudioTrack(codec = "eac3", channels = 6, language = "en", title = "English")
+        val commentary = AudioTrack(codec = "eac3", channels = 2, language = "en", title = "Commentary")
+        val remux = listOf(MountedAudioTrack(0, "en", "audio/eac3", 6, null))
+        fun reconcileRemux(ordinal: Int) = reconcileDesiredAudioAction(
+            desired = desire(ordinal),
+            activeFileId = 1,
+            catalog = listOf(main, commentary),
+            mounted = remux,
+            selectedOrdinal = 0,
+            planAudioOrdinal = 0,
+            delivery = PlaybackDelivery.SERVER_REMUX_PROGRESSIVE,
+        )
+
+        assertEquals(AudioReconcileAction.None, reconcileRemux(1))
+        assertEquals(AudioReconcileAction.Confirm, reconcileRemux(0))
+    }
+
     @Test
     fun originalFileRequiresMountedIdentityBeforeConfirmingThePlanSelection() {
         val transcodedLookingSnapshot = listOf(

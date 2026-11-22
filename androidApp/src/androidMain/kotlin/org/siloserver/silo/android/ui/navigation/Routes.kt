@@ -4,7 +4,9 @@ import android.net.Uri
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
+import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.section.LibraryCollection
+import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.model.section.SectionItem
 
 /**
@@ -29,7 +31,15 @@ sealed class Route(val route: String) {
             const val ROUTE = "server_setup_prefilled?url={url}"
         }
     }
+    /** Settings › Accounts: every saved server and its accounts (the route kept its old name). */
     data object ServerList : Route("server_list")
+
+    /** One saved account's page under Settings › Accounts. */
+    data class AccountDetail(val accountId: String) : Route("server_list/account/${Uri.encode(accountId)}") {
+        companion object {
+            const val ROUTE = "server_list/account/{accountId}"
+        }
+    }
     data object Login : Route("login")
     data object Setup : Route("setup")
     data object Signup : Route("signup")
@@ -87,6 +97,21 @@ sealed class Route(val route: String) {
 
     // --- Profile selection (no bottom nav) ---
     data object ProfileSelection : Route("profiles")
+    /** "Choose a new password": the account signed in with a temporary password an admin set. */
+    data object PasswordChange : Route("account/password_change")
+
+    /**
+     * Change Account: every saved server's accounts, to open another one.
+     * [addAccountOn] scrolls to that server's "Add an account" row (Add ›
+     * Add an account on the picker).
+     */
+    data class ChangeAccount(val addAccountOn: String? = null) : Route(
+        if (addAccountOn == null) "change_account" else "change_account?addOn=${Uri.encode(addAccountOn)}",
+    ) {
+        companion object {
+            const val ROUTE = "change_account?addOn={addOn}"
+        }
+    }
     data object CreateProfile : Route("profiles/create")
     data class EditProfile(val profileId: String) : Route("profiles/${Uri.encode(profileId)}/edit") {
         companion object {
@@ -139,6 +164,14 @@ sealed class Route(val route: String) {
     // --- Requests ---
     data object Requests : Route("requests")
     data object MyRequests : Route("requests/mine")
+    data class RequestDiscoverRow(
+        val key: String,
+        val title: String,
+    ) : Route("requests/discover/${Uri.encode(key)}?title=${Uri.encode(title)}") {
+        companion object {
+            const val ROUTE = "requests/discover/{key}?title={title}"
+        }
+    }
     data class RequestDetail(
         val mediaType: String,
         val tmdbId: Int,
@@ -167,6 +200,14 @@ sealed class Route(val route: String) {
         companion object {
             const val ROUTE =
                 "item/{contentId}?seasonNumber={seasonNumber}&episodeContentId={episodeContentId}&libraryId={libraryId}"
+        }
+    }
+
+    /** A movie box set: one TMDB collection's movies in one library. */
+    data class BoxSet(val boxSetId: String, val libraryId: String) :
+        Route("box_set/${boxSetId.routeEncode()}?libraryId=${libraryId.routeEncode()}") {
+        companion object {
+            const val ROUTE = "box_set/{boxSetId}?libraryId={libraryId}"
         }
     }
 
@@ -206,6 +247,28 @@ sealed class Route(val route: String) {
         }
     }
 
+    /**
+     * A Home row's full page ([libraryId] null) or a library row's, titled
+     * with the row's title. [mediaScope] keeps a mixed library's Movies or
+     * Series filter.
+     */
+    data class SectionBrowse(
+        val sectionId: String,
+        val title: String,
+        val libraryId: Int? = null,
+        val mediaScope: String? = null,
+    ) : Route(
+        buildString {
+            append("section/${sectionId.routeEncode()}?title=${title.routeEncode()}")
+            libraryId?.let { append("&libraryId=$it") }
+            mediaScope?.let { append("&mediaScope=${it.routeEncode()}") }
+        },
+    ) {
+        companion object {
+            const val ROUTE = "section/{sectionId}?title={title}&libraryId={libraryId}&mediaScope={mediaScope}"
+        }
+    }
+
     // --- Player / casting (fullscreen or hidden shell routes, no menu entries) ---
     data object SiloCastRemote : Route("silocast/remote")
 
@@ -220,12 +283,15 @@ sealed class Route(val route: String) {
         val libraryId: Int? = null,
         /** The running shuffle this item is a pick of; picks play from the beginning. */
         val shuffleId: String? = null,
+        /** The viewer picked [fileId] in a version picker: the start pins it. */
+        val versionChosen: Boolean = false,
     ) : Route(
         buildString {
             append("player/${contentId.routeEncode()}")
             val queryParams = listOfNotNull(
                 libraryId?.let { "libraryId=$it" },
                 fileId?.let { "fileId=$it" },
+                "versionChosen=true".takeIf { versionChosen && fileId != null },
                 // normalizeQuality is a closed wire-value set, so no URI
                 // escaping (or Android framework dependency) is needed here.
                 VideoPlayerRouteArgs.normalizeQuality(quality)?.let { "quality=$it" },
@@ -244,7 +310,7 @@ sealed class Route(val route: String) {
     ) {
         companion object {
             const val ROUTE =
-                "player/{contentId}?libraryId={libraryId}&fileId={fileId}&quality={quality}&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}&resumePosition={resumePosition}&roomId={roomId}&shuffleId={shuffleId}"
+                "player/{contentId}?libraryId={libraryId}&fileId={fileId}&versionChosen={versionChosen}&quality={quality}&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}&resumePosition={resumePosition}&roomId={roomId}&shuffleId={shuffleId}"
         }
     }
 
@@ -358,10 +424,51 @@ fun libraryCollectionDetailRoute(
 ).route
 
 /**
+ * Opens a card of a row of collections. A personal collection opens as the
+ * Collections screen opens it; a server collection opens in [libraryId] (the
+ * card's library unless a library page passes its own) with [mediaScope].
+ * Null when a server collection has no library to open in.
+ */
+fun sectionCollectionCardRoute(
+    card: SectionCollectionCard,
+    libraryId: Int? = card.libraryIdInt,
+    mediaScope: String? = null,
+): String? = if (card.isUserCollection) {
+    Route.CollectionDetail(card.id).route
+} else {
+    libraryId?.let {
+        Route.CollectionDetail(
+            collectionId = card.id,
+            libraryId = it,
+            source = "library_collection",
+            mediaScope = mediaScope,
+        ).route
+    }
+}
+
+/**
  * Continue Watching episodes belong to the unified series detail surface.
  * Preserve the episode as route state so opening (for example) S3E1 loads the
  * parent series, selects Season 3, and focuses that exact episode in its rail.
  */
+/**
+ * Detail route for a card on a row's full page, matching the row: an episode
+ * opens its series at that season and episode, as Home's rows do.
+ */
+internal fun sectionBrowseDetailRoute(item: BrowseItem, libraryId: Int?): String {
+    val seriesId = item.seriesId?.takeIf { it.isNotBlank() }
+    return if (item.type.equals("episode", ignoreCase = true) && seriesId != null && item.seasonNumber != null) {
+        Route.ItemDetail(
+            contentId = seriesId,
+            seasonNumber = item.seasonNumber,
+            episodeContentId = item.contentId,
+            libraryId = libraryId,
+        ).route
+    } else {
+        Route.ItemDetail(item.contentId, libraryId = libraryId).route
+    }
+}
+
 internal fun continueWatchingDetailRoute(item: SectionItem): String {
     val seriesId = item.seriesId?.takeIf { it.isNotBlank() }
     return if (item.type.equals("episode", ignoreCase = true) && seriesId != null) {

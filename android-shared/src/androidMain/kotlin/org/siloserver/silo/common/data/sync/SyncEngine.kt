@@ -1,19 +1,27 @@
 package org.siloserver.silo.common.data.sync
 
 import android.util.Log
+import androidx.room.withTransaction
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
 import org.siloserver.silo.model.ebook.SaveEbookProgressRequest
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.model.request.RequestMutationFailure
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.CleartextOriginNotApprovedException
+import org.siloserver.silo.network.SiloAuthUnavailableException
+import org.siloserver.silo.network.api.DownloadProgressReceipt
 import org.siloserver.silo.network.api.EbookReaderApi
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.repository.port.WriteOutcome
 import org.siloserver.silo.repository.port.toWriteOutcome
 
-/** Drains typed membership and ebook writes. Legacy personal-data rows remain unchanged and unsent. */
+/**
+ * Drains typed membership writes, ebook progress, and download playback
+ * progress (v2 `SET_POSITION`). Legacy personal-data rows remain unchanged and unsent.
+ */
 class SyncEngine(
-    db: SiloDatabase,
+    private val db: SiloDatabase,
     private val personalDataApi: PersonalDataApi,
     private val ebookReaderApi: EbookReaderApi,
     private val snapshotProvider: suspend () -> AuthScopeSnapshot?,
@@ -44,6 +52,12 @@ class SyncEngine(
      * Drain all currently-due ops for the active scope, pinning every send to the
      * captured snapshot. Loops over batches so a backlog larger than [batchLimit]
      * fully drains in one run.
+     *
+     * Only the snapshot's own account's rows are drained, and the snapshot names
+     * that account ([AuthScopeSnapshot.accountId]), so every replay is sent with
+     * the credentials of the account that recorded it. Two accounts on one
+     * server can share a profile id, so server + profile alone would replay one
+     * account's writes as the other.
      */
     suspend fun drainOnce(): DrainResult {
         memberships?.dispatch(batchLimit.coerceAtMost(100))
@@ -51,10 +65,13 @@ class SyncEngine(
         val serverId = scope.serverId
         // Ops are always enqueued with a profile; no profile → nothing to drain.
         val profileId = scope.profileId ?: return DrainResult()
+        // A scope with no saved account (a temporary overlay) recorded under ''.
+        val accountId = scope.accountId.orEmpty()
 
-        // Reclaim crash-stranded in-flight rows before claiming new work.
-        dao.deleteSupersededInFlight(serverId, profileId)
-        dao.resetInFlightToPending(serverId, profileId)
+        // Reclaim crash-stranded in-flight rows before claiming new work. A download
+        // position goes back to pending too: resending its event is safe.
+        dao.deleteSupersededInFlight(serverId, accountId, profileId)
+        dao.resetInFlightToPending(serverId, accountId, profileId)
 
         var synced = 0
         var dropped = 0
@@ -66,7 +83,7 @@ class SyncEngine(
             // The DAO selects only due target heads and applies its older-sibling
             // anti-join before LIMIT. This preserves per-item FIFO even when the
             // backing-off predecessor lies outside the current SQL page.
-            val batch = dao.dueTargetHeads(serverId, profileId, nowMs, batchLimit)
+            val batch = dao.dueTargetHeads(serverId, accountId, profileId, nowMs, batchLimit)
             if (batch.isEmpty()) break
 
             for (op in batch) {
@@ -75,7 +92,7 @@ class SyncEngine(
                     val authority = ebookAuthorities.snapshotDurableLoginAuthority()
                     if (authority == null || !authority.scope.isSameIdentityAs(scope))
                         return DrainResult(synced, dropped, retriable + 1,
-                            dao.runnableLegacyCountForScope(serverId, profileId) + (memberships?.readyCount() ?: 0))
+                            dao.runnableLegacyCountForScope(serverId, accountId, profileId) + (memberships?.readyCount() ?: 0))
                     if (op.opVersion < 2 || payload?.updatedAt == null || payload.loginId != authority.loginId ||
                         payload.origin != scope.serverUrl) {
                         dao.quarantineEbookProgress(op.id)
@@ -99,10 +116,13 @@ class SyncEngine(
                 }
                 when (outcome) {
                     WriteOutcome.SYNCED -> {
-                        dao.deleteById(op.id)
+                        if (op.opKind == OutboxOperation.SET_POSITION) settleDownloadProgress(op, accepted = true) else dao.deleteById(op.id)
                         synced++
                     }
-                    WriteOutcome.TERMINAL -> {
+                    WriteOutcome.TERMINAL -> if (op.opKind == OutboxOperation.SET_POSITION) {
+                        settleDownloadProgress(op, accepted = false)
+                        dropped++
+                    } else {
                         // A stale in-flight op must not roll back a newer pending
                         // intent with the same key. Otherwise revert both its
                         // optimistic content field and any resume rows it cleared.
@@ -140,13 +160,14 @@ class SyncEngine(
         // land between the drain and the count. Including the end scope covers an
         // activation enqueue dropped by ExistingWorkPolicy.KEEP while this worker
         // was running.
-        var remaining = dao.runnableLegacyCountForScope(serverId, profileId)
+        var remaining = dao.runnableLegacyCountForScope(serverId, accountId, profileId)
         val endScope = snapshotProvider()
         val endProfileId = endScope?.profileId
+        val endAccountId = endScope?.accountId.orEmpty()
         if (endScope != null && endProfileId != null &&
-            (endScope.serverId != serverId || endProfileId != profileId)
+            (endScope.serverId != serverId || endAccountId != accountId || endProfileId != profileId)
         ) {
-            remaining += dao.runnableLegacyCountForScope(endScope.serverId, endProfileId)
+            remaining += dao.runnableLegacyCountForScope(endScope.serverId, endAccountId, endProfileId)
         }
 
         remaining += memberships?.readyCount() ?: 0
@@ -159,8 +180,94 @@ class SyncEngine(
     }
 
     private suspend fun dispatch(op: DirtyOperationEntity, scope: AuthScopeSnapshot): WriteOutcome {
+        if (op.opKind == OutboxOperation.SET_POSITION && op.opVersion >= 2) return dispatchDownloadProgress(op, scope)
         check(op.opKind == OutboxOperation.SET_EBOOK_PROGRESS) { "Legacy personal-data intents must remain held" }
         return dispatchEbookProgress(op, op.targetContentId, scope)
+    }
+
+    /** One queued download position, sent with the time it was played. */
+    private suspend fun dispatchDownloadProgress(op: DirtyOperationEntity, scope: AuthScopeSnapshot): WriteOutcome {
+        val (position, duration) = OutboxOperation.decodePositionPayload(op.payloadJson)
+        val result = personalDataApi.syncDownloadProgress(
+            scope = scope,
+            contentId = op.targetContentId,
+            positionSeconds = position,
+            durationSeconds = duration,
+            updatedAt = java.time.Instant.ofEpochMilli(op.createdAtMs).toString(),
+        )
+        return when {
+            result is ApiResult.Success -> when (result.data) {
+                DownloadProgressReceipt.ACCEPTED -> WriteOutcome.SYNCED
+                DownloadProgressReceipt.NOT_FOUND -> WriteOutcome.TERMINAL
+                DownloadProgressReceipt.RETRY -> WriteOutcome.RETRIABLE
+            }
+            // A request the server can never accept is dropped.
+            result is ApiResult.Error && result.code in FINAL_PROGRESS_REFUSALS -> WriteOutcome.TERMINAL
+            // Everything else is sent again, including a send that may already have
+            // been applied (a timeout, a reset, an unreadable answer): the server
+            // merges on updated_at with strict newer-wins, so resending the same
+            // event changes nothing unless the device clock ran over two minutes
+            // fast. Settling on doubt instead would delete positions the server
+            // never received.
+            else -> {
+                // It may have arrived, so it no longer beats the server's answer at
+                // start; newer progress from another device would win. Offline it
+                // stays the resume point.
+                if (mayHaveArrived(result)) {
+                    // A local failure here must not turn the op terminal: it stays queued.
+                    try {
+                        markProgressSent(op)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG, "op ${op.id}: couldn't mark its position sent", e)
+                    }
+                }
+                WriteOutcome.RETRIABLE
+            }
+        }
+    }
+
+    /** True when a progress send left the device and got no usable answer. */
+    private fun mayHaveArrived(result: ApiResult<*>): Boolean {
+        if (!RequestMutationFailure.isUncertain(result)) return false
+        // Refused before sending: sign-in unavailable, a cleartext server the
+        // user hasn't approved or the platform blocks, or a TLS handshake that failed.
+        val failure = (result as? ApiResult.NetworkError)?.exception ?: return true
+        return generateSequence(failure) { it.cause?.takeIf { cause -> cause !== it } }
+            .none {
+                it is SiloAuthUnavailableException || it is CleartextOriginNotApprovedException ||
+                    it is javax.net.ssl.SSLHandshakeException || it is java.net.UnknownServiceException
+            }
+    }
+
+    private suspend fun markProgressSent(op: DirtyOperationEntity) = userStateDao.markPlaybackProgressSent(
+        op.serverId, op.accountId, op.profileId, op.targetContentId, op.targetFileId ?: -1, op.createdAtMs,
+    )
+
+    /**
+     * The server has the position (or refused it for good), so from now on its
+     * answer stands: drop the op. An accepted copy is kept, marked sent: online
+     * the server's answer stands over it, and offline, where there is no server
+     * answer to read, it is the resume point. A refused one is cleared. A newer
+     * sample queued meanwhile keeps its row, unmarked, until its own op settles.
+     */
+    private suspend fun settleDownloadProgress(op: DirtyOperationEntity, accepted: Boolean) {
+        db.withTransaction {
+            dao.deleteById(op.id)
+            if (accepted) {
+                markProgressSent(op)
+            } else if (
+                dao.countNewerForTargetKind(op.serverId, op.accountId, op.profileId, op.targetContentId, op.opKind, op.id) == 0
+            ) {
+                // Stamped with the event it settles, so a sample taken after it but
+                // written after this still counts as newer.
+                userStateDao.clearPlaybackProgressBefore(
+                    op.serverId, op.accountId, op.profileId, op.targetContentId,
+                    admittedAtMs = op.createdAtMs + 1, updatedAtMs = op.createdAtMs,
+                )
+            }
+        }
     }
 
     /**
@@ -224,6 +331,9 @@ class SyncEngine(
         // Backstop against a pathological re-due loop; a normal drain terminates
         // long before this because each op is deleted or pushed into the future.
         private const val MAX_BATCHES = 1_000
+
+        /** Malformed or for a title the server no longer has. */
+        private val FINAL_PROGRESS_REFUSALS = setOf(400, 404, 422)
 
     }
 }

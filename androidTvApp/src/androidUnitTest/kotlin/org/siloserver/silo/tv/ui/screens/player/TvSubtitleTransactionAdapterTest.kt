@@ -16,10 +16,12 @@ import kotlinx.coroutines.test.TestScope
 import org.siloserver.silo.model.playback.CommittedSubtitle
 import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.SubtitleHlsRendition
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.common.player.PlaybackTrackSelectionWriteCoordinator
+import org.siloserver.silo.domain.player.BufferingQualityReplan
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -144,6 +146,27 @@ class TvSubtitleTransactionAdapterTest {
         assertEquals(listOf("old-server-sidecar"), harness.port.committed)
         assertEquals(sidecar(4), harness.adapter.snapshot.committedIdentity)
         assertEquals(listOf(42.0), adoption.requestedSourcePositions)
+    }
+
+    @Test
+    fun `a subtitle change with no quality picked neither sends nor records one`() = runTest {
+        // The player passes no quality until the viewer picks one, so the
+        // session keeps the quality it started at (the saved settings).
+        val harness = harness(backgroundScope, isLocallyMountable = { false }, qualityPreference = null)
+
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        assertNull(harness.port.requests.single().qualityPreference)
+
+        harness.port.completeStage(candidate("no-pick", 4))
+        runCurrent()
+        confirmPendingPlayerBoundary(harness, "no-pick-mounted")
+        runCurrent()
+
+        assertEquals(sidecar(4), harness.adapter.snapshot.committedIdentity)
+        // The player records a committed quality as the viewer's pick, which
+        // renewals and recoveries then carry.
+        assertNull(harness.adapter.snapshot.transition.committed.qualityPreference)
     }
 
     @Test
@@ -927,6 +950,108 @@ class TvSubtitleTransactionAdapterTest {
 
         assertEquals(burnIn, harness.adapter.snapshot.committedIdentity)
         assertEquals(listOf(burnIn), harness.persistence.persisted.map { it.identity })
+    }
+
+    @Test
+    fun `sidecar pick the server can only burn in commits as burn-in`() = runTest {
+        // On an HLS transcode the server burns an ASS track in, because that
+        // delivery declares no attached-font support. The replan has already
+        // switched the session's transcode, so refusing it left the old player
+        // on a session that no longer served its segments.
+        val harness = harness(backgroundScope)
+        val assMedia = media(trackId = "file:11:subtitle:4", label = "Full Subs (ASS)", language = "en", codec = "ssa")
+        val requested = SubtitleIdentity.ServerSidecar(4, assMedia)
+
+        harness.adapter.select(requested)
+        runCurrent()
+        harness.port.completeStage(
+            candidate(
+                id = "hls-burn-in",
+                selectedIndex = 4,
+                mode = PlaybackSubtitleModeV3.BURN_IN,
+                hasSidecar = false,
+                selectedSubtitleIdentity = requested,
+            ),
+        )
+        runCurrent()
+
+        val burnedIn = SubtitleIdentity.ServerBurnIn(4, assMedia)
+        assertEquals(emptyList(), harness.port.discarded)
+        assertEquals(listOf("hls-burn-in"), harness.port.committed)
+        assertNull(harness.adapter.snapshot.failureMessage)
+        assertEquals(1, harness.committedPlaybacks.size)
+        assertEquals(burnedIn, harness.adapter.snapshot.committedIdentity)
+
+        // A later replan that leaves the transcode hands the same track back
+        // as a sidecar; refusing it would strand the player the same way.
+        harness.adapter.updateOutputRouteGeneration(1L)
+        runCurrent()
+        harness.port.completeStage(
+            candidate(
+                id = "back-to-sidecar",
+                selectedIndex = 4,
+                outputRouteGeneration = 1L,
+                selectedSubtitleIdentity = requested,
+            ),
+        )
+        runCurrent()
+
+        assertEquals(emptyList(), harness.port.discarded)
+        assertEquals(listOf("hls-burn-in", "back-to-sidecar"), harness.port.committed)
+        assertNull(harness.adapter.snapshot.failureMessage)
+    }
+
+    @Test
+    fun `picking the row whose burn-in already plays sends no replan`() = runTest {
+        // The menu checks the sidecar row while its burn-in plays. Picking it
+        // again restarted the transcode for the same answer.
+        val harness = harness(backgroundScope)
+        val assMedia = media(trackId = "file:11:subtitle:4", label = "Full Subs (ASS)", language = "en", codec = "ssa")
+        val requested = SubtitleIdentity.ServerSidecar(4, assMedia)
+        harness.adapter.select(requested)
+        runCurrent()
+        harness.port.completeStage(
+            candidate(
+                id = "hls-burn-in",
+                selectedIndex = 4,
+                mode = PlaybackSubtitleModeV3.BURN_IN,
+                hasSidecar = false,
+                selectedSubtitleIdentity = requested,
+            ),
+        )
+        runCurrent()
+        assertEquals(SubtitleIdentity.ServerBurnIn(4, assMedia), harness.adapter.snapshot.committedIdentity)
+        val persistedBefore = harness.persistence.persisted.size
+
+        harness.adapter.select(requested)
+        runCurrent()
+
+        assertEquals(1, harness.port.requests.size)
+        assertNull(harness.adapter.snapshot.pendingIdentity)
+        // Still the viewer's explicit pick: saved like a commit.
+        assertEquals(persistedBefore + 1, harness.persistence.persisted.size)
+        assertEquals(SubtitleIdentity.ServerBurnIn(4, assMedia), harness.persistence.persisted.last().identity)
+    }
+
+    @Test
+    fun `a saved burn-in the new plan burns in again is already committed`() = runTest {
+        // Reopening: the saved burn-in restores to its sidecar row while the
+        // load already committed the plan's burn-in. Nothing is mounted for
+        // it, and a replan would restart the transcode for the same answer.
+        val harness = harness(backgroundScope)
+        val assMedia = media(trackId = "file:11:subtitle:4", label = "Full Subs (ASS)", language = "en", codec = "ssa")
+        val burnedIn = SubtitleIdentity.ServerBurnIn(4, assMedia)
+        harness.adapter.resetContent(context(), committedIdentity = burnedIn)
+
+        harness.adapter.restoreFreshPreference(SubtitleIdentity.ServerSidecar(4, assMedia))
+        runCurrent()
+        advanceTimeBy(10_000)
+        runCurrent()
+
+        assertEquals(emptyList(), harness.port.requests)
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertNull(harness.adapter.snapshot.failureMessage)
+        assertEquals(burnedIn, harness.adapter.snapshot.committedIdentity)
     }
 
     @Test
@@ -1809,6 +1934,56 @@ class TvSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `a buffering replan rides its quality request and a later viewer pick does not`() = runTest {
+        var failures = 0
+        val harness = harness(backgroundScope, onBufferingQualityReplanFailed = { failures += 1 })
+        val replan = BufferingQualityReplan(
+            qualityPreference = "auto",
+            bandwidthEstimateKbps = 5_600,
+            bandwidthEstimateSource = "observed_rebuffer",
+        )
+
+        // Auto stepping down under an estimate: the quality itself is unchanged.
+        harness.adapter.selectQuality("auto", bufferingQuality = replan)
+        runCurrent()
+        val lowered = harness.port.requests.single()
+        assertEquals(replan, lowered.bufferingQuality)
+        assertEquals("quality_changed", lowered.classification)
+        assertFalse(lowered.qualityChanged)
+
+        harness.port.completeStage(candidate("lowered", 3, qualityPreference = "auto"))
+        runCurrent()
+        confirmPendingPlayerBoundary(harness, "lowered-mounted")
+        runCurrent()
+        // Committed: nothing reports it as failed, a reset included.
+        harness.adapter.resetContent(context(sessionId = "s-lowered"), committedIdentity = sidecar(3))
+        assertEquals(0, failures)
+
+        harness.adapter.selectQuality("720p")
+        runCurrent()
+        assertNull(harness.port.requests.last().bufferingQuality)
+    }
+
+    @Test
+    fun `a failed buffering replan reports once and a failed viewer pick does not`() = runTest {
+        var failures = 0
+        val harness = harness(backgroundScope, onBufferingQualityReplanFailed = { failures += 1 })
+
+        harness.adapter.selectQuality("480p", bufferingQuality = BufferingQualityReplan(qualityPreference = "480p"))
+        runCurrent()
+        harness.port.failStage(ApiResult.NetworkError(IllegalStateException("replan failed")))
+        runCurrent()
+        assertEquals(1, failures)
+        assertEquals("auto", harness.adapter.snapshot.transition.committed.qualityPreference)
+
+        harness.adapter.selectQuality("720p")
+        runCurrent()
+        harness.port.failStage(ApiResult.NetworkError(IllegalStateException("pick failed")))
+        runCurrent()
+        assertEquals(1, failures)
+    }
+
+    @Test
     fun `exit flush captures only the committed quality subtitle snapshot`() = runTest {
         val harness = harness(backgroundScope)
 
@@ -2219,6 +2394,152 @@ class TvSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `in-place switch shows the track at once and confirms the adopted plan on the same tracks`() = runTest {
+        val harness = harness(backgroundScope, canSwitchInPlace = { _, _ -> true })
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "pgs"), "5")
+
+        harness.adapter.select(native)
+        runCurrent()
+
+        // Selected on the player and sent to the server together.
+        assertEquals(native, harness.adapter.snapshot.localMountIdentity)
+        assertTrue(harness.adapter.snapshot.localMountInPlaceSwitch)
+        assertEquals(listOf(4), harness.port.requests.map { it.subtitleTrackIndex })
+        val switchOwner = harness.adapter.snapshot.localMountGeneration
+        harness.adapter.reportMountedSelection(native, selected = true, snapshotKey = "switched", settled = true)
+        runCurrent()
+        assertTrue(harness.adapter.snapshot.subtitleApplying)
+        assertTrue(harness.persistence.persisted.isEmpty())
+
+        harness.port.completeStage(
+            candidate("native", 4, hasSidecar = false, selectedSubtitleIdentity = native, sessionId = "s1"),
+        )
+        runCurrent()
+
+        assertEquals(1, harness.committedPlaybacks.size)
+        // The adopted plan gets its own mount owner for the same track, so the
+        // view model reports it again even though the identity is unchanged.
+        assertEquals(native, harness.adapter.snapshot.localMountIdentity)
+        assertTrue(harness.adapter.snapshot.localMountGeneration != switchOwner)
+        // The adopted plan's owner is a publication, not a switch awaiting its replan.
+        assertFalse(harness.adapter.snapshot.localMountInPlaceSwitch)
+        harness.adapter.reportMountedSelection(native, selected = true, snapshotKey = "confirmed", settled = true)
+        runCurrent()
+
+        assertEquals(native, harness.adapter.snapshot.committedIdentity)
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertEquals(listOf(native), harness.persistence.persisted.map { it.identity })
+    }
+
+    @Test
+    fun `failed in-place switch puts back the subtitle the server still has`() = runTest {
+        val harness = harness(backgroundScope, canSwitchInPlace = { _, _ -> true })
+        harness.adapter.resetContent(context(), committedIdentity = SubtitleIdentity.Off)
+        val rendition = SubtitleIdentity.Embedded(
+            4,
+            SubtitleMediaIdentity(language = "eng"),
+            hlsRendition = SubtitleHlsRendition("subs", "English", index = 2),
+        )
+
+        harness.adapter.select(rendition)
+        runCurrent()
+        harness.adapter.reportMountedSelection(rendition, selected = true, snapshotKey = "switched", settled = true)
+        runCurrent()
+        harness.port.failStage(ApiResult.Error(503, "unavailable", "The server is unavailable."))
+        runCurrent()
+
+        assertEquals(SubtitleIdentity.Off, harness.adapter.snapshot.committedIdentity)
+        assertEquals(SubtitleIdentity.Off, harness.adapter.snapshot.localMountIdentity)
+        harness.adapter.reportMountedSelection(SubtitleIdentity.Off, selected = true, snapshotKey = "off", settled = true)
+        runCurrent()
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertTrue(harness.persistence.persisted.isEmpty())
+        assertTrue(harness.committedPlaybacks.isEmpty())
+    }
+
+    @Test
+    fun `off switches in place and commits on the adopted plan`() = runTest {
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng"), "5")
+        val harness = harness(backgroundScope, canSwitchInPlace = { _, target -> target == SubtitleIdentity.Off })
+        harness.adapter.resetContent(context(), committedIdentity = native)
+
+        harness.adapter.select(SubtitleIdentity.Off)
+        runCurrent()
+        assertEquals(SubtitleIdentity.Off, harness.adapter.snapshot.localMountIdentity)
+        assertEquals(listOf(-1), harness.port.requests.map { it.subtitleTrackIndex })
+        harness.adapter.reportMountedSelection(SubtitleIdentity.Off, selected = true, snapshotKey = "off", settled = true)
+        harness.port.completeStage(
+            candidate("off", null, mode = PlaybackSubtitleModeV3.OFF, hasSidecar = false, sessionId = "s1"),
+        )
+        runCurrent()
+        confirmPendingPlayerBoundary(harness, "off-confirmed")
+        runCurrent()
+
+        assertEquals(SubtitleIdentity.Off, harness.adapter.snapshot.committedIdentity)
+        assertEquals(listOf(SubtitleIdentity.Off), harness.persistence.persisted.map { it.identity })
+    }
+
+    @Test
+    fun `a switch the stream cannot carry or that changes audio takes the replan path`() = runTest {
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng"), "5")
+        val notListed = harness(
+            backgroundScope,
+            canSwitchInPlace = { _, _ -> true },
+            isLocallyMountable = { false },
+        )
+        notListed.adapter.select(native)
+        runCurrent()
+        assertNull(notListed.adapter.snapshot.localMountIdentity)
+        assertEquals(listOf(4), notListed.port.requests.map { it.subtitleTrackIndex })
+
+        val refused = harness(backgroundScope, canSwitchInPlace = { _, _ -> false })
+        refused.adapter.select(SubtitleIdentity.Off)
+        runCurrent()
+        assertNull(refused.adapter.snapshot.localMountIdentity)
+        assertEquals(listOf(-1), refused.port.requests.map { it.subtitleTrackIndex })
+    }
+
+    @Test
+    fun `a newer pick on the replan path ends the switch and exposes no local mount`() = runTest {
+        val harness = harness(
+            backgroundScope,
+            canSwitchInPlace = { _, target -> target !is SubtitleIdentity.ServerSidecar },
+        )
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng"), "5")
+        harness.adapter.select(native)
+        runCurrent()
+        assertTrue(harness.adapter.snapshot.localMountInPlaceSwitch)
+
+        harness.adapter.select(sidecar(6))
+        runCurrent()
+
+        // The view model sees the switch end with nothing after it and puts the
+        // committed sidecar back on the player.
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertFalse(harness.adapter.snapshot.localMountInPlaceSwitch)
+        assertEquals(sidecar(3), harness.adapter.snapshot.committedIdentity)
+    }
+
+    @Test
+    fun `an in-place switch whose mount is late waits for its replan instead of failing`() = runTest {
+        val failures = mutableListOf<Int>()
+        val harness = harness(
+            backgroundScope,
+            onEmbeddedFailure = failures::add,
+            canSwitchInPlace = { _, _ -> true },
+        )
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng"), "5")
+
+        harness.adapter.select(native)
+        advanceTimeBy(30_000)
+        runCurrent()
+
+        assertTrue(failures.isEmpty())
+        assertEquals(listOf(4), harness.port.requests.map { it.subtitleTrackIndex })
+        assertEquals(native, harness.adapter.snapshot.localMountIdentity)
+    }
+
+    @Test
     fun `failed native restore clears only the unmounted committed subtitle`() = runTest {
         for (timeout in listOf(false, true)) {
             val failures = mutableListOf<Int>()
@@ -2301,6 +2622,75 @@ class TvSubtitleTransactionAdapterTest {
         assertEquals(listOf(native), harness.persistence.persisted.map { it.identity })
     }
 
+    @Test
+    fun `rendition decision commits only after the manifest track is selected`() = runTest {
+        val harness = harness(backgroundScope)
+        val rendition = renditionIdentity(4)
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        harness.port.completeStage(
+            candidate("rendition", 4, mode = PlaybackSubtitleModeV3.CONVERT, hasSidecar = false, selectedSubtitleIdentity = rendition),
+        )
+        runCurrent()
+        assertEquals(rendition, harness.adapter.snapshot.localMountIdentity)
+        assertTrue(harness.persistence.persisted.isEmpty())
+        harness.adapter.reportMountedSelection(rendition, selected = true, snapshotKey = "subs:Subtitles", settled = true)
+        runCurrent()
+        assertEquals(rendition, harness.adapter.snapshot.committedIdentity)
+        assertEquals(listOf(rendition), harness.persistence.persisted.map { it.identity })
+    }
+
+    @Test
+    fun `rendition fallback waits for rollback and uses the rendition failure path`() = runTest {
+        val nativeFailures = mutableListOf<Int>()
+        val renditionFailures = mutableListOf<Int>()
+        val harness = harness(
+            backgroundScope,
+            onEmbeddedFailure = nativeFailures::add,
+            onHlsRenditionFailure = renditionFailures::add,
+        )
+        harness.port.abandonGate = kotlinx.coroutines.CompletableDeferred()
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        harness.port.completeStage(
+            candidate("rendition", 4, hasSidecar = false, selectedSubtitleIdentity = renditionIdentity(4), sessionId = "s2"),
+        )
+        runCurrent()
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertTrue(renditionFailures.isEmpty())
+        harness.port.abandonGate!!.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("s2"), harness.port.abandoned)
+        assertEquals(listOf(4), renditionFailures)
+        assertTrue(nativeFailures.isEmpty())
+        assertEquals(sidecar(3), harness.adapter.snapshot.committedIdentity)
+        assertTrue(harness.persistence.persisted.isEmpty())
+    }
+
+    @Test
+    fun `failed rendition restore clears the unmounted committed subtitle`() = runTest {
+        val renditionFailures = mutableListOf<Int>()
+        val harness = harness(backgroundScope, onHlsRenditionFailure = renditionFailures::add)
+        val rendition = renditionIdentity(4)
+        harness.adapter.resetContent(context(), committedIdentity = rendition)
+        val prior = harness.adapter.snapshot.transition.committed
+        harness.adapter.restoreCommittedLocalMount()
+        advanceTimeBy(5_000)
+        runCurrent()
+
+        assertEquals(listOf(4), renditionFailures)
+        assertEquals(prior.copy(identity = SubtitleIdentity.Off), harness.adapter.snapshot.transition.committed)
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertTrue(harness.persistence.persisted.isEmpty())
+    }
+
+    private fun renditionIdentity(index: Int) = SubtitleIdentity.Embedded(
+        index,
+        SubtitleMediaIdentity(trackId = "file:42:subtitle:$index", language = "eng", codecFamily = "subrip"),
+        hlsRendition = SubtitleHlsRendition("subs", "Subtitles"),
+    )
+
     private fun harness(
         scope: CoroutineScope,
         sessionId: String? = "s1",
@@ -2308,12 +2698,16 @@ class TvSubtitleTransactionAdapterTest {
         adoption: AdoptionControl = AdoptionControl(),
         durablePersistenceScope: CoroutineScope = scope,
         onEmbeddedFailure: (Int) -> Unit = {},
+        onHlsRenditionFailure: (Int) -> Unit = {},
         isLocallyMountable: (SubtitleIdentity) -> Boolean = { identity ->
             identity !is SubtitleIdentity.ServerSidecar
         },
         persistenceCoordinator: PlaybackTrackSelectionWriteCoordinator =
             PlaybackTrackSelectionWriteCoordinator(),
         persistence: RecordingPersistence = RecordingPersistence(),
+        qualityPreference: String? = "auto",
+        onBufferingQualityReplanFailed: () -> Unit = {},
+        canSwitchInPlace: (SubtitleIdentity, SubtitleIdentity) -> Boolean = { _, _ -> false },
     ): Harness {
         val port = FakeStagedPort()
         val committedPlaybacks = mutableListOf<TvSubtitleCommittedPlayback>()
@@ -2323,6 +2717,7 @@ class TvSubtitleTransactionAdapterTest {
             persistencePort = persistence,
             durablePersistenceScope = durablePersistenceScope,
             onEmbeddedSubtitleFailure = onEmbeddedFailure,
+            onHlsRenditionSubtitleFailure = onHlsRenditionFailure,
             persistenceCoordinator = persistenceCoordinator,
             onCommittedPlayback = { adoptionRequest ->
                 adoption.started += 1
@@ -2337,9 +2732,11 @@ class TvSubtitleTransactionAdapterTest {
                 }
             },
             isLocallyMountable = isLocallyMountable,
+            onBufferingQualityReplanFailed = onBufferingQualityReplanFailed,
+            canSwitchInPlace = canSwitchInPlace,
         )
         adapter.resetContent(
-            context(sessionId = sessionId, tracks = tracks),
+            context(sessionId = sessionId, tracks = tracks, qualityPreference = qualityPreference),
             committedIdentity = sidecar(3),
         )
         return Harness(adapter, port, persistence, committedPlaybacks)
@@ -2422,6 +2819,7 @@ class TvSubtitleTransactionAdapterTest {
         sessionId: String? = "s1",
         tracks: List<PlayerSubtitleInfo> = emptyList(),
         outputRouteGeneration: Long = 0L,
+        qualityPreference: String? = "auto",
     ): TvSubtitlePlaybackContext = TvSubtitlePlaybackContext(
         contentId = contentId,
         mediaFileId = mediaFileId,
@@ -2429,7 +2827,7 @@ class TvSubtitleTransactionAdapterTest {
         sessionId = sessionId,
         positionSeconds = 42.0,
         audioTrackIndex = 2,
-        qualityPreference = "auto",
+        qualityPreference = qualityPreference,
         subtitleTracks = tracks,
         outputRouteGeneration = outputRouteGeneration,
         writeScope = tvTestPlaybackWriteScope,

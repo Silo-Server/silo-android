@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -56,6 +57,8 @@ import org.siloserver.silo.model.request.requestPosterUrl
 import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 internal fun RequestStatusTint.tvColor(): Color = color(neutral = SiloSecondaryText)
 
@@ -133,12 +136,11 @@ private fun TvRequestPosterCard(
     width: Dp,
     cardModifier: Modifier = Modifier,
 ) {
-    val caption = LocalCardPresentation.current.caption
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(8.dp)
     val focus = siloCardDefaults(shape = shape)
-    val label = listOfNotNull(title, year?.takeIf { it > 0 }?.toString(), progress?.shortLabel).joinToString(", ")
+    val label = listOfNotNull(title, year?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) }, progress?.shortText?.text()).joinToString(", ")
     Column(modifier = modifier.width(width)) {
         Card(
             onClick = onClick,
@@ -176,28 +178,26 @@ private fun TvRequestPosterCard(
                 }
             }
         }
-        if (caption.showsTitle) {
-            Spacer(modifier = Modifier.height(11.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.5.sp, lineHeight = 18.5.sp),
-                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
+        Spacer(modifier = Modifier.height(11.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.5.sp, lineHeight = 18.5.sp),
+            color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        when {
+            showsStatusInCaption && progress != null -> TvRequestStatusLabel(
+                progress = progress,
+                fontSize = 14.sp,
+                color = Color.White.copy(alpha = 0.70f),
             )
-            when {
-                showsStatusInCaption && progress != null -> TvRequestStatusLabel(
-                    progress = progress,
-                    fontSize = 14.sp,
-                    color = Color.White.copy(alpha = 0.70f),
-                )
-                caption.showsMetadata && year != null && year > 0 -> Text(
-                    text = year.toString(),
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                    color = Color.White.copy(alpha = 0.70f),
-                )
-            }
+            year != null && year > 0 -> Text(
+                text = LocaleFormat.integer(year, currentNumberLocale()),
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                color = Color.White.copy(alpha = 0.70f),
+            )
         }
     }
 }
@@ -225,7 +225,7 @@ internal fun TvRequestPosterBadge(state: RequestDisplayState, size: Dp, modifier
 internal fun TvRequestStatusLabel(
     progress: RequestProgress,
     modifier: Modifier = Modifier,
-    text: String = progress.shortLabel,
+    text: String = progress.shortText.text(),
     fontSize: TextUnit = 14.sp,
     fontWeight: FontWeight = FontWeight.Normal,
     color: Color = Color.White.copy(alpha = 0.70f),

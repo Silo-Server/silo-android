@@ -44,6 +44,20 @@ class ProfileHouseholdV2Test {
         } finally { c.close() }
     }
 
+    @Test fun listCarriesTheProfileLimitWhenTheServerSendsOne() = runTest {
+        for ((body, expected) in listOf(
+            """{"items":[$profile],"max_profiles":1}""" to 1,
+            // An older server, or one that could not read the limit.
+            """{"items":[$profile]}""" to null,
+        )) {
+            val c = client { respond(body, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json")) }
+            try {
+                val listed = assertIs<ApiResult.Success<ProfilesResponse>>(ProfileApi(c, ApiV2Gate.Unrestricted, tokens).listProfiles())
+                assertEquals(expected, listed.data.maxProfiles)
+            } finally { c.close() }
+        }
+    }
+
     @Test fun createOmitsNullsAndDeleteIsSingleAttempt() = runTest {
         scope = scope.copy(profileId = "1", profileToken = "manager-proof")
         var sends = 0
@@ -136,7 +150,9 @@ class ProfileHouseholdV2Test {
         } finally { c.close() }
     }
 
-    @Test fun verifyPinNeverDeclaresTheSelectedProfile() = runTest {
+    // verify-pin and the profile forms' library list read as the account: a
+    // selected child's restrictions must not narrow what a manager can assign.
+    @Test fun accountReadsNeverDeclareTheSelectedProfile() = runTest {
         scope = scope.copy(profileId = "1", profileToken = "stale-proof")
         val c = client {
             val pinned = it.attributes[AuthScopeAttributeKey]
@@ -144,11 +160,16 @@ class ProfileHouseholdV2Test {
             assertNull(pinned.profileToken)
             assertEquals(scope.serverId, pinned.serverId)
             assertEquals(scope.identityGeneration, pinned.identityGeneration)
-            respond("""{"valid":true,"profile_token":"fresh","expires_at":null}""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            val body = when (it.url.encodedPath) {
+                "/api/v2/user/libraries" -> """{"items":[{"id":"7","name":"Kids","type":"movies","sort_order":0}]}"""
+                else -> """{"valid":true,"profile_token":"fresh","expires_at":null}"""
+            }
+            respond(body, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         }
         try {
             val api = ProfileApi(c, ApiV2Gate.Unrestricted, tokens)
             assertEquals("fresh", assertIs<ApiResult.Success<VerifyPinResponse>>(api.verifyPin("1", "1234")).data.profileToken)
+            assertEquals(7, assertIs<ApiResult.Success<List<org.siloserver.silo.model.personal.UserLibrary>>>(api.listAssignableLibraries()).data.single().id)
             assertEquals("1", tokens.snapshotCurrentScope()?.profileId)
         } finally { c.close() }
     }

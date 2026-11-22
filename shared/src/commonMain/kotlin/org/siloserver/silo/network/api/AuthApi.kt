@@ -5,23 +5,36 @@ import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.siloserver.silo.model.auth.*
 import org.siloserver.silo.network.ApiErrorBody
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.authScope
+import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.network.forceSiloRefresh
 import org.siloserver.silo.network.freshSiloAuth
 import org.siloserver.silo.network.map
 import org.siloserver.silo.network.singleAttempt
 import org.siloserver.silo.network.skipSiloAuth
 import org.siloserver.silo.network.apiv2.Account
 import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.Problem
+import org.siloserver.silo.network.apiv2.ProblemText
+import org.siloserver.silo.network.apiv2.invalidResponse
 import org.siloserver.silo.network.apiv2.SetupStatus
 import org.siloserver.silo.network.apiv2.safeApiV2Call
 
 class AuthApi(
     private val client: HttpClient,
     private val apiV2Gate: ApiV2Gate,
+    /**
+     * For mutations the engine must never resend after a dropped connection
+     * (OkHttp otherwise does on a reused one), such as the password change.
+     */
+    private val nonReplayingClient: HttpClient = client,
 ) {
 
     suspend fun login(request: LoginRequest, serverUrl: String? = null): ApiResult<LoginResponse> = safeApiV2Call<TokenPairV2>(apiV2Gate) {
@@ -88,16 +101,27 @@ class AuthApi(
 
     /**
      * Resolves an emailed-invitation claim token against the given server.
-     * Unauthenticated: this runs before any account exists.
+     * Unauthenticated: this runs before any account exists. With [tokenInBody]
+     * the token goes in the request body, so proxies in front of the server
+     * never log it; otherwise this uses the older path form.
      */
     suspend fun lookupInvitation(
         serverUrl: String,
         token: String,
+        tokenInBody: Boolean,
     ): ApiResult<InvitationLookupResponse> = safeApiV2Call(ApiV2Gate.Unrestricted) {
-        // The token arrives from an emailed link and is not ours to trust as
-        // path-safe: a '/' or '?' in it would otherwise re-shape the request.
-        client.get("${serverUrl.trimEnd('/')}/api/v2/invitations/${token.encodeURLPathPart()}") {
-            skipSiloAuth()
+        if (tokenInBody) {
+            client.post("${serverUrl.trimEnd('/')}/api/v2/invitations/lookup") {
+                skipSiloAuth()
+                contentType(ContentType.Application.Json)
+                setBody(buildJsonObject { put("token", token) })
+            }
+        } else {
+            // The token arrives from an emailed link and is not ours to trust as
+            // path-safe: a '/' or '?' in it would otherwise re-shape the request.
+            client.get("${serverUrl.trimEnd('/')}/api/v2/invitations/${token.encodeURLPathPart()}") {
+                skipSiloAuth()
+            }
         }.requireAuthStatus(200)
     }
 
@@ -107,12 +131,20 @@ class AuthApi(
                 .requireAuthStatus(200)
         }
 
-    suspend fun acceptInvitation(serverUrl: String, token: String, password: String): ApiResult<InvitationAcceptance> =
+    /** [tokenInBody] picks the request form, as for [lookupInvitation]. */
+    suspend fun acceptInvitation(
+        serverUrl: String,
+        token: String,
+        password: String,
+        tokenInBody: Boolean,
+    ): ApiResult<InvitationAcceptance> =
         safeApiV2Call<InvitationAcceptanceV2>(ApiV2Gate.Unrestricted) {
-            client.post("${serverUrl.trimEnd('/')}/api/v2/invitations/${token.encodeURLPathPart()}/accept") {
+            val base = "${serverUrl.trimEnd('/')}/api/v2/invitations"
+            val url = if (tokenInBody) "$base/accept" else "$base/${token.encodeURLPathPart()}/accept"
+            client.post(url) {
                 skipSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json)
-                setBody(AcceptInvitationRequest(password = password))
+                setBody(AcceptInvitationRequest(password = password, token = token.takeIf { tokenInBody }))
             }.requireAuthStatus(201)
         }.map { it.domain() }
 
@@ -133,12 +165,83 @@ class AuthApi(
             }
         }.map { account -> account.toUser() }
 
+    /**
+     * `GET /api/v2/account/me` on [scope] as captured, with no profile declared:
+     * one of the few reads a session holding a temporary password may make.
+     */
+    suspend fun getAccount(scope: AuthScopeSnapshot): ApiResult<User> =
+        safeApiV2Call<Account>(apiV2Gate.forServer(scope.serverId)) {
+            client.get("/api/v2/account/me") { authScope(scope.withoutProfile()) }
+        }.map { account -> account.toUser() }
+
+    /**
+     * Replaces [scope]'s access token through the shared refresh, however long
+     * it has left, then reads the account on the new one. Fails without
+     * sending the read when the token did not rotate.
+     */
+    suspend fun refreshAccountSession(scope: AuthScopeSnapshot): ApiResult<User> =
+        safeApiV2Call<Account>(apiV2Gate.forServer(scope.serverId)) {
+            client.get("/api/v2/account/me") {
+                authScope(scope.withoutProfile())
+                forceSiloRefresh()
+            }
+        }.map { account -> account.toUser() }
+
+    /** `getAccountPasswordCapability`: whether [scope] may change the password, and the limits for a new one. */
+    suspend fun passwordCapability(scope: AuthScopeSnapshot): ApiResult<PasswordCapability> =
+        safeApiV2Call<PasswordCapabilityV2>(apiV2Gate.forServer(scope.serverId)) {
+            client.get("/api/v2/account/password/capability") { authScope(scope.withoutProfile()) }
+        }.map { it.domain() }
+
+    /**
+     * `changePassword` (204). Account-scoped, with no profile declared, and sent
+     * once, on [nonReplayingClient]: a replay would spend another attempt from
+     * the server's password-change budget. A 422 naming `body.current_password`
+     * comes back as [WRONG_CURRENT_PASSWORD]; any other 422 carries the first error's
+     * detail, which names the rule the new password broke. Neither password
+     * is logged: both travel only in the body.
+     */
+    suspend fun changePassword(scope: AuthScopeSnapshot, current: String, new: String): ApiResult<Unit> {
+        apiV2Gate.forServer(scope.serverId).blocked()?.let { return it }
+        return try {
+            val response = nonReplayingClient.post("/api/v2/account/password") {
+                authScope(scope.withoutProfile()); singleAttempt()
+                contentType(ContentType.Application.Json)
+                setBody(ChangePasswordRequestV2(currentPassword = current, newPassword = new))
+            }
+            when {
+                response.status == HttpStatusCode.NoContent -> ApiResult.Success(Unit)
+                response.status.isSuccess() -> invalidResponse()
+                else -> passwordChangeError(response.status.value, response.bodyAsText())
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ApiResult.NetworkError(e)
+        }
+    }
+
     /** Ends the active session, or the one [scope] was captured from even when another is active by then. */
     suspend fun logout(scope: AuthScopeSnapshot? = null): ApiResult<Unit> = safeApiV2Call(apiV2Gate) {
         client.post("/api/v2/auth/logout") { scope?.let { authScope(it) } }.requireAuthStatus(204)
     }
 
 }
+
+/** The `error` of a 422 whose problem names `body.current_password`: the temporary password is wrong. */
+const val WRONG_CURRENT_PASSWORD = "wrong_current_password"
+
+internal fun passwordChangeError(status: Int, body: String): ApiResult.Error {
+    val problem = runCatching { SiloJson.decodeFromString(Problem.serializer(), body) }.getOrNull()
+    val rejected = problem?.errors?.firstOrNull()
+    // A refused field's own detail is the most specific server text.
+    val detail = if (status == 422) rejected?.detail.orEmpty() else problem?.detail.orEmpty()
+    val message = problem?.let { ProblemText.message(it, detail) } ?: detail
+    val code = if (status == 422 && rejected?.location == "body.current_password") WRONG_CURRENT_PASSWORD else problem?.code.orEmpty()
+    return ApiResult.Error(status, code, message, detail)
+}
+
+private fun AuthScopeSnapshot.withoutProfile() = copy(profileId = null, profileToken = null)
 
 /**
  * Wraps an HTTP call in error handling, returning a typed [ApiResult].
@@ -187,4 +290,31 @@ internal fun Account.toUser(): User = User(
             impersonatorUsername = it.impersonatorUsername,
         )
     },
+    passwordChangeRequired = passwordChangeRequired,
 )
+
+/**
+ * `GET /api/v2/account/me` at [serverUrl] with an access token that isn't
+ * saved anywhere yet (a TV checking whose account a pairing approval signed
+ * in before committing it). Runs on a client with no Silo auth plugin, so the
+ * active server's credentials never go with it. Null when it can't be read.
+ */
+class UnsavedSessionAccountReader(
+    private val client: HttpClient = org.siloserver.silo.network.createPlatformHttpClient(retryOnConnectionFailure = false),
+) {
+    suspend fun read(serverUrl: String, accessToken: String): User? = try {
+        val response = client.get("${serverUrl.trimEnd('/')}/api/v2/account/me") {
+            header(HttpHeaders.Authorization, "Bearer $accessToken")
+            accept(ContentType.Application.Json)
+        }
+        if (response.status.value != 200) {
+            null
+        } else {
+            SiloJson.decodeFromString(Account.serializer(), response.bodyAsText()).toUser()
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+}

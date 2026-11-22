@@ -14,6 +14,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import org.siloserver.silo.common.player.PlaybackQualityPair
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.PlaybackTrackSelectionWriteCoordinator
 import org.siloserver.silo.common.player.StagedVideoReplan
@@ -32,7 +33,10 @@ import org.siloserver.silo.model.playback.SubtitleTransitionEvent
 import org.siloserver.silo.model.playback.SubtitleTransitionState
 import org.siloserver.silo.model.playback.UpdateAudioPreference
 import org.siloserver.silo.model.playback.UpdateQualityPreference
+import org.siloserver.silo.model.playback.deliveredAs
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
+import org.siloserver.silo.model.playback.isServerPick
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.reduceSubtitleTransition
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
@@ -62,7 +66,24 @@ internal data class MobileSubtitleStageRequest(
     val audioTrackIndex: Int?,
     val qualityPreference: String?,
     val subtitleTrackIndex: Int,
+    /** Picks a quality other than the committed one. */
+    val qualityChanged: Boolean = false,
+    /** Picks an audio track other than the committed one. */
+    val audioChanged: Boolean = false,
 )
+
+/**
+ * The classification a staged request goes out with. A quality pick is a
+ * `quality_change`, which discards the kept step-down estimate; a track change
+ * carries it. An audio pick is never a `subtitle_track_changed`: the session
+ * manager adopts only a subtitle pick without a remount, and an audio change
+ * needs one.
+ */
+internal fun MobileSubtitleStageRequest.replanClassification(): String = when {
+    qualityChanged -> "quality_changed"
+    audioChanged -> "audio_track_changed"
+    else -> "subtitle_track_changed"
+}
 
 internal data class MobileStagedSubtitleCandidate(
     val id: String,
@@ -175,6 +196,23 @@ internal class MobileSubtitleTransactionAdapter(
     ) -> MobileSubtitleAdoptionResult = { MobileSubtitleAdoptionResult.Adopted },
     private val onCommittedPlaybackFailure: suspend (String) -> Unit = {},
     private val onEmbeddedSubtitleFailure: (Int) -> Unit = {},
+    private val onHlsRenditionSubtitleFailure: (Int) -> Unit = {},
+    /**
+     * Whether the player currently exposes any text track to mount against.
+     * The mount deadline must not run while the answer is "none": a freshly
+     * replanned stream reports READY seconds before publishing its tracks, and
+     * a native track that misses a fixed deadline falls back to a whole-file
+     * sidecar extraction on the server.
+     */
+    private val hasMountableTracks: () -> Boolean = { true },
+    /**
+     * Whether a pick of the second identity, made while the first is
+     * committed, can be shown on the stream the player already plays before
+     * the server answers (see `canSwitchSubtitleInPlace`).
+     */
+    private val canSwitchInPlace: (SubtitleIdentity, SubtitleIdentity) -> Boolean = { _, _ -> false },
+    /** Whether Media3 currently lists a track that satisfies this identity. */
+    private val isLocallyMountable: (SubtitleIdentity) -> Boolean = { true },
 ) {
     private data class PendingLocalSelection(
         val generation: Long,
@@ -182,6 +220,11 @@ internal class MobileSubtitleTransactionAdapter(
         val proposedState: SubtitleTransitionState,
         val context: MobileSubtitlePlaybackContext,
         val mountedBeforeAdoption: Boolean = false,
+        /**
+         * Selected on the playing stream ahead of its own replan, whose answer
+         * is applied without a remount when it keeps the transport.
+         */
+        val inPlaceSwitch: Boolean = false,
     )
 
     private data class PendingLocalRestore(
@@ -370,6 +413,21 @@ internal class MobileSubtitleTransactionAdapter(
     }
 
     fun select(identity: SubtitleIdentity) {
+        // The sidecar row whose burn-in already plays: a replan would only
+        // restart the transcode for the same answer. It is still the viewer's
+        // pick, so it settles a stale failure, outranks a pending refresh and
+        // is saved like any explicit commit.
+        if (identity != transition.committed.identity &&
+            identity.playsAs(transition.committed.identity) &&
+            !hasActiveTransaction
+        ) {
+            refreshGeneration += 1
+            subtitleIntentGeneration += 1
+            failureMessage = null
+            context?.let { persist(transition.committed, it) }
+            publish()
+            return
+        }
         mutate(SelectSubtitle(identity), explicit = true)
     }
 
@@ -377,8 +435,21 @@ internal class MobileSubtitleTransactionAdapter(
         mutate(UpdateAudioPreference(audioTrackIndex), explicit = true)
     }
 
-    /** Replans the same file at [qualityPreference] (a protocol-v3 quality label). */
-    fun selectQuality(qualityPreference: String?) {
+    /**
+     * Replans the same file at [qualityPreference] (a protocol-v3 quality label).
+     *
+     * [chosenAudioTrackIndex] is the audio the viewer chose on the playing
+     * file. When the transaction would send another one — a switch made on
+     * the player never replanned, so the server still holds the earlier
+     * choice — the replan names it as an audio change too, or the server
+     * plans the new quality with the track the viewer moved away from.
+     */
+    fun selectQuality(qualityPreference: String?, chosenAudioTrackIndex: Int? = null) {
+        val pending = transition.pending
+        val sentAudio = if (pending != null) pending.audioTrackIndex else transition.committed.audioTrackIndex
+        if (chosenAudioTrackIndex != null && chosenAudioTrackIndex != sentAudio) {
+            mutate(UpdateAudioPreference(chosenAudioTrackIndex), explicit = true)
+        }
         mutate(UpdateQualityPreference(qualityPreference), explicit = true)
     }
 
@@ -646,6 +717,8 @@ internal class MobileSubtitleTransactionAdapter(
             return
         }
 
+        if (beginInPlaceSwitch(identity, selected.state)) return
+
         if (
             identity.isClientOwnedSubtitle() &&
             selected.state.pending != null
@@ -657,7 +730,7 @@ internal class MobileSubtitleTransactionAdapter(
             return
         }
 
-        if (identity.requiresLocalMountConfirmation()) {
+        if (identity.requiresLocalMountConfirmation() && !identity.isServerPick(transition.committed.identity)) {
             val proposedState = if (selected.state.pending == null) {
                 selected.state
             } else {
@@ -700,6 +773,8 @@ internal class MobileSubtitleTransactionAdapter(
             audioTrackIndex = requested.audioTrackIndex,
             qualityPreference = requested.qualityPreference,
             subtitleTrackIndex = requested.identity.serverTrackIndex(),
+            qualityChanged = changesQuality(requested),
+            audioChanged = requested.audioTrackIndex != transition.committed.audioTrackIndex,
         )
         val staged = try {
             stagedPort.stage(request)
@@ -898,6 +973,8 @@ internal class MobileSubtitleTransactionAdapter(
                     ),
                 )
             } else {
+                // An in-place switch to Off already applied it on the player.
+                invalidateLocalMount()
                 publish()
                 persist(transition.committed, requireNotNull(context))
             }
@@ -975,6 +1052,7 @@ internal class MobileSubtitleTransactionAdapter(
             reduceSubtitleTransition(state, event).state
         }
         val finalIdentity = finalState.pending?.identity ?: finalState.committed.identity
+        if (beginInPlaceSwitch(finalIdentity, finalState)) return
         if (finalState.pending == null && finalIdentity.requiresLocalMountConfirmation()) {
             beginLocalSelection(
                 identity = finalIdentity,
@@ -989,11 +1067,14 @@ internal class MobileSubtitleTransactionAdapter(
         transition.pending?.let(stagedRequests::trySend)
     }
 
+    /** Whether [pending] picks a quality other than the committed one. */
+    private fun changesQuality(pending: org.siloserver.silo.model.playback.PendingSubtitle): Boolean =
+        pending.qualityPreferenceSpecified &&
+            pending.qualityPreference != transition.committed.qualityPreference
+
     private fun fail(generation: Long, message: String) {
         val failedPending = transition.pending?.takeIf { it.generation == generation }
-        val failedQualityChange = failedPending != null &&
-            failedPending.qualityPreferenceSpecified &&
-            failedPending.qualityPreference != transition.committed.qualityPreference
+        val failedQualityChange = failedPending != null && changesQuality(failedPending)
         val failedLocalOwner = pendingLocalSelection?.takeIf { owner ->
             owner.proposedState.pending?.generation == generation
         }
@@ -1013,7 +1094,7 @@ internal class MobileSubtitleTransactionAdapter(
         qualityChangeFailed = failedQualityChange
         val priorIdentity = transition.committed.identity
         if (
-            failedLocalOwner?.mountedBeforeAdoption == true &&
+            (failedLocalOwner?.mountedBeforeAdoption == true || failedLocalOwner?.inPlaceSwitch == true) &&
             priorIdentity.requiresLocalMountConfirmation() &&
             context?.sessionId != null
         ) {
@@ -1027,9 +1108,19 @@ internal class MobileSubtitleTransactionAdapter(
         val ownedSelection = pendingLocalSelection?.generation == generation
         val ownedRestore = pendingLocalRestore?.generation == generation
         if (!ownedSelection && !ownedRestore) return
+        if (ownedSelection && pendingLocalSelection?.inPlaceSwitch == true &&
+            pendingLocalSelection?.proposedState?.pending != null
+        ) {
+            // The replan for this switch is still out, and its answer decides:
+            // the adoption confirms the mount again, and a miss then takes the
+            // usual path. Failing now would send a second replan beside it.
+            localMountTimeout?.cancel()
+            localMountTimeout = null
+            return
+        }
         val failedIdentity = (if (ownedSelection) pendingLocalSelection?.identity else pendingLocalRestore?.identity)
             as? SubtitleIdentity.Embedded
-        if (failedIdentity?.containerTrackId != null) {
+        if (failedIdentity?.isServerSelected == true) {
             // An adopted native plan is not a mounted subtitle. Clear a failed
             // restore now so a failed sidecar recovery cannot leave it selected.
             // Keep the requested index for recovery and do not persist Off.
@@ -1042,7 +1133,11 @@ internal class MobileSubtitleTransactionAdapter(
             failureMessage = "Embedded subtitles couldn't load. Retrying with a sidecar."
             qualityChangeFailed = false
             publish()
-            onEmbeddedSubtitleFailure(failedIdentity.serverIndex)
+            if (failedIdentity.hlsRendition != null) {
+                onHlsRenditionSubtitleFailure(failedIdentity.serverIndex)
+            } else {
+                onEmbeddedSubtitleFailure(failedIdentity.serverIndex)
+            }
             return
         }
         invalidateLocalMount()
@@ -1051,10 +1146,42 @@ internal class MobileSubtitleTransactionAdapter(
         publish()
     }
 
+    /**
+     * Switches to [identity] on the playing stream when [state]'s pending
+     * replan picks only that subtitle and the stream already carries the
+     * track (or Off needs none): it shows now, and the replan that goes out
+     * with it decides. Its answer is adopted without a remount when it keeps
+     * the transport; a failure restores the previous subtitle.
+     */
+    private fun beginInPlaceSwitch(
+        identity: SubtitleIdentity,
+        state: SubtitleTransitionState,
+    ): Boolean {
+        val selectionContext = context ?: return false
+        if (selectionContext.sessionId == null) return false
+        val pending = state.pending ?: return false
+        if (pending.identity != identity ||
+            pending.audioPreferenceSpecified ||
+            pending.qualityPreferenceSpecified ||
+            !canSwitchInPlace(transition.committed.identity, identity) ||
+            (identity != SubtitleIdentity.Off && !isLocallyMountable(identity))
+        ) {
+            return false
+        }
+        beginLocalSelection(
+            identity = identity,
+            proposedState = state,
+            selectionContext = selectionContext,
+            inPlaceSwitch = true,
+        )
+        return true
+    }
+
     private fun beginLocalSelection(
         identity: SubtitleIdentity,
         proposedState: SubtitleTransitionState,
         selectionContext: MobileSubtitlePlaybackContext,
+        inPlaceSwitch: Boolean = false,
     ) {
         transition = transition.copy(
             pending = proposedState.pending,
@@ -1067,6 +1194,7 @@ internal class MobileSubtitleTransactionAdapter(
             identity = identity,
             proposedState = proposedState,
             context = selectionContext,
+            inPlaceSwitch = inPlaceSwitch,
         )
         scheduleLocalMountTimeout(generation)
         publish()
@@ -1089,8 +1217,22 @@ internal class MobileSubtitleTransactionAdapter(
     }
 
     private fun scheduleLocalMountTimeout(generation: Long) {
+        localMountTimeout?.cancel()
         localMountTimeout = scope.launch {
-            delay(LOCAL_MOUNT_TIMEOUT_MS)
+            var waited = 0L
+            // Only count against the mount once there is something to mount;
+            // the onTracksChanged callback may not arrive inside the window at
+            // all, so ask rather than wait to be told. The window starts at the
+            // first check that finds tracks (or now, if they are already
+            // there), so tracks published just before a check still get a
+            // whole window for their selection to confirm.
+            var tracksSeen = hasMountableTracks()
+            while (true) {
+                delay(LOCAL_MOUNT_TIMEOUT_MS)
+                waited += LOCAL_MOUNT_TIMEOUT_MS
+                if (tracksSeen || waited >= MAX_LOCAL_MOUNT_WAIT_MS) break
+                tracksSeen = hasMountableTracks()
+            }
             failLocalMount(generation)
         }
     }
@@ -1189,6 +1331,7 @@ internal class MobileSubtitleTransactionAdapter(
 
     private companion object {
         const val LOCAL_MOUNT_TIMEOUT_MS = 5_000L
+        const val MAX_LOCAL_MOUNT_WAIT_MS = 30_000L
         const val PERSISTENCE_ATTEMPTS = 2
         const val PRIMARY_PERSISTENCE_TIMEOUT_MS = 5_000L
         const val DURABLE_PERSISTENCE_TIMEOUT_MS = 5_000L
@@ -1197,17 +1340,23 @@ internal class MobileSubtitleTransactionAdapter(
 
 internal class PlaybackSessionManagerMobileSubtitleStagedReplanPort(
     private val manager: PlaybackSessionManager,
+    /**
+     * The pair an Auto picked in the player sends; null for other picks.
+     * Asked only when the request changes the quality: a track change keeps
+     * the session's quality and cap.
+     */
+    private val inPlayerQuality: suspend (String?) -> PlaybackQualityPair? = { null },
 ) : MobileSubtitleStagedReplanPort {
     override suspend fun stage(
         request: MobileSubtitleStageRequest,
     ): ApiResult<MobileStagedSubtitleCandidate> = when (
         val result = manager.stageActiveVideoSessionReplan(
-            classification = "subtitle_track_changed",
-            message = "Applying subtitle selection.",
+            classification = request.replanClassification(),
             positionSeconds = request.positionSeconds,
             audioTrackIndex = request.audioTrackIndex,
             subtitleTrackIndex = request.subtitleTrackIndex,
             qualityPreference = request.qualityPreference,
+            qualityPair = if (request.qualityChanged) inPlayerQuality(request.qualityPreference) else null,
         )
     ) {
         is ApiResult.Success -> {
@@ -1304,8 +1453,8 @@ private fun MobileStagedSubtitleCandidate.validationFailure(
         return validationFailure(returnedIdentity)
     }
     if (selectedSubtitleIdentity is SubtitleIdentity.Embedded &&
-        selectedSubtitleIdentity.containerTrackId != null &&
-        selectedSubtitleIndex == expectedSubtitleIndex && subtitleMode == PlaybackSubtitleModeV3.RENDER && !hasSidecar
+        selectedSubtitleIndex == expectedSubtitleIndex &&
+        selectedSubtitleIdentity.matchesServerSelectedPlan(subtitleMode, hasSidecar)
     ) return null
     return when (requested.identity) {
         is SubtitleIdentity.Embedded,
@@ -1334,7 +1483,7 @@ private fun MobileStagedSubtitleCandidate.authoritativeValidatedState(
     val committedIdentity = if (requested.identity.isClientOwnedSubtitle()) {
         validated.committed.identity
     } else {
-        returnedIdentity ?: validated.committed.identity
+        (returnedIdentity ?: validated.committed.identity).deliveredAs(subtitleMode)
     }
     return validated.copy(
         committed = validated.committed.copy(
@@ -1373,6 +1522,12 @@ private fun MobileStagedSubtitleCandidate.validationFailure(
     is SubtitleIdentity.ServerSidecar -> when {
         selectedSubtitleIndex != identity.serverIndex ->
             "The candidate did not select the requested subtitle."
+        // The server burns in a track it will not hand the client as a
+        // sidecar (an ASS track on an HLS transcode, which declares no
+        // attached-font support). The replan has already switched the
+        // session's transcode, so this is the requested track and the only
+        // answer it will give.
+        subtitleMode == PlaybackSubtitleModeV3.BURN_IN -> null
         subtitleMode != PlaybackSubtitleModeV3.RENDER &&
             subtitleMode != PlaybackSubtitleModeV3.CONVERT ->
             "The candidate did not render the requested sidecar."
@@ -1382,12 +1537,16 @@ private fun MobileStagedSubtitleCandidate.validationFailure(
     is SubtitleIdentity.ServerBurnIn -> when {
         selectedSubtitleIndex != identity.serverIndex ->
             "The candidate did not select the requested subtitle."
-        subtitleMode != PlaybackSubtitleModeV3.BURN_IN ->
-            "The candidate did not burn in the requested subtitle."
-        else -> null
+        subtitleMode == PlaybackSubtitleModeV3.BURN_IN -> null
+        // A sidecar pick committed as burn-in comes back as a sidecar once a
+        // later replan (quality, audio) leaves the transcode.
+        hasSidecar &&
+            (subtitleMode == PlaybackSubtitleModeV3.RENDER || subtitleMode == PlaybackSubtitleModeV3.CONVERT) -> null
+        else -> "The candidate did not burn in the requested subtitle."
     }
-    is SubtitleIdentity.Embedded -> if (identity.containerTrackId != null &&
-        selectedSubtitleIndex == identity.serverIndex && subtitleMode == PlaybackSubtitleModeV3.RENDER && !hasSidecar
+    is SubtitleIdentity.Embedded -> if (
+        selectedSubtitleIndex == identity.serverIndex &&
+        identity.matchesServerSelectedPlan(subtitleMode, hasSidecar)
     ) null else "The candidate omitted the exact embedded subtitle."
     is SubtitleIdentity.Downloaded,
     is SubtitleIdentity.LocalMedia3,

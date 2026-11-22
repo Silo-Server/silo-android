@@ -8,6 +8,7 @@ import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.section.showsWholeList
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
@@ -23,10 +24,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.TimeSource
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 
 data class HomeUiState(
     val membershipReadWitnesses: Set<org.siloserver.silo.repository.MembershipActions.Intent> = emptySet(),
@@ -45,7 +54,7 @@ data class HomeUiState(
      * finished list; only a partial publish sets it false.
      */
     val sectionsFullyResolved: Boolean = true,
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 /**
@@ -69,9 +78,25 @@ class HomeViewModel(
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
     private val diagnostics: HomeDiagnosticsObserver = HomeDiagnosticsObserver.None,
     private val catalogLanguage: org.siloserver.silo.domain.settings.CatalogLanguageRevision? = null,
+    /**
+     * Whether Home starts on screen. The apps keep Home's ViewModel while
+     * another screen covers its rows. The screens report [onShown] and
+     * [onHidden] so Home only reconciles while the viewer can see it.
+     */
+    startShown: Boolean = true,
 ) : ViewModel() {
 
     private var displayedOwner: AuthScopeSnapshot? = null
+
+    /**
+     * Realtime and language refreshes run only while Home is on screen; one
+     * that comes while it is hidden waits in [realtimeRefreshPending]. A full
+     * read of a large Home takes tens of megabytes, and on Android TV the
+     * player covering Home holds up to half the heap.
+     */
+    private var shown = startShown
+    private var hasBeenShown = false
+    private var initialLoads = 0
 
     private suspend fun mayPublish(owner: AuthScopeSnapshot, generation: Int): Boolean {
         val valid = sectionRepository.isHomeAuthorityCurrent(owner)
@@ -100,9 +125,15 @@ class HomeViewModel(
         catalogLanguage?.let { language ->
             viewModelScope.launch {
                 // A metadata-language change re-localizes every card: re-read
-                // quietly. Unlike refreshFromRealtime this never skips, since a
-                // fetch already in flight still asked for the old language.
-                language.revision.drop(1).collectLatest {
+                // quietly. Unlike refreshFromRealtime this doesn't wait for a
+                // fetch already in flight, which still asked for the old
+                // language. A hidden Home re-reads when it is shown; that
+                // change is held back before collectLatest, so it never
+                // cancels a read that may be the one filling Home.
+                language.revision.drop(1).filter {
+                    if (!shown) realtimeRefreshPending = true
+                    shown
+                }.collectLatest {
                     val generation = fetchSections(HomeLoadTrigger.REALTIME)
                     if (generation == fetchGeneration) {
                         _uiState.update { it.copy(isRefreshing = false) }
@@ -118,13 +149,47 @@ class HomeViewModel(
         }
     }
 
+    /**
+     * Home's rows are on screen. A refresh that waited while they were hidden
+     * runs now unless TV is still restoring focus and will explicitly drain it.
+     */
+    fun onShown(refreshOnResume: Boolean = false, deferPendingRefresh: Boolean = false) {
+        val returning = hasBeenShown
+        shown = true
+        hasBeenShown = true
+        if (refreshOnResume && (returning || !_uiState.value.isLoading)) {
+            refreshFromRealtime()
+        } else if (!deferPendingRefresh) {
+            runPendingRealtimeRefresh()
+        }
+    }
+
+    /**
+     * Home's rows left the screen. Realtime and language refreshes wait for
+     * [onShown], and a realtime refresh still reading is dropped and waits too,
+     * unless Home is still empty: that read may be the one that fills it.
+     */
+    fun onHidden() {
+        shown = false
+        if (realtimeRefreshInFlight && !_uiState.value.isLoading) {
+            realtimeRefreshJob?.cancel()
+            realtimeRefreshInFlight = false
+            realtimeRefreshPending = true
+        }
+    }
+
     private var realtimeRefreshInFlight = false
+    private var realtimeRefreshJob: Job? = null
+
+    /** Bumped per realtime refresh, so a dropped one cannot clear its successor's in-flight flag. */
+    private var realtimeRefreshRun = 0
 
     /**
      * A realtime signal arrived while a fetch was running. That fetch may have
      * been answered before the event behind the signal (an access change made
      * after the request went out), so one more realtime refresh runs when it
-     * finishes.
+     * finishes. Also set by a realtime or language refresh that came while
+     * Home was hidden.
      */
     private var realtimeRefreshPending = false
 
@@ -145,9 +210,10 @@ class HomeViewModel(
      * Debounced realtime refetch: quiet (no spinner) and single-flight.
      * Signals that arrive while a realtime or manual refresh is running are
      * not raced against it; they collapse into one follow-up refresh after it.
+     * While Home is hidden they wait for it to be shown.
      */
     fun refreshFromRealtime() {
-        if (realtimeRefreshInFlight || _uiState.value.isRefreshing) {
+        if (!shown || realtimeRefreshInFlight || initialLoads > 0 || _uiState.value.isLoading || _uiState.value.isRefreshing) {
             realtimeRefreshPending = true
             diagnostics.completed(
                 HomeLoadObservation(
@@ -163,77 +229,103 @@ class HomeViewModel(
             return
         }
         realtimeRefreshInFlight = true
-        viewModelScope.launch {
+        // This read starts after every signal that is waiting.
+        realtimeRefreshPending = false
+        val run = ++realtimeRefreshRun
+        realtimeRefreshJob = viewModelScope.launch {
             try {
-                fetchSections(HomeLoadTrigger.REALTIME)
+                for (attempt in 0..3) {
+                    var retry = false
+                    val generation = fetchSections(HomeLoadTrigger.REALTIME) { retry = true }
+                    if (!retry || attempt == 3) break
+                    delay(1_000L shl attempt)
+                    if (!shown || generation != fetchGeneration) break
+                    // The retry will cover any events that arrived while it waited.
+                    realtimeRefreshPending = false
+                }
             } finally {
-                realtimeRefreshInFlight = false
+                if (run == realtimeRefreshRun) realtimeRefreshInFlight = false
             }
             runPendingRealtimeRefresh()
         }
     }
 
-    private fun runPendingRealtimeRefresh() {
-        if (!realtimeRefreshPending) return
+    /**
+     * Runs the realtime refresh that is waiting, if any. While the first load
+     * is still filling an empty Home it keeps waiting: that load runs it when
+     * it ends, instead of a second full read beside it.
+     */
+    fun runPendingRealtimeRefresh() {
+        if (!shown || !realtimeRefreshPending || initialLoads > 0 || _uiState.value.isLoading) return
         realtimeRefreshPending = false
         refreshFromRealtime()
     }
 
     fun loadSections() {
         viewModelScope.launch {
-            // Stale-while-revalidate: serve the cached home instantly (offline-
-            // capable), then refresh from the network below.
-            // Captured BEFORE the cached read, which suspends: a refresh can
-            // start and publish fresh sections while we are in there, and
-            // overlaying the cache on top would put stale rows back on screen.
-            val bootstrapGeneration = fetchGeneration
-            val cacheStarted = TimeSource.Monotonic.markNow()
-            val owner = sectionRepository.captureHomeAuthority()
-            if (owner == null) {
-                if (fetchGeneration == bootstrapGeneration) fetchSections(HomeLoadTrigger.INITIAL)
-                return@launch
+            initialLoads++
+            try {
+                loadInitialSections()
+            } finally {
+                initialLoads--
             }
-            if (!mayPublish(owner, bootstrapGeneration)) return@launch
-            val cached = homeCache.getCachedHomeV2(owner)
-            if (!mayPublish(owner, bootstrapGeneration)) {
-                diagnostics.completed(
-                    HomeLoadObservation(
-                        trigger = HomeLoadTrigger.INITIAL,
-                        source = HomeLoadSource.CACHE,
-                        outcome = HomeLoadOutcome.SUPERSEDED,
-                        durationMs = cacheStarted.elapsedNow().inWholeMilliseconds,
-                        sectionCount = cached?.sections?.size ?: 0,
-                        duplicateSectionKeyCount = cached?.sections?.duplicateSectionKeyCount() ?: 0,
-                        duplicateItemRowCount = cached?.sections?.duplicateItemRowCount() ?: 0,
-                    ),
-                )
-                return@launch
-            }
+            runPendingRealtimeRefresh()
+        }
+    }
+
+    private suspend fun loadInitialSections() {
+        // Stale-while-revalidate: serve the cached home instantly (offline-
+        // capable), then refresh from the network below.
+        // Captured BEFORE the cached read, which suspends: a refresh can
+        // start and publish fresh sections while we are in there, and
+        // overlaying the cache on top would put stale rows back on screen.
+        val bootstrapGeneration = fetchGeneration
+        val cacheStarted = TimeSource.Monotonic.markNow()
+        val owner = sectionRepository.captureHomeAuthority()
+        if (owner == null) {
+            if (fetchGeneration == bootstrapGeneration) fetchSections(HomeLoadTrigger.INITIAL)
+            return
+        }
+        if (!mayPublish(owner, bootstrapGeneration)) return
+        val cached = homeCache.getCachedHomeV2(owner)
+        if (!mayPublish(owner, bootstrapGeneration)) {
             diagnostics.completed(
                 HomeLoadObservation(
                     trigger = HomeLoadTrigger.INITIAL,
                     source = HomeLoadSource.CACHE,
-                    outcome = if (cached != null && cached.sections.isNotEmpty()) {
-                        HomeLoadOutcome.HIT
-                    } else {
-                        HomeLoadOutcome.MISS
-                    },
+                    outcome = HomeLoadOutcome.SUPERSEDED,
                     durationMs = cacheStarted.elapsedNow().inWholeMilliseconds,
                     sectionCount = cached?.sections?.size ?: 0,
                     duplicateSectionKeyCount = cached?.sections?.duplicateSectionKeyCount() ?: 0,
                     duplicateItemRowCount = cached?.sections?.duplicateItemRowCount() ?: 0,
                 ),
             )
-            if (cached != null && cached.sections.isNotEmpty()) {
-                val overlaid = overlayLocalState(cached.sections)
-                if (!mayPublish(owner, bootstrapGeneration)) return@launch
-                displayedOwner = owner
-                _uiState.update { it.copy(isLoading = false, sections = overlaid, error = null) }
-            } else {
-                _uiState.update { it.copy(isLoading = true, error = null) }
-            }
-            fetchSections(HomeLoadTrigger.INITIAL)
+            return
         }
+        diagnostics.completed(
+            HomeLoadObservation(
+                trigger = HomeLoadTrigger.INITIAL,
+                source = HomeLoadSource.CACHE,
+                outcome = if (cached != null && cached.sections.isNotEmpty()) {
+                    HomeLoadOutcome.HIT
+                } else {
+                    HomeLoadOutcome.MISS
+                },
+                durationMs = cacheStarted.elapsedNow().inWholeMilliseconds,
+                sectionCount = cached?.sections?.size ?: 0,
+                duplicateSectionKeyCount = cached?.sections?.duplicateSectionKeyCount() ?: 0,
+                duplicateItemRowCount = cached?.sections?.duplicateItemRowCount() ?: 0,
+            ),
+        )
+        if (cached != null && cached.sections.isNotEmpty()) {
+            val overlaid = overlayLocalState(cached.sections)
+            if (!mayPublish(owner, bootstrapGeneration)) return
+            displayedOwner = owner
+            _uiState.update { it.copy(isLoading = false, sections = overlaid, error = null) }
+        } else {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+        }
+        fetchSections(HomeLoadTrigger.INITIAL)
     }
 
     fun refresh() {
@@ -270,13 +362,13 @@ class HomeViewModel(
      * Runs one home fetch and returns the generation it ran as, so callers can
      * tell whether their own work is still the newest before acting on it.
      */
-    private suspend fun fetchSections(trigger: HomeLoadTrigger): Int {
+    private suspend fun fetchSections(trigger: HomeLoadTrigger, onTransientFailure: () -> Unit = {}): Int {
         val generation = ++fetchGeneration
         val owner = sectionRepository.captureHomeAuthority()
         if (generation != fetchGeneration || !currentCoroutineContext().isActive) return generation
         if (owner == null) {
             displayedOwner = null
-            _uiState.update { it.copy(sections = emptyList(), membershipReadWitnesses = emptySet(), isLoading = false, isRefreshing = false, error = "Sign in to load Home.") }
+            _uiState.update { it.copy(sections = emptyList(), membershipReadWitnesses = emptySet(), isLoading = false, isRefreshing = false, error = UiText.Key(SharedString.HomeSignedOut)) }
             return generation
         }
         if (!mayPublish(owner, generation)) return generation
@@ -287,6 +379,7 @@ class HomeViewModel(
         val membershipWitnesses = mediaActions.memberships.readWitnesses()
         if (!mayPublish(owner, generation)) return generation
         val requestIdentityGeneration = identityTransitions.generation.value
+        val artworkFingerprint = homeCache.artworkFingerprint()
         // Whether we already have something to show (cached or prior fetch) — if a
         // refresh fails we keep it rather than replacing it with a blocking error.
         val hadSections = _uiState.value.sections.isNotEmpty()
@@ -352,6 +445,7 @@ class HomeViewModel(
                     outcome = if (fullyResolved) HomeLoadOutcome.SUCCESS else HomeLoadOutcome.PARTIAL,
                     sections = resolved,
                 )
+                if (hydration.hasTransientFailure) onTransientFailure()
                 _uiState.update {
                     // Only replace what's shown when the fetch fully resolved (or there
                     // was nothing yet) — a partial refresh must not clobber a good Home.
@@ -381,7 +475,9 @@ class HomeViewModel(
                     generation == fetchGeneration &&
                     requestIdentityGeneration == identityTransitions.generation.value
                 ) {
-                    homeCache.cacheHomeV2(resolved, owner) { generation == fetchGeneration && displayedOwner == owner }
+                    homeCache.cacheHomeV2(resolved, owner, artworkFingerprint) {
+                        generation == fetchGeneration && displayedOwner == owner
+                    }
                 }
             }
             is ApiResult.Error -> {
@@ -395,10 +491,11 @@ class HomeViewModel(
                         isLoading = false,
                         // Keep cached/prior sections on a failed refresh; only block
                         // with an error when there's nothing to show.
-                        error = if (hadSections) null else result.message.ifBlank { "Failed to load home sections" },
+                        error = if (hadSections) null else result.errorText(SharedString.HomeLoadFailed),
                     )
                 }
                 report(HomeLoadOutcome.API_ERROR)
+                if (result.isTransientHomeReadFailure()) onTransientFailure()
             }
             is ApiResult.NetworkError -> {
                 if (!mayPublish(owner, generation)) {
@@ -408,10 +505,11 @@ class HomeViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = if (hadSections) null else "Network error. Check your connection.",
+                        error = if (hadSections) null else UiText.Key(SharedString.NetworkError),
                     )
                 }
                 report(HomeLoadOutcome.NETWORK_ERROR)
+                onTransientFailure()
             }
         }
         return generation
@@ -434,7 +532,8 @@ class HomeViewModel(
             val result = mediaActions.performPersonalWrite(writeIntent)
             if (!mediaActions.isCurrent(writeIntent)) return@launch
             when (result) {
-                is ApiResult.Success -> refresh()
+                // A hidden Home re-reads when it is shown, not beside the player.
+                is ApiResult.Success -> if (shown) refresh() else realtimeRefreshPending = true
                 else -> _uiState.update { it.copy(sections = previous) }
             }
         }
@@ -452,6 +551,18 @@ class HomeViewModel(
 
     private val pendingDismissals = mutableSetOf<String>()
 
+    /** Serializes the cached-Home rewrites, so one dismissal cannot write back a card another removed. */
+    private val dismissalCacheWrites = Mutex()
+
+    /** A dismissal succeeded and Home has not re-read since. */
+    private var reloadAfterDismissals = false
+
+    /** Removes a Continue Watching or Next Up card on the list [HomeDismissal] picks for it. */
+    fun dismissFromHome(item: SectionItem) {
+        val dismissal = HomeDismissal.of(item) ?: return
+        dismissHomeProgressItem(dismissal.surface, item.contentId, dismissal.anchor)
+    }
+
     fun dismissContinueWatching(itemId: String, progressUpdatedAt: String) =
         dismissHomeProgressItem("continue_watching", itemId, progressUpdatedAt)
 
@@ -464,30 +575,73 @@ class HomeViewModel(
         val observed = _uiState.value.sections
         fun SectionItem.matches() = contentId == itemId &&
             (if (surface == "continue_watching") progressUpdatedAt == anchor else seriesId == anchor)
-        fun ResolvedSection.progressRow() = sectionType in setOf("continue_watching", "in_progress", "next_up", "up_next")
-        fun List<ResolvedSection>.targetRows() = filter { it.progressRow() }.flatMap { section ->
+        fun List<ResolvedSection>.targetRows() = filter { it.isProgressRow() }.flatMap { section ->
             section.items.filter { it.contentId == itemId }.map { section.id to it }
         }
         val targets = observed.targetRows()
-        if (anchor.isBlank() || targets.none { it.second.matches() }) return
+        val dismissed = targets.firstOrNull { it.second.matches() }?.second
+        if (anchor.isBlank() || dismissed == null) return
         if (!pendingDismissals.add(itemId)) return
+        // On /api/v2, dismissing an episode or a series drops the whole show,
+        // so every card of that series leaves the progress rows with it.
+        val droppedSeries = dismissed.droppedSeriesId()
+        fun SectionItem.removed() = matches() ||
+            (droppedSeries != null && (contentId == droppedSeries || seriesId == droppedSeries))
         fun observationCurrent() = generation == fetchGeneration && displayedOwner == owner &&
             _uiState.value.sections.targetRows() == targets
         viewModelScope.launch {
             try {
                 if (!mayPublish(owner, generation) || !observationCurrent()) return@launch
                 val result = sectionRepository.dismissHomeItem(surface, itemId, anchor, owner)
+                // The server dropped the show even if this screen moved on while
+                // the request ran, so re-read either way, for the same profile.
+                if (result is ApiResult.Success && displayedOwner == owner && sectionRepository.isHomeAuthorityCurrent(owner)) {
+                    reloadAfterDismissals = true
+                }
                 if (!mayPublish(owner, generation) || !observationCurrent()) return@launch
                 if (result is ApiResult.Success) {
-                    _uiState.update { state -> state.copy(sections = state.sections.map { section ->
-                        if (section.progressRow()) section.copy(items = section.items.filterNot { it.matches() }) else section
-                    }.filter { it.items.isNotEmpty() }) }
+                    _uiState.update { state -> state.copy(sections = state.sections.removingFromProgressRows { it.removed() }) }
+                    // The next cold start shows the cached Home before it re-reads;
+                    // without this the dismissed cards come back until then.
+                    dismissalCacheWrites.withLock {
+                        val artworkFingerprint = homeCache.artworkFingerprint()
+                        val cached = homeCache.getCachedHomeV2(owner) ?: return@withLock
+                        homeCache.cacheHomeV2(cached.sections.removingFromProgressRows { it.removed() }, owner, artworkFingerprint) {
+                            generation == fetchGeneration && displayedOwner == owner
+                        }
+                    }
                 }
-            } finally { pendingDismissals.remove(itemId) }
+            } finally {
+                pendingDismissals.remove(itemId)
+                // Then re-read Home from the server, as Mark as Watched does; a
+                // failed read keeps the local removal. It waits for the last
+                // dismissal in flight, because a read that starts sooner would
+                // make that one's observation stale and skip its removal.
+                if (pendingDismissals.isEmpty() && reloadAfterDismissals) {
+                    reloadAfterDismissals = false
+                    if (shown) refresh() else realtimeRefreshPending = true
+                }
+            }
         }
     }
 
 }
+
+/** Rows built from playback state. Next Up appears as its own row and merged into Continue Watching. */
+private fun ResolvedSection.isProgressRow() = sectionType in setOf("continue_watching", "in_progress", "next_up", "up_next")
+
+/**
+ * Drops [isRemoved] cards from the progress rows; a row left empty goes too.
+ * A row that held its whole list still does, so its count follows its cards
+ * and it gains no "Explore all" card. A row cut at its limit keeps its count:
+ * one card fewer does not make it whole.
+ */
+internal fun List<ResolvedSection>.removingFromProgressRows(isRemoved: (SectionItem) -> Boolean): List<ResolvedSection> =
+    map { section ->
+        if (!section.isProgressRow()) return@map section
+        val kept = section.items.filterNot(isRemoved)
+        section.copy(items = kept, totalCount = if (section.showsWholeList) kept.size else section.totalCount)
+    }.filter { it.hasCards }
 
 private fun List<ResolvedSection>.duplicateSectionKeyCount(): Int =
     size - distinctBy(ResolvedSection::id).size
@@ -505,7 +659,7 @@ private fun List<ResolvedSection>.mapItem(
 
 /** Watched and unwatched both reset resume progress, as the server does. */
 private fun SectionItem.withPlayed(played: Boolean): SectionItem =
-    copy(userState = (userState ?: MediaItemUserState()).copy(played = played), positionSeconds = 0.0)
+    copy(userState = (userState ?: MediaItemUserState()).withPlayed(played), positionSeconds = 0.0)
 
 private fun SectionItem.withFavorite(favorite: Boolean): SectionItem =
     copy(userState = (userState ?: MediaItemUserState()).copy(isFavorite = favorite))

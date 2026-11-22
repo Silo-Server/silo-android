@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -48,7 +50,9 @@ fun DownloadButton(
 
             Icon(
                 imageVector = if (isDownloaded) Icons.Default.DownloadDone else Icons.Default.Download,
-                contentDescription = if (isDownloaded) "Downloaded" else "Download",
+                contentDescription = stringResource(
+                    if (isDownloaded) CommonR.string.shell_downloadButton_downloaded else CommonR.string.shell_downloadButton_download,
+                ),
                 tint = if (isDownloaded) {
                     MaterialTheme.colorScheme.primary
                 } else {

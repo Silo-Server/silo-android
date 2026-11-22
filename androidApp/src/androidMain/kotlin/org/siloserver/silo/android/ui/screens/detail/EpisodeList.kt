@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import android.content.res.Resources
+import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
@@ -30,7 +32,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -43,8 +44,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -53,14 +57,21 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.distinctUntilChanged
 import org.siloserver.silo.android.ui.util.formatCardDate
 import org.siloserver.silo.android.ui.util.playbackResumePosition
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.overlays.wideCardOverlayScale
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.model.catalog.EpisodeCardCaption
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import kotlin.math.abs
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.ui.components.WatchProgressBar
 
 /**
  * PR #212's phone episode carousel: a 240dp card settles in the centre and,
@@ -75,8 +86,6 @@ fun EpisodeList(
     onEpisodeWatchedChange: ((String, Boolean) -> Unit)? = null,
     highlightContentId: String? = null,
     selectsCenteredEpisode: Boolean = false,
-    /** Expanded tablet/fold cards include their full editorial caption. */
-    showsEpisodeDetails: Boolean = false,
     /** Expanded rails select on tap and never force the card into centre. */
     tapToFocusEpisode: Boolean = false,
     modifier: Modifier = Modifier,
@@ -89,6 +98,7 @@ fun EpisodeList(
         val currentHighlightId by rememberUpdatedState(highlightContentId)
         val currentOnSelect by rememberUpdatedState(onEpisodeDetailClick)
         var wasScrolling by remember { mutableStateOf(false) }
+        val railHasCurrentEpisode = episodes.any { it.contentId == highlightContentId }
 
         LaunchedEffect(episodes.map(EpisodeListItem::contentId), highlightContentId) {
             val selectedIndex = episodes.indexOfFirst { it.contentId == highlightContentId }
@@ -147,8 +157,8 @@ fun EpisodeList(
                         { watched -> change(episode.contentId, watched) }
                     },
                     isCurrent = episode.contentId == highlightContentId,
+                    reservesNowViewing = railHasCurrentEpisode,
                     cardWidth = cardWidth,
-                    showsEpisodeDetails = showsEpisodeDetails,
                 )
             }
         }
@@ -171,8 +181,9 @@ private fun EpisodeRailCard(
     onSelect: () -> Unit,
     onWatchedChange: ((Boolean) -> Unit)?,
     isCurrent: Boolean,
+    /** The rail marks a current episode, so every card keeps room for the tag. */
+    reservesNowViewing: Boolean,
     cardWidth: Dp,
-    showsEpisodeDetails: Boolean,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     val isWatched = episode.userData?.played == true
@@ -217,6 +228,8 @@ private fun EpisodeRailCard(
             )
 
             if (episode.userData?.played == true) {
+                // At the wide cards' overlay scale, like their badges.
+                val checkScale = wideCardOverlayScale()
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -225,17 +238,17 @@ private fun EpisodeRailCard(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                        .size(22.dp)
+                        .padding(8.dp * checkScale)
+                        .size(22.dp * checkScale)
                         .clip(CircleShape)
                         .background(Color.White),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Check,
-                        contentDescription = "Watched",
+                        contentDescription = stringResource(CommonR.string.detail_watched),
                         tint = Color.Black,
-                        modifier = Modifier.size(12.dp),
+                        modifier = Modifier.size(12.dp * checkScale),
                     )
                 }
             }
@@ -252,93 +265,87 @@ private fun EpisodeRailCard(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.PlayArrow,
-                        contentDescription = "Play Season ${episode.seasonNumber}, Episode ${episode.episodeNumber}",
+                        contentDescription = stringResource(
+                            CommonR.string.detail_playSeasonEpisode,
+                            LocaleFormat.integer(episode.seasonNumber),
+                            LocaleFormat.integer(episode.episodeNumber),
+                        ),
                         tint = Color.Black,
                         modifier = Modifier.size(24.dp),
                     )
                 }
             }
 
-            progress?.takeIf { it > 0f }?.let {
-                LinearProgressIndicator(
-                    progress = { it },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(3.dp),
-                    color = Color.White,
-                    trackColor = Color.Black.copy(alpha = 0.60f),
-                )
-            }
+            if (progress != null) WatchProgressBar(progress)
         }
 
-        Column(
-            modifier = if (showsEpisodeDetails) Modifier.height(132.dp) else Modifier,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
+        // The iOS card's caption: NOW VIEWING, "S01E02 · Title", air date and
+        // runtime, then up to three lines of description. A LazyRow is as tall
+        // as its tallest visible card, so every card keeps the same lines, empty
+        // where there's nothing to show, and the rail doesn't change height as it
+        // scrolls. Accessibility font sizes lift the line limits, as on iOS.
+        val accessibilityText = LocalDensity.current.fontScale > 1.3f
+        val reservesLines = !accessibilityText
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (isCurrent || reservesNowViewing) {
                 Text(
-                    text = "EPISODE ${episode.episodeNumber}",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp,
-                    color = Color.White.copy(alpha = 0.55f),
+                    text = stringResource(CommonR.string.detail_nowViewing),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 0.8.sp,
+                    color = Color.Black,
+                    modifier = Modifier
+                        .then(if (isCurrent) Modifier else Modifier.alpha(0f).clearAndSetSemantics {})
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.White)
+                        .padding(horizontal = 5.dp, vertical = 2.dp),
                 )
-                if (showsEpisodeDetails && visibleOverview != null &&
-                    hasMachineTranslatedOverview(episode.machineTranslatedFields)
-                ) {
-                    DetailMachineTranslatedLabel(compact = true, iconSize = 11.dp)
-                }
-                if (isCurrent) {
-                    Text(
-                        text = "NOW VIEWING",
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 0.8.sp,
-                        color = Color.Black,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(Color.White)
-                            .padding(
-                                horizontal = 5.dp,
-                                vertical = if (showsEpisodeDetails) 1.dp else 2.dp,
-                            ),
-                    )
-                }
             }
             Text(
-                text = episode.title?.trim()?.takeIf { it.isNotEmpty() }
-                    ?: "Episode ${episode.episodeNumber}",
+                text = EpisodeCardCaption.title(episode).text(),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = DetailPrimaryText,
-                maxLines = 1,
+                maxLines = if (accessibilityText) Int.MAX_VALUE else 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (showsEpisodeDetails) {
-                episodeMetadataLine(episode)?.let { metadata ->
-                    Text(
-                        text = metadata,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = DetailSecondaryText,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+            val metadata = EpisodeCardCaption.metadata(
+                airDate = formatCardDate(episode.airDate, currentFormatLocale()) ?: episode.airDate,
+                runtimeMinutes = episode.runtime,
+            )?.text()
+            val showsTranslationLabel = visibleOverview != null &&
+                hasMachineTranslatedOverview(episode.machineTranslatedFields)
+            if (metadata != null || showsTranslationLabel || reservesLines) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (metadata != null || reservesLines) {
+                        Text(
+                            text = metadata.orEmpty(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = DetailSecondaryText,
+                            maxLines = if (accessibilityText) Int.MAX_VALUE else 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                    if (showsTranslationLabel) {
+                        DetailMachineTranslatedLabel(compact = true, iconSize = 11.dp)
+                    }
                 }
-                // Spoiler protection omits the text; the fixed-height column
-                // keeps the card the same size.
-                if (visibleOverview != null) {
-                    Text(
-                        text = visibleOverview,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = DetailSecondaryText,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+            }
+            // Spoiler protection leaves the description out; the title and
+            // metadata still identify the episode.
+            if (visibleOverview != null || reservesLines) {
+                Text(
+                    text = visibleOverview.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DetailSecondaryText,
+                    minLines = if (accessibilityText) 1 else 3,
+                    maxLines = if (accessibilityText) Int.MAX_VALUE else 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         SiloDropdownMenu(
@@ -346,7 +353,13 @@ private fun EpisodeRailCard(
             onDismissRequest = { menuExpanded = false },
         ) {
             SiloDropdownMenuItem(
-                text = { Text(if (isWatched) "Mark as Unwatched" else "Mark as Watched") },
+                text = {
+                    Text(
+                        stringResource(
+                            if (isWatched) CommonR.string.detail_more_markUnwatched else CommonR.string.detail_more_markWatched,
+                        ),
+                    )
+                },
                 onClick = {
                     menuExpanded = false
                     onWatchedChange?.invoke(!isWatched)
@@ -363,17 +376,9 @@ internal fun episodeProgressFraction(positionSeconds: Double?, durationSeconds: 
     return (position / duration).toFloat().coerceIn(0f, 1f)
 }
 
-private fun episodeMetadataLine(episode: EpisodeListItem): String? = buildList {
-    val airDate = formatCardDate(episode.airDate)
-        ?: episode.airDate?.takeIf { it.isNotBlank() }
-    if (airDate != null) add(airDate)
-    if (episode.runtime > 0) add("${episode.runtime}m")
-}.takeIf { it.isNotEmpty() }?.joinToString(" · ")
-
-/** Static loading footprint matching the artwork and compact identity row. */
+/** Static loading footprint matching the artwork and the card caption. */
 @Composable
 internal fun EpisodeListSkeleton(
-    showsEpisodeDetails: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxWidth()) {
@@ -396,13 +401,11 @@ internal fun EpisodeListSkeleton(
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color.White.copy(alpha = 0.09f + index * 0.01f)),
                     )
-                    EpisodeSkeletonLine(width = 82.dp, height = 9.dp)
-                    if (showsEpisodeDetails) {
-                        EpisodeSkeletonLine(width = 150.dp, height = 14.dp)
-                        EpisodeSkeletonLine(width = 112.dp, height = 10.dp)
-                        EpisodeSkeletonLine(width = 224.dp, height = 10.dp)
-                        EpisodeSkeletonLine(width = 196.dp, height = 10.dp)
-                    }
+                    EpisodeSkeletonLine(width = 150.dp, height = 14.dp)
+                    EpisodeSkeletonLine(width = 112.dp, height = 10.dp)
+                    EpisodeSkeletonLine(width = 224.dp, height = 10.dp)
+                    EpisodeSkeletonLine(width = 224.dp, height = 10.dp)
+                    EpisodeSkeletonLine(width = 196.dp, height = 10.dp)
                 }
             }
         }
@@ -420,5 +423,5 @@ private fun EpisodeSkeletonLine(width: Dp, height: Dp) {
     )
 }
 
-internal fun episodeNumberText(episode: EpisodeListItem): String =
-    "S${episode.seasonNumber}·E${episode.episodeNumber}"
+internal fun episodeNumberText(resources: Resources, episode: EpisodeListItem): String =
+    episodeCode(resources, episode.seasonNumber, episode.episodeNumber)

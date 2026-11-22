@@ -8,6 +8,7 @@ import org.siloserver.silo.model.playback.PlaybackStreamV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleDecisionV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
 import org.siloserver.silo.model.playback.PlaybackTimelineV3
+import org.siloserver.silo.model.playback.HLS_SUBTITLE_RENDITIONS_V1_FEATURE
 import org.siloserver.silo.model.playback.playbackClientFeaturesV3
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -61,6 +62,19 @@ class CastPlaybackPreparerTest {
     fun castContextDoesNotAdvertiseThePreNeutralSidecarFeature() {
         assertFalse(
             "external_text_sidecar_set_v1" in
+                playbackClientFeaturesV3(
+                    chromecastPlaybackContext(
+                        appVersion = "test",
+                        buildIdentity = SiloClientBuildIdentity(buildNumber = "5", channel = "release"),
+                    ),
+                ),
+        )
+    }
+
+    @Test
+    fun castContextKeepsSidecarsInsteadOfHlsSubtitleRenditions() {
+        assertFalse(
+            HLS_SUBTITLE_RENDITIONS_V1_FEATURE in
                 playbackClientFeaturesV3(
                     chromecastPlaybackContext(
                         appVersion = "test",
