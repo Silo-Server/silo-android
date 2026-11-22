@@ -226,6 +226,93 @@ class TvSubtitleHudStateTest {
     }
 
     @Test
+    fun `each embedded track is listed once, under the server row that names it`() {
+        // Embedded SubRip rows of a direct-play MKV. English is natively
+        // switchable; Spanish is a sidecar row, so only the container track ID
+        // of the original file ties it to the Media3 track the player lists.
+        val english = PlayerSubtitleInfo(
+            index = 0, language = "eng", codec = "subrip", label = "English (SDH)", source = "embedded",
+            url = "/s/0.vtt", isDefault = true, serverTrackId = "file:1:subtitle:0",
+            serverDelivery = SUBTITLE_DELIVERY_SIDECAR, nativeContainerTrackId = "3", sourceContainerTrackId = "3",
+        )
+        val spanish = PlayerSubtitleInfo(
+            index = 1, language = "spa", codec = "subrip", label = "Spanish", source = "embedded",
+            url = "/s/1.vtt", serverTrackId = "file:1:subtitle:1",
+            serverDelivery = SUBTITLE_DELIVERY_SIDECAR, sourceContainerTrackId = "4",
+        )
+        // An older server sends no container track ID: nothing ties the row to a track.
+        val spanishUnknown = spanish.copy(sourceContainerTrackId = null)
+        fun track(index: Int, trackId: String?, label: String = "") =
+            PlayerTrackEntry(index = index, label = label, language = null, isSelected = false, trackId = trackId)
+        val englishTrack = track(0, "3", label = "English")
+        val spanishTrack = track(1, "4")
+        val cea608 = track(2, "1/608")
+
+        data class Case(
+            val name: String,
+            val rows: List<PlayerSubtitleInfo>,
+            val tracks: List<PlayerTrackEntry>,
+            val expected: List<String>,
+        )
+        val cases = listOf(
+            Case("subtitles off", listOf(english, spanish), listOf(englishTrack, spanishTrack),
+                listOf("off", "server:0", "server:1")),
+            Case("server sidecar merged beside the file", listOf(english, spanish),
+                listOf(track(0, "0:3"), track(1, "0:4"), track(2, "1:silo-subtitle:1")),
+                listOf("off", "server:0", "server:1")),
+            Case("a track no row names stays listed", listOf(english, spanish),
+                listOf(englishTrack, spanishTrack, cea608),
+                listOf("off", "server:0", "server:1", "player:1/608")),
+            Case("no container track ID from the server", listOf(english, spanishUnknown),
+                listOf(englishTrack, spanishTrack),
+                listOf("off", "server:0", "server:1", "player:4")),
+            Case("an unplayable row keeps its track pickable", listOf(english, spanish.copy(unplayable = true)),
+                listOf(englishTrack, spanishTrack),
+                listOf("off", "server:0", "server:1", "player:4")),
+            // A burn-in-only row (VobSub, DVB) plays through a transcode; the
+            // file's track is the way to show it on the device.
+            Case("a burn-in-only row keeps its track pickable",
+                listOf(english, spanish.copy(url = "", serverDelivery = SUBTITLE_DELIVERY_BURN_IN_ONLY)),
+                listOf(englishTrack, spanishTrack),
+                listOf("off", "server:0", "server:1", "player:4")),
+        )
+        for (case in cases) {
+            val options = buildTvSubtitleHudOptions(case.rows, case.tracks, resources)
+            val keys = options.map { option ->
+                when (val identity = option.identity) {
+                    SubtitleIdentity.Off -> "off"
+                    is SubtitleIdentity.LocalMedia3 -> "player:${identity.media.trackId}"
+                    else -> "server:${identity.serverIndexOrNull()}"
+                }
+            }
+            assertEquals(case.expected, keys, case.name)
+        }
+        // A choice saved as that player track checks the row it now stands under,
+        // and picking that row keeps the player track instead of replanning it.
+        val picked = mutableListOf<SubtitleIdentity>()
+        val presentation = buildTvSubtitleHudPresentation(
+            options = buildTvSubtitleHudOptions(listOf(english, spanish), listOf(englishTrack, spanishTrack), resources),
+            committedIdentity = tvSubtitleIdentity(spanishTrack),
+            pendingIdentity = null,
+            hudOpen = true,
+            focusedStableId = null,
+            resources = resources,
+            onSelect = { picked += it },
+        )
+        assertEquals(listOf(tvSubtitleIdentity(spanish)), presentation.rows.filter { it.checked }.map { it.identity })
+        presentation.onSelect(tvSubtitleIdentity(spanish))
+        presentation.onSelect(tvSubtitleIdentity(english))
+        assertEquals(listOf(tvSubtitleIdentity(spanishTrack), tvSubtitleIdentity(english)), picked)
+    }
+
+    private fun SubtitleIdentity.serverIndexOrNull(): Int? = when (this) {
+        is SubtitleIdentity.Embedded -> serverIndex
+        is SubtitleIdentity.ServerSidecar -> serverIndex
+        is SubtitleIdentity.ServerBurnIn -> serverIndex
+        else -> null
+    }
+
+    @Test
     fun `duplicate labels use typed option IDs and never collapse focus targets`() {
         val forced = SubtitleIdentity.LocalMedia3(
             media(trackId = "forced", forced = true),
