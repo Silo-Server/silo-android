@@ -147,7 +147,6 @@ internal fun TvHomeSectionsEditor(
     // them while it is open, as they do on Home itself.
     androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
         viewModel.onShown()
-        viewModel.runPendingRealtimeRefresh()
         onPauseOrDispose { viewModel.onHidden() }
     }
 

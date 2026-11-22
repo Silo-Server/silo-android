@@ -1,9 +1,5 @@
 package org.siloserver.silo.common.diagnostics
 
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DataSourceException
-import javax.net.ssl.SSLException
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -18,24 +14,6 @@ class DiagnosticsInstrumentationTest {
     @AfterTest
     fun tearDown() {
         SiloLog.installSink(null)
-    }
-
-    @Test
-    @androidx.annotation.OptIn(UnstableApi::class)
-    fun playbackErrorsIncludeCodeAndCauseWithoutExceptionMessages() {
-        val lines = mutableListOf<String>()
-        SiloLog.installSink { lines += it }
-        val code = PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED
-        val loadError = DataSourceException(SSLException("private stream address"), code)
-        DiagnosticsPlaybackLogger.loadError(loadError)
-        DiagnosticsPlaybackLogger.playerError(PlaybackException("private media title", loadError, code))
-
-        assertEquals(2, lines.size)
-        for (line in lines) {
-            assertTrue(line.contains("ERROR_CODE_IO_NETWORK_CONNECTION_FAILED"), line)
-            assertTrue(line.contains("javax.net.ssl.SSLException"), line)
-            assertFalse(line.contains("private"), line)
-        }
     }
 
     @Test

@@ -503,7 +503,7 @@ val androidModule = module {
             trickplayManifests = get(),
         )
     }
-    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get(), startShown = false) }
     viewModel { MainHeaderViewModel(get()) }
     viewModel {
         LibrariesViewModel(

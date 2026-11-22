@@ -13,7 +13,14 @@ import kotlinx.coroutines.sync.withPermit
 data class HomeSectionHydration(
     val sections: List<ResolvedSection>,
     val fullyResolved: Boolean,
+    val hasTransientFailure: Boolean,
 )
+
+internal fun ApiResult<*>.isTransientHomeReadFailure(): Boolean = when (this) {
+    is ApiResult.Error -> code == 408 || code == 429 || code in 500..599
+    is ApiResult.NetworkError -> true
+    is ApiResult.Success -> false
+}
 
 /**
  * Keeps aggregate Home sections that already contain items and resolves only
@@ -30,18 +37,15 @@ suspend fun hydrateHomeSections(
     // empty `items` never means "not inlined".
     val unresolved = sections.filter { !it.isCollectionRow && it.items.isEmpty() && it.totalCount > 0 }
     val semaphore = Semaphore(maxConcurrency)
-    val fallbackById = coroutineScope {
+    val fallbacks = coroutineScope {
         unresolved.map { section ->
             async {
-                section.id to semaphore.withPermit {
-                    when (val result = fetchItems(section.id)) {
-                        is ApiResult.Success -> resolveHomeSectionItems(section, result.data)
-                        is ApiResult.Error,
-                        is ApiResult.NetworkError -> null
-                    }
-                }
+                section to semaphore.withPermit { fetchItems(section.id) }
             }
-        }.awaitAll().toMap()
+        }.awaitAll()
+    }
+    val fallbackById = fallbacks.associate { (section, result) ->
+        section.id to (result as? ApiResult.Success)?.let { resolveHomeSectionItems(section, it.data) }
     }
 
     return HomeSectionHydration(
@@ -53,6 +57,7 @@ suspend fun hydrateHomeSections(
             }
         },
         fullyResolved = unresolved.all { fallbackById[it.id] != null },
+        hasTransientFailure = fallbacks.any { (_, result) -> result.isTransientHomeReadFailure() },
     )
 }
 
