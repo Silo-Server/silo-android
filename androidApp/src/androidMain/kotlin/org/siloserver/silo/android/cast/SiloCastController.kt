@@ -1447,12 +1447,14 @@ class SiloCastController(
                         // Disconnect, or an older TV let go). The others (full,
                         // refused, an unused profile handed back) keep the
                         // remote up on the TV's error, as silo-apple does. A
-                        // newer connection from this phone taking over, or an
-                        // unseen silent auto-resume, ends quietly.
+                        // newer connection from this phone taking over, or a
+                        // silent auto-resume nobody has opened the remote on,
+                        // ends quietly.
+                        val unseenAutoResume = !remoteScreenVisible &&
+                            (sessionIsAutoResumed || ended.isAutoResuming)
                         val endedForUser = response.forgetTarget &&
                             message.reason != SiloCastCloseReason.Replaced &&
-                            !ended.isAutoResuming &&
-                            !(sessionIsAutoResumed && !remoteScreenVisible)
+                            !unseenAutoResume
                         suppressReconnect = true
                         if (response.forgetTarget) lastTargetStore.clear()
                         closeConnection()
