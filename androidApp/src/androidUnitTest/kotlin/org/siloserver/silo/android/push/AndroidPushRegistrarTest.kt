@@ -181,6 +181,13 @@ class AndroidPushRegistrarTest {
         assertEquals(listOf(1L,2L,2L),generations)
         assertTrue(store.entries.single { it.serverUrl=="https://cabin.invalid" }.let { it.acknowledged && it.loginSessionBound })
     }
+    @Test fun aSavedServerRegisteredBeforeAccountsIsNotSentAnythingWhileItCannotBind()=runTest {
+        savedServerAwaitingBinding(); savedAccounts["cabin"]="cabin-account"; bindsSession=false
+        registrar().registerOtherServersIfBehind()
+        assertEquals(listOf(1L),generations)
+        val cabin=store.entries.single { it.serverUrl=="https://cabin.invalid" }
+        assertEquals(1L,cabin.generation); assertTrue(cabin.deliversPushes); assertEquals("cabin-account",cabin.intent.accountId)
+    }
     @Test fun aRebindThatFailsIsRetriedExactlyAcrossRestartsUntilItLands()=runTest {
         registrar().registerToken(token); upgradedFromOlderApp()
         uncertain=true; registrar().registerIfAvailable()
@@ -222,7 +229,7 @@ class AndroidPushRegistrarTest {
         val record=store.entries.single()
         assertEquals(1L,record.generation); assertTrue(record.acknowledged); assertTrue(record.deliversPushes)
         registrar().registerIfAvailable(); assertEquals(listOf(1L,2L),generations)
-        // Sign-out still removes it, above the generation the refused rebind used.
+        // Sign-out still removes it, at the generation the refused rebind used, which the server never applied.
         assertIs<ApiResult.Success<Unit>>(registrar().unregisterDevice("server").result)
         assertEquals(listOf(1L,2L,2L),generations)
     }
@@ -232,6 +239,24 @@ class AndroidPushRegistrarTest {
         assertTrue(store.entries.single().deliversPushes)
         registrar().registerIfAvailable()
         assertEquals(listOf(1L,2L,2L),generations); assertTrue(store.entries.single().let { it.acknowledged && it.loginSessionBound })
+    }
+    @Test fun anUncertainRebindRefusedOnReplayStaysReadAndRemovable()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        uncertain=true; registrar().registerIfAvailable(); uncertain=false
+        failCode=403; registrar().registerIfAvailable(); failCode=null
+        val record=store.entries.single()
+        assertNull(record.refusal); assertTrue(record.deliversPushes); assertEquals(2L,record.generation); assertFalse(record.acknowledged)
+        // Sign-out removes it above the generation the replay used, whichever one the server holds.
+        assertIs<ApiResult.Success<Unit>>(registrar().unregisterDevice("server").result)
+        assertEquals(listOf(1L,2L,2L,3L),generations)
+    }
+    @Test fun anUncertainRebindRefusedOnReplayWithAnExpiredTokenIsAskedAgain()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        uncertain=true; registrar().registerIfAvailable(); uncertain=false
+        failCode=401; registrar().registerIfAvailable(); failCode=null
+        assertTrue(store.entries.single().let { it.refusal==null && it.deliversPushes })
+        registrar().registerIfAvailable()
+        assertEquals(listOf(1L,2L,2L,2L),generations); assertTrue(store.entries.single().let { it.acknowledged && it.loginSessionBound })
     }
     @Test fun aRefusedRegistrationIsNotRebound()=runTest {
         failCode=409; registrar().registerToken(token); failCode=null; upgradedFromOlderApp()

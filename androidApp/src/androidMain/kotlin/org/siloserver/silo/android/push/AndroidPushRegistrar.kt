@@ -510,6 +510,9 @@ class AndroidPushRegistrar internal constructor(
     private suspend fun clearOwnerLeaving(serverUrl: String, device: String, generation: Long) =
         updateRecord(serverUrl, device) { record -> record?.takeIf { it.generation == generation }?.copy(ownerLeaving = false) ?: record }
 
+    private suspend fun adoptIntent(serverUrl: String, device: String, generation: Long, intent: PushInstallationIntent) =
+        updateRecord(serverUrl, device) { record -> record?.takeIf { it.generation == generation && it.acknowledged }?.copy(intent = intent) ?: record }
+
     private suspend fun apply(owner: DurableLoginAuthority, request: PushDeviceRegisterRequest?, attempt: Any): ApiResult<PushDeviceRegisterResponse?> =
         serverLock(owner.scope.serverUrl).withLock { applyOnServer(owner, request, attempt, mayReconcile = true) }
 
@@ -555,8 +558,9 @@ class AndroidPushRegistrar internal constructor(
             // A record from before accounts has no account yet; the same login's
             // account takes it over without changing what the server holds.
             val bindsSession = capability.data.bindsLoginSession
-            val rebinding = bindsSession && previous != null && previous.needsLoginSessionBinding &&
+            val sameRegistration = previous != null &&
                 previous.intent.copy(accountId = previous.intent.accountId ?: intent.accountId) == intent
+            val rebinding = bindsSession && previous != null && previous.needsLoginSessionBinding && sameRegistration
             previous?.let {
                 check(it.generation > 0 && it.key.matches(Regex("[A-Za-z0-9_-]{43}")))
                 if (it.acknowledged && it.intent.registration != null) {
@@ -571,7 +575,10 @@ class AndroidPushRegistrar internal constructor(
                         it.intent.profileId != intent.profileId || it.intent.profileToken != intent.profileToken)) {
                     return failure("push_previous_intent_uncertain")
                 }
-                if (it.acknowledged && it.intent == intent && !rebinding) {
+                if (it.acknowledged && sameRegistration && !rebinding) {
+                    // A record from before accounts takes the login's account here too,
+                    // without a request: the server holds the same registration.
+                    if (it.intent != intent) adoptIntent(serverUrl, device, it.generation, intent)
                     if (it.ownerLeaving) clearOwnerLeaving(serverUrl, device, it.generation)
                     return ApiResult.Success(it.receipt)
                 }
@@ -580,7 +587,8 @@ class AndroidPushRegistrar internal constructor(
                 if (previous?.generation == Long.MAX_VALUE) return failure("push_generation_exhausted")
                 val generation = (previous?.generation ?: 0) + 1
                 if (rebinding) previous.copy(generation = generation, acknowledged = false, loginSessionBound = true, intent = intent)
-                else PushInstallation(owner.scope.serverUrl, device, previous?.key ?: newKey(), generation, intent, loginSessionBound = bindsSession)
+                else PushInstallation(owner.scope.serverUrl, device, previous?.key ?: newKey(), generation, intent,
+                    loginSessionBound = bindsSession, bindingCheckedAtMs = if (bindsSession) 0 else clock())
             }
             check(entry.key.matches(Regex("[A-Za-z0-9_-]{43}")))
             if (!current(owner)) return failure("push_authority_changed")
@@ -613,6 +621,14 @@ class AndroidPushRegistrar internal constructor(
                         // to that one: still read, still removed at sign-out. A 401 may
                         // only be a token that expired meanwhile, so that one is asked again.
                         settle { stored -> previous.copy(ownerLeaving = stored.ownerLeaving, rebindRefused = result.code != 401) }
+                    } else if (entry === previous && previous?.rebindingUnconfirmed == true) {
+                        // A replay of a rebinding an earlier send may have applied, so it can't
+                        // go back to the generation before it. It stays as it is: the server
+                        // holds this generation or the one before, the same registration either
+                        // way, so it is still read, still removed above both at sign-out, and
+                        // any new intent supersedes it. Until then it is retried like any
+                        // uncertain intent.
+                        Unit
                     } else {
                         // No generation rebase or replacement secret after a definite refusal.
                         settle { it.copy(refusal = "push_registration_refused") }
