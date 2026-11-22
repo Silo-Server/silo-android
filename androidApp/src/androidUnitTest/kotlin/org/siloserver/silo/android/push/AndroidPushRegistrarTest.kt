@@ -144,6 +144,14 @@ class AndroidPushRegistrarTest {
         bindsSession=true; registrar().registerOtherServersIfBehind()
         assertEquals(2,capabilityChecks); assertEquals(listOf(1L,2L),generations)
     }
+    @Test fun aServerRegisteredWhileItCannotBindIsNotAskedAgainTheSameDay()=runTest {
+        bindsSession=false
+        val cabin=DurableLoginAuthority("login-cabin",AuthScopeSnapshot.savedLogin("cabin","https://cabin.invalid","cabin-profile","cabin-pin",5))
+        registrar().registerToken(token,cabin.also { owner=it })
+        owner=DurableLoginAuthority("login", AuthScopeSnapshot("server","profile","https://example.invalid","pin",identityGeneration=1))
+        capabilityChecks=0; registrar().registerOtherServersIfBehind(); assertEquals(0,capabilityChecks)
+        clockMs+=24*60*60*1000L; registrar().registerOtherServersIfBehind(); assertEquals(1,capabilityChecks)
+    }
     @Test fun anUnreachableSavedServerIsAskedAboutARebindAtMostDaily()=runTest {
         savedServerAwaitingBinding()
         capabilitiesUnreachableUrl="https://cabin.invalid"; capabilityChecks=0
