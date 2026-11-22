@@ -109,6 +109,7 @@ import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.domain.player.MarkerKind
 import org.siloserver.silo.domain.player.MarkerTimeline
+import org.siloserver.silo.domain.player.NextUpPrompt
 import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
@@ -1868,8 +1869,8 @@ class TvPlayerViewModel(
     // ---- Next-episode auto-advance (F2) ----
     private var autoAdvanceCount: Int = launchArgs.autoAdvanceCount
     private var autoAdvanceHandled = false // once-per-item guard
-    // The credits or the end of this item was reached. Unlike autoAdvanceHandled,
-    // opening Up Next by hand or Keep Watching never sets it.
+    // Playback reached the closing credits or the end of this item. Unlike
+    // autoAdvanceHandled, opening Up Next by hand or Keep Watching never sets it.
     private var reachedCreditsOrEnd = false
     // The identity generation this player was launched under.
     private val launchIdentityGeneration: Long? = identityTransitions?.generation?.value
@@ -2015,6 +2016,9 @@ class TvPlayerViewModel(
     // Per-profile "Still watching?" threshold (default 3; 0 = off).
     val passOutThreshold: StateFlow<Int> = playerSettingsStore.passOutThresholdFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 3)
+    // Seconds before the end of the file to surface Up Next (0 = only at end).
+    private val nextUpPromptSeconds: StateFlow<Int> = playerSettingsStore.nextUpPromptSecondsFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 30)
     val hdrEnabled: StateFlow<Boolean> = playerSettingsStore.hdrEnabledFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val dolbyVisionEnabled: StateFlow<Boolean> = playerSettingsStore.dolbyVisionEnabledFlow
@@ -3887,13 +3891,24 @@ class TvPlayerViewModel(
         if (positionSec > 0 && transientNetworkRetries > 0) {
             transientNetworkRetries = 0
         }
-        // F2: auto-advance / prompt when playback CROSSES the credits point —
-        // only on the transition from before to after, so resuming an episode
-        // whose saved position is already inside the credits doesn't instantly
-        // skip to the next one (a seek into credits also won't trigger it).
-        if (!seekWasActive) {
-            _uiState.value.markerTimeline.upNextCreditsStart()?.let { creditsStart ->
-                if (previousPosition < creditsStart && positionSec >= creditsStart) onApproachingEnd()
+        // Surface Up Next when playback crosses the chosen point before the end
+        // of the file. Only the crossing counts, so resuming or seeking past it
+        // doesn't open the card; the stream ending still does.
+        if (
+            !seekWasActive &&
+            NextUpPrompt.crossesPromptPoint(
+                previousPosition, positionSec, _uiState.value.duration, nextUpPromptSeconds.value,
+            )
+        ) {
+            onApproachingEnd()
+        }
+        // Playing into the closing credits counts as finishing the episode for
+        // the series page, though Up Next waits for the prompt point.
+        // Not once Play Now has started the handoff: the outgoing item no longer
+        // decides where the series page returns.
+        if (!seekWasActive && roomId == null && !nextUpTransitionGate.isActive) {
+            _uiState.value.markerTimeline.finalCreditsStart()?.let { creditsStart ->
+                if (previousPosition < creditsStart && positionSec >= creditsStart) reachedCreditsOrEnd = true
             }
         }
         // Forward to the lifecycle so its 10s reporter has a fresh sample.
@@ -5241,7 +5256,7 @@ class TvPlayerViewModel(
 
     /**
      * Adopt the playing file's marker ranges (a `markers_updated` event or a
-     * reconcile read). Skip-intro and the credits-based F2 trigger read these
+     * reconcile read). Skip-intro and the skip controls read these
      * from UiState, so the update takes effect immediately; `null` clears a
      * marker the server dropped.
      */
@@ -5365,7 +5380,7 @@ class TvPlayerViewModel(
     }
 
     /**
-     * Called by the screen when the credits point is reached (primary) or the
+     * Called when playback crosses the Up Next point before the end or the
      * stream ends (fallback). Surfaces the Up-Next overlay — a 16:9 mini-player
      * beside the next-episode panel — as the end-of-playback surface (mirrors
      * tvOS PlayerNextUpScreen), replacing the old "Still watching?" dialog.
@@ -5374,12 +5389,12 @@ class TvPlayerViewModel(
      * pass-out threshold, the overlay starts a countdown ring that plays the
      * next episode at zero. Once the streak hits the pass-out threshold (or
      * auto-play is off), the overlay shows with NO countdown so the user must
-     * explicitly choose Play Now / Keep Watching (the pass-out gate). The credits
+     * explicitly choose Play Now / Keep Watching (the pass-out gate). The before-end
      * prompt is once per episode; a dismissed card reopens when playback ends.
      *
      * [videoEnded] true when the stream has actually ended (STATE_ENDED) — the
      * panel reads "End of playback" / "Playing Next" and hides Keep Watching;
-     * false at the credits-crossing while video is still rolling.
+     * false at the before-end crossing while video is still rolling.
      */
     fun onApproachingEnd(videoEnded: Boolean = false) {
         if (nextUpTransitionGate.isActive) return
@@ -5388,8 +5403,10 @@ class TvPlayerViewModel(
         // transport gate.
         if (roomId != null) return
         // Recorded before the once-per-item guard below, which Keep Watching on
-        // a hand-opened Up Next also sets.
-        reachedCreditsOrEnd = true
+        // a hand-opened Up Next also sets. The before-end prompt can open while
+        // the story is still playing, so only the end counts here; the closing
+        // credits are recorded where playback crosses them.
+        if (videoEnded) reachedCreditsOrEnd = true
         if (shufflePlayback != null) {
             // A multi-part pick plays its later parts before the shuffle moves on.
             shuffleNextPartFileId?.let { fileId ->
@@ -5409,6 +5426,9 @@ class TvPlayerViewModel(
             }
             return
         }
+        // An overlay the viewer opened by hand stays theirs to choose from: the
+        // before-end point doesn't start a countdown on it. The end still does.
+        if (!videoEnded && _uiState.value.showNextUp) return
 
         val next = _uiState.value.nextEpisode
         if (next == null) {
@@ -5458,7 +5478,7 @@ class TvPlayerViewModel(
     }
 
     /**
-     * Surface Up Next on demand, ahead of the credits trigger.
+     * Surface Up Next on demand, ahead of the before-end trigger.
      *
      * Routed through the same commit the automatic timing uses so the overlay,
      * the countdown gating and the auto-advance accounting behave identically —
@@ -5516,7 +5536,7 @@ class TvPlayerViewModel(
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = viewModelScope.launch {
             // Two anchors, matching phone and tvOS:
-            //  - Card committed BEFORE the end (credits crossing): the countdown
+            //  - Card committed BEFORE the end (before-end crossing): the countdown
             //    mirrors the remaining playback time, so it freezes on pause,
             //    grows on a backward seek, and the advance fires only once the
             //    player reports the stream ended. A fixed wall clock here cut off
@@ -6621,7 +6641,7 @@ class TvPlayerViewModel(
      */
     fun onSelectIntroPrompt(): Double? {
         val target = introAutoSkipController.select() ?: return null
-        // Pre-write the resolved source position so the credits crossing check
+        // Pre-write the resolved source position so the Next Up crossing check
         // treats this as a deliberate jump. The caller routes the actual seek
         // through either the room controller or seekImmediate; the latter owns
         // the pending-position guard for solo playback.
