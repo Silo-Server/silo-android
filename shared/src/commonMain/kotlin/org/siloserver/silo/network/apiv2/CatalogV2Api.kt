@@ -14,6 +14,7 @@ import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
+import org.siloserver.silo.model.catalog.ItemCollections
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.SeasonsResponse
@@ -245,6 +246,20 @@ class CatalogV2Api(
                 artworkWidths(widths, scope)
             }
         }) { it.boxSet?.toDomain() }
+
+    /**
+     * The collections holding a movie or series, and, when only one does, some
+     * of its other titles (`listCatalogItemCollections`). Only a server whose
+     * search capabilities advertise `item_collections` has this read.
+     */
+    suspend fun itemCollections(id: String, libraryId: Int? = null, widths: ArtworkWidths? = null): ApiResult<ItemCollections> =
+        read<JsonObject, ItemCollections>({ scope ->
+            client.get("/api/v2/catalog/items/${id.encodeURLPathPart()}/collections") {
+                scope?.let { authScope(it) }
+                libraryId?.let { parameter("library_id", it) }
+                artworkWidths(widths, scope)
+            }
+        }) { decodeItemCollectionsV2(it) }
 
     /** Box sets whose name, or two or more of whose movies' titles, match [query]; best match first. */
     suspend fun searchBoxSets(query: String, limit: Int = 5): ApiResult<List<CatalogBoxSet>> {

@@ -87,6 +87,8 @@ class ApiV2ContractTest {
                     "getThemeSongsCapability" -> ApiV2Fixtures.decode<ThemeSongsCapabilityV2>(body)
                     "createThemeSongPlayback" -> ApiV2Fixtures.decode<ThemePlaybackGrantV2>(body)
                     "getWatchTrickplay" -> ApiV2Fixtures.decode<WatchTrickplayV2>(body)
+                    "getCatalogSearchCapabilities" -> ApiV2Fixtures.decode<CatalogSearchCapabilitiesV2>(body)
+                    "listCatalogItemCollections" -> decodeItemCollectionsV2(body)
                     else -> error("unhandled success fixture ${entry.name} (${entry.operationId})")
                 }
             }
@@ -628,5 +630,32 @@ class ApiV2ContractTest {
         assertEquals(listOf("Example SSO"), options.oauthProviders.map { it.displayName })
         assertNull(options.directoryProvider)
         assertNull(options.networkProvider, "a listing that didn't come through a network provider offers none")
+    }
+
+    // --- listCatalogItemCollections ---
+
+    @Test
+    fun searchCapabilitiesAdvertiseTitleCollections() {
+        val capabilities = ApiV2Fixtures.decode<CatalogSearchCapabilitiesV2>(ApiV2Fixtures.bodyObject("get_catalog_search_capabilities_ok"))
+        assertTrue(capabilities.itemCollections)
+        val older = ApiV2Fixtures.decode<CatalogSearchCapabilitiesV2>(
+            ApiV2Fixtures.with(ApiV2Fixtures.bodyObject("get_catalog_search_capabilities_ok"), "item_collections" to null),
+        )
+        assertFalse(older.itemCollections, "a server before the read advertises nothing")
+    }
+
+    @Test
+    fun titleCollectionsFixturesCarryTheCardsAndThePreview() {
+        val several = decodeItemCollectionsV2(ApiV2Fixtures.bodyObject("list_catalog_item_collections_ok"))
+        assertEquals(listOf("library:01J9Z8C3W4R5T6Y7U8I9O0P1Q2", "user:c1"), several.cards.map { it.rowKey })
+        assertEquals(1, several.cards[0].libraryIdInt)
+        assertEquals("p-owner", several.cards[1].creatorProfileId)
+        assertTrue(several.cards[1].posterIsCollage)
+        assertEquals(emptyList(), several.preview)
+
+        val one = decodeItemCollectionsV2(ApiV2Fixtures.bodyObject("list_catalog_item_collections_single_preview"))
+        assertEquals("Crime classics", one.cards.single().title)
+        assertEquals(listOf("movie:harbor-lights-2019"), one.preview.map { it.contentId })
+        assertEquals(2019, one.preview.single().year)
     }
 }
