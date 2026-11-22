@@ -191,6 +191,9 @@ import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import org.siloserver.silo.tv.ui.components.bidiIsolated
 import org.siloserver.silo.common.i18n.isRightToLeftText
 import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
+import org.siloserver.silo.common.i18n.text
 
 private const val CONTROLS_AUTO_HIDE_MS = 5_000L
 // Pre-revision-9 relative seeks: 10s back, 30s forward, matching tvOS
@@ -3348,7 +3351,7 @@ internal fun tvPlayerEyebrow(state: TvPlayerViewModel.UiState): String? {
     if (series != null) {
         val code = state.seasonNumber?.let { season ->
             state.episodeNumber?.let {
-                stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(it))
+                (state.episodeAirDate ?: EpisodeLabel.code(season, it, EpisodeCodeStyle.Colon)).text()
             }
         }
         return listOfNotNull(series, code).joinToString(" · ")
@@ -3660,11 +3663,10 @@ private fun TvPlayerNextUpOverlay(
                                 }
                                 if (nextEpisode.isEpisode) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     androidx.tv.material3.Text(
-                                        text = stringResource(
-                                            CommonR.string.upNext_episodeCode,
-                                            LocaleFormat.codeNumber(nextEpisode.seasonNumber),
-                                            LocaleFormat.codeNumber(nextEpisode.episodeNumber),
-                                        ),
+                                        text = (
+                                            nextEpisode.airDate
+                                                ?: EpisodeLabel.code(nextEpisode.seasonNumber, nextEpisode.episodeNumber, EpisodeCodeStyle.Dotted)
+                                            ).text(),
                                         color = Color.White.copy(alpha = 0.62f),
                                         style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
                                     )
@@ -4182,11 +4184,14 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
         sessionId = sessionId,
         title = title,
         // tvOS shape: "Series · S1 · E2", so remotes read the same for either TV.
-        subtitle = listOfNotNull(
-            seriesTitle?.takeIf { it.isNotBlank() },
-            seasonNumber?.let { "S$it" },
-            episodeNumber?.let { "E$it" },
-        ).joinToString(" · ").ifBlank { null },
+        // A date-labeled series (sports) sends the air date for both numbers.
+        subtitle = (
+            listOfNotNull(seriesTitle?.takeIf { it.isNotBlank() }) +
+                (
+                    episodeAirDateEnglish?.let(::listOf)
+                        ?: listOfNotNull(seasonNumber?.let { "S$it" }, episodeNumber?.let { "E$it" })
+                    )
+            ).joinToString(" · ").ifBlank { null },
         isPlaying = isPlaying && !isPaused,
         isLoading = isLoading,
         isBuffering = isBuffering,
@@ -4667,7 +4672,7 @@ private fun tvOnDeckSubtitle(item: TvOnDeckItem): String? {
     val season = item.seasonNumber
     val episode = item.episodeNumber
     if (season == null || episode == null) return item.year?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: item.subtitle
-    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
+    val code = (item.airDate ?: EpisodeLabel.code(season, episode, EpisodeCodeStyle.Dotted)).text()
     return code + (item.subtitle?.let { " — ${bidiIsolated(it, isRightToLeftText())}" } ?: "")
 }
 

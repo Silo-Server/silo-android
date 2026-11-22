@@ -160,7 +160,7 @@ data class TvMarqueeContent(
 
             val meta = mutableListOf<TvHeroFactToken>()
             if (isEpisode) {
-                episodeToken(item.seasonNumber, item.episodeNumber)?.let { meta += it }
+                episodeToken(item.seasonNumber, item.episodeNumber, item.episodeLabels, item.airDate)?.let { meta += it }
                 if (item.title.isNotBlank()) meta += TvHeroFactToken.TextToken(item.title, truncates = true)
             } else {
                 if (item.year > 0) meta += TvHeroFactToken.NumberToken(LocaleInteger(item.year))
@@ -220,8 +220,8 @@ data class TvMarqueeContent(
             )
         }
 
-        private fun episodeToken(season: Int?, episode: Int?): TvHeroFactToken? = when {
-            season != null && episode != null -> tvEpisodeTagToken(season, episode)
+        private fun episodeToken(season: Int?, episode: Int?, episodeLabels: String?, airDate: String?): TvHeroFactToken? = when {
+            season != null && episode != null -> tvEpisodeTagToken(season, episode, episodeLabels, airDate)
             season == 0 -> TvHeroFactToken.ResToken(CommonR.string.detail_specials)
             season != null -> TvHeroFactToken.ResToken(CommonR.string.home_seasonOnly, listOf(LocaleInteger(season)))
             episode != null -> TvHeroFactToken.ResToken(CommonR.string.home_episodeOnly, listOf(LocaleInteger(episode)))

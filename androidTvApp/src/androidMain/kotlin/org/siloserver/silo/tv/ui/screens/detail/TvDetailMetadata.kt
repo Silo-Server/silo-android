@@ -18,6 +18,7 @@ import java.time.ZoneId
 import android.content.res.Resources
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.LocaleInteger
+import org.siloserver.silo.model.catalog.EpisodeLabel
 
 /**
  * Pure functions that build the hero metadata for the cinematic detail
@@ -57,10 +58,15 @@ internal object TvDetailMetadata {
     fun ratingChip(detail: ItemDetail): String? =
         detail.contentRating?.trim()?.takeIf { it.isNotEmpty() }
 
-    fun seriesEpisodeSourceTokens(resources: Resources, episode: EpisodeListItem): List<String> = listOfNotNull(
+    /**
+     * "Season 1 · Episode 2". A dated episode of a date-labeled series
+     * ([episodeLabels] `air_date`, sports) leaves its synthetic episode number
+     * out: its air date already leads the facts line below.
+     */
+    fun seriesEpisodeSourceTokens(resources: Resources, episode: EpisodeListItem, episodeLabels: String? = null): List<String> = listOfNotNull(
         seasonLabel(resources, episode.seasonNumber),
         resources.getString(CommonR.string.detail_episode, LocaleFormat.integer(episode.episodeNumber))
-            .takeIf { episode.episodeNumber > 0 },
+            .takeIf { episode.episodeNumber > 0 && EpisodeLabel.airDate(episodeLabels, episode.airDate) == null },
     )
 
     /** Episode editorial facts used by the combined Series page. These mirror
@@ -139,7 +145,8 @@ internal object TvDetailMetadata {
 
     private fun episodeNumberLabel(resources: Resources, detail: ItemDetail): String? {
         val seasonPart = detail.seasonNumber?.let { n -> seasonLabel(resources, n) }
-        val episodePart = detail.episodeNumber?.takeIf { it > 0 }?.let {
+        // A date-labeled series' air date already leads the facts line; its episode number is synthetic.
+        val episodePart = detail.episodeNumber?.takeIf { it > 0 && EpisodeLabel.airDate(detail.episodeLabels, detail.airDate) == null }?.let {
             resources.getString(CommonR.string.detail_episode, LocaleFormat.integer(it))
         }
         return when {

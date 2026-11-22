@@ -183,6 +183,8 @@ internal fun TvDetailEpisodeRail(
     carouselLoadError: Boolean = false,
     onCarouselEdgeRequested: (String, Int) -> Unit = { _, _ -> },
     onCarouselFocusLost: () -> Unit = {},
+    /** The series' `episode_labels`; "air_date" (sports) leads each caption with the title, not the code. */
+    episodeLabels: String? = null,
 ) {
     if (episodes.isEmpty()) return
 
@@ -358,6 +360,7 @@ internal fun TvDetailEpisodeRail(
                 onSetWatched = { watched -> onSetWatched(episode.contentId, watched) },
                 onSetFavorite = { favorite -> onSetFavorite(episode.contentId, favorite) },
                 usesSeriesGeometry = usesSeriesGeometry,
+                episodeLabels = episodeLabels,
                 modifier = Modifier
                     .tvRailPinOnFocus(
                         listState,
@@ -444,6 +447,7 @@ private fun TvDetailEpisodeCard(
     onSetWatched: (Boolean) -> Unit,
     onSetFavorite: (Boolean) -> Unit,
     usesSeriesGeometry: Boolean,
+    episodeLabels: String?,
     modifier: Modifier = Modifier,
 ) {
     // The combined Series page uses the exact same card footprint as Home's
@@ -575,9 +579,9 @@ private fun TvDetailEpisodeCard(
         val dateLocale = currentFormatLocale()
         // A right-to-left interface isolates the title as a catalog placeholder (D28).
         val rtl = isRightToLeftText()
-        val title = remember(episode, configuration) {
+        val title = remember(episode, configuration, episodeLabels) {
             val episodeForCaption = if (rtl) episode else episode.copy(title = episode.title?.trim()?.let { bidiIsolated(it, false) })
-            EpisodeCardCaption.title(episodeForCaption).text(resources)
+            EpisodeCardCaption.title(episodeForCaption, episodeLabels).text(resources)
         }
         val metadata = remember(episode, configuration, dateLocale) {
             EpisodeCardCaption.metadata(

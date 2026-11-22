@@ -73,6 +73,9 @@ fun TvEpisodeCard(
     year: Int? = null,
     seasonNumber: Int? = null,
     episodeNumber: Int? = null,
+    /** The series' `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers. */
+    episodeLabels: String? = null,
+    airDate: String? = null,
     /** Catalog item type; picks the mark on the default artwork. */
     mediaType: String? = null,
     progress: Float? = null,
@@ -187,11 +190,11 @@ fun TvEpisodeCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth(),
             )
-            val episodeTag = tvEpisodeTag(seasonNumber, episodeNumber)
+            val episodeTag = tvEpisodeTag(seasonNumber, episodeNumber, episodeLabels, airDate)
             // With the series on the line above, the episode number is what
             // separates two same-named episodes in a rail, so it leads.
             val secondaryLine = when {
-                seriesTitle != null -> tvEpisodeTitleLine(seasonNumber, episodeNumber, title)
+                seriesTitle != null -> tvEpisodeTitleLine(seasonNumber, episodeNumber, title, episodeLabels, airDate)
                 episodeTag != null -> episodeTag
                 else -> year?.let { LocaleFormat.integer(it, currentNumberLocale()) }
             }

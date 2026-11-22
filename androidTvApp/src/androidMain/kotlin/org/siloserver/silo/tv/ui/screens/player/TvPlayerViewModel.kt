@@ -212,6 +212,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.common.i18n.UiText
 
 /**
  * Always-on tag for subtitle-ownership anomalies.
@@ -826,6 +828,12 @@ data class NextEpisodeState(
     val stillIsEpisodeStill: Boolean? = null,
     val overview: String? = null,
     val seriesTitle: String? = null,
+    /** Labels the episode in place of its numbers for a date-labeled series (sports). */
+    val airDate: UiText? = null,
+    /** [airDate] in English, for the cast state once this episode plays. */
+    val airDateEnglish: String? = null,
+    /** The episode's YYYY-MM-DD air date as the server sent it, to relabel once the series' labels are known. */
+    val rawAirDate: String? = null,
     val runtimeMinutes: Int = 0,
     /** Not started by this profile; spoiler protection may hide [overview]. */
     val isUnwatched: Boolean = true,
@@ -1429,6 +1437,12 @@ class TvPlayerViewModel(
         val seriesId: String? = null,
         val seasonNumber: Int? = null,
         val episodeNumber: Int? = null,
+        /** The series' `episode_labels` ("air_date" for sports), from the cached catalog detail. */
+        val episodeLabels: String? = null,
+        /** The air date that labels this episode in place of its numbers (a date-labeled series), else null. */
+        val episodeAirDate: UiText? = null,
+        /** [episodeAirDate] in English, for remotes that read the cast state. */
+        val episodeAirDateEnglish: String? = null,
         val nextEpisode: NextEpisodeState? = null,
         // Up Next's On Deck row: other items in progress (tvOS parity).
         val onDeckItems: List<TvOnDeckItem> = emptyList(),
@@ -2254,6 +2268,35 @@ class TvPlayerViewModel(
         }
     }
 
+    /**
+     * An episode played without its catalog detail cached (started from a
+     * series rail): read the detail in the background, never delaying
+     * playback, and label it by air date if its series is date-labeled.
+     */
+    private fun refineEpisodeLabeling(contentId: String) {
+        viewModelScope.launch {
+            val detail = (catalogRepository.getItemDetailForPrefetch(contentId) as? ApiResult.Success)?.data ?: return@launch
+            val airDate = EpisodeLabel.airDate(detail.episodeLabels, detail.airDate)
+            _uiState.update {
+                if (it.contentId != contentId) {
+                    it
+                } else {
+                    it.copy(
+                        episodeLabels = detail.episodeLabels,
+                        episodeAirDate = airDate,
+                        episodeAirDateEnglish = EpisodeLabel.englishAirDate(detail.episodeLabels, detail.airDate),
+                        nextEpisode = it.nextEpisode?.let { next ->
+                            next.copy(
+                                airDate = EpisodeLabel.airDate(detail.episodeLabels, next.rawAirDate),
+                                airDateEnglish = EpisodeLabel.englishAirDate(detail.episodeLabels, next.rawAirDate),
+                            )
+                        },
+                    )
+                }
+            }
+        }
+    }
+
     private fun nextTransportMountNonce(subtitleServerIndexToRestore: Int?): Long {
         // Media3 does not carry a live text-track override across MediaItem
         // replacement. Every same-content remount declares the stable server
@@ -2997,6 +3040,14 @@ class TvPlayerViewModel(
                                 audioTracks = emptyList(),
                             ),
                         )
+                        // /watch doesn't carry the series' episode labels yet: read the
+                        // cached catalog detail, cache-only so it never delays playback.
+                        val labelDetail = if (result.seasonNumber != null && result.episodeNumber != null) {
+                            runCatching { catalogRepository.getCachedItemDetail(contentId) }.getOrNull()
+                        } else {
+                            null
+                        }
+                        val labeling = tvEpisodeLabeling(labelDetail, contentId, result.seriesId, predecessorUi)
                         val published = loadOwners.publishReadyIfOwned(
                             owner = loadOwner,
                             sessionId = allocatedSessionId,
@@ -3085,6 +3136,9 @@ class TvPlayerViewModel(
                                 seriesId = result.seriesId,
                                 seasonNumber = result.seasonNumber,
                                 episodeNumber = result.episodeNumber,
+                                episodeLabels = labeling.episodeLabels,
+                                episodeAirDate = labeling.airDate,
+                                episodeAirDateEnglish = labeling.englishAirDate,
                                 // An in-place successor remains covered by the
                                 // outgoing card until this exact mount renders.
                                 nextEpisode = it.nextEpisode.takeIf { preservesNextUp },
@@ -3135,6 +3189,9 @@ class TvPlayerViewModel(
                             stopStaleSession = unpublishedReadySession::rollbackIfOwned,
                         )
                         if (!published) return@launch
+                        if (labeling.episodeLabels == null && result.seasonNumber != null && result.episodeNumber != null) {
+                            refineEpisodeLabeling(contentId)
+                        }
                         val publishedSessionId = allocatedSessionId
                         val jointlyConfirmed = withContext(NonCancellable) {
                             sessionLifecycle.settlePendingPublicationIfCurrent(
@@ -5379,11 +5436,25 @@ class TvPlayerViewModel(
                 stillIsEpisodeStill = next.stillIsEpisodeStill,
                 overview = next.overview,
                 seriesTitle = state.seriesTitle,
+                airDate = EpisodeLabel.airDate(state.episodeLabels, next.airDate),
+                airDateEnglish = EpisodeLabel.englishAirDate(state.episodeLabels, next.airDate),
+                rawAirDate = next.airDate,
                 runtimeMinutes = next.runtime,
                 isUnwatched = org.siloserver.silo.model.settings.EpisodeSpoilers.isUnwatched(next.userData),
             )
             _uiState.update {
-                if (it.contentId != forContentId) it else it.copy(nextEpisode = nextState)
+                // Labeled against the state current now: the series' labels may
+                // have arrived (refineEpisodeLabeling) while this resolved.
+                if (it.contentId != forContentId) {
+                    it
+                } else {
+                    it.copy(
+                        nextEpisode = nextState.copy(
+                            airDate = EpisodeLabel.airDate(it.episodeLabels, nextState.rawAirDate),
+                            airDateEnglish = EpisodeLabel.englishAirDate(it.episodeLabels, nextState.rawAirDate),
+                        ),
+                    )
+                }
             }
             if (_uiState.value.contentId != forContentId) return@launch
             // If the credits/end point already fired while we were still
@@ -8180,3 +8251,34 @@ internal fun TvPlayerViewModel.UiState.withoutPlaybackClock(): TvPlayerViewModel
 
 internal fun TvPlayerViewModel.UiState.toPlaybackClock(): PlaybackClock =
     PlaybackClock(position = position, duration = duration)
+
+/** The playing episode's series `episode_labels` and, for a date-labeled series, its air date label. */
+internal data class TvEpisodeLabeling(
+    val episodeLabels: String? = null,
+    val airDate: UiText? = null,
+    val englishAirDate: String? = null,
+)
+
+/**
+ * How to label the episode now playing: from its cached catalog [detail], or,
+ * when Up Next advanced within the same series to an episode never opened (so
+ * not cached), the series' labels the player already held and the air date the
+ * Up Next card carried.
+ */
+internal fun tvEpisodeLabeling(
+    detail: org.siloserver.silo.model.catalog.ItemDetail?,
+    contentId: String,
+    seriesId: String?,
+    predecessor: TvPlayerViewModel.UiState,
+): TvEpisodeLabeling {
+    if (detail != null) {
+        return TvEpisodeLabeling(
+            detail.episodeLabels,
+            EpisodeLabel.airDate(detail.episodeLabels, detail.airDate),
+            EpisodeLabel.englishAirDate(detail.episodeLabels, detail.airDate),
+        )
+    }
+    if (seriesId == null || seriesId != predecessor.seriesId) return TvEpisodeLabeling()
+    val next = predecessor.nextEpisode?.takeIf { it.contentId == contentId }
+    return TvEpisodeLabeling(predecessor.episodeLabels, next?.airDate, next?.airDateEnglish)
+}

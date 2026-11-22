@@ -225,7 +225,7 @@ private fun ItemDetail.episodeSubtitle(): String? {
     val series = seriesTitle?.takeIf { it.isNotBlank() } ?: return null
     val season = seasonNumber
     val episode = episodeNumber
-    return if (season != null && episode != null) "$series · ${watchPartyEpisodeCode(season, episode)}" else series
+    return if (season != null && episode != null) "$series · ${watchPartyEpisodeCode(season, episode, episodeLabels, airDate)}" else series
 }
 
 internal fun Suggestion.toPartyItem() = WatchPartyItem(
