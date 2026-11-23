@@ -6,6 +6,8 @@ import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.SeekIntervalStore
 import org.siloserver.silo.common.settings.TitleArtStore
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.repository.ProfileCommitResult
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.tv.watchnext.WatchNextSeeder
 
@@ -24,10 +26,11 @@ class TvActiveProfileReset(
     private val episodeSpoilerStore: EpisodeSpoilerStore,
     private val watchNextSeeder: WatchNextSeeder,
 ) {
-    suspend fun clearActiveProfile() {
+    /** With [expectedScope], clears only while that scope is still the live identity. */
+    suspend fun clearActiveProfile(expectedScope: AuthScopeSnapshot? = null) {
         // The profile id and its PIN proof go together, so a protected
         // profile asks for its PIN again.
-        profileRepository.clearProfile()
+        if (profileRepository.clearProfile(expectedScope) != ProfileCommitResult.Committed) return
         clearProfileCaches()
     }
 

@@ -328,14 +328,30 @@ open class ProfileRepository(
             current.identityGeneration == pinned.identityGeneration + transitionsSinceCheck
     }
 
-    /** Clears the active profile selection and its token. */
-    suspend fun clearProfile() {
+    /**
+     * Clears the active profile selection and its token.
+     *
+     * With [expectedScope], the clear is fenced like [selectProfile]: it
+     * happens only while that scope is still the live identity, so undoing
+     * one's own selection can't reach an account, profile or remote-playback
+     * identity that replaced it meanwhile.
+     */
+    suspend fun clearProfile(expectedScope: AuthScopeSnapshot? = null): ProfileCommitResult {
+        var result = ProfileCommitResult.Committed
+        val generationBeforeTransition = identityTransitions.generation.value
         identityTransitions.changing(IdentityTransitionKind.PROFILE_SWITCH) {
+            if (expectedScope != null &&
+                (tokenManager.hasTemporaryScope() || !identityScopeStillHolds(expectedScope, generationBeforeTransition))
+            ) {
+                result = ProfileCommitResult.ScopeChanged
+                return@changing
+            }
             val activeServerId = tokenManager.getCurrentServerId()
             tokenManager.setProfileIdentity(null, null)
             if (activeServerId != null) {
                 serverRegistry?.setProfileId(activeServerId, null)
             }
         }
+        return result
     }
 }
