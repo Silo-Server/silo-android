@@ -78,6 +78,7 @@ import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.EpisodeCardCaption
+import org.siloserver.silo.model.catalog.EpisodeLabel
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
@@ -579,8 +580,15 @@ private fun TvDetailEpisodeCard(
         val dateLocale = currentFormatLocale()
         // A right-to-left interface isolates the title as a catalog placeholder (D28).
         val rtl = isRightToLeftText()
-        val title = remember(episode, configuration, episodeLabels) {
-            val episodeForCaption = if (rtl) episode else episode.copy(title = episode.title?.trim()?.let { bidiIsolated(it, false) })
+        // A date-labeled series' title stands alone (no code before it), so it
+        // stays bare and its own script sets the direction; an untitled one
+        // shows its air date, hence the date locale key.
+        val title = remember(episode, configuration, episodeLabels, dateLocale) {
+            val episodeForCaption = if (rtl || EpisodeLabel.labelsByAirDate(episodeLabels)) {
+                episode
+            } else {
+                episode.copy(title = episode.title?.trim()?.let { bidiIsolated(it, false) })
+            }
             EpisodeCardCaption.title(episodeForCaption, episodeLabels).text(resources)
         }
         val metadata = remember(episode, configuration, dateLocale) {

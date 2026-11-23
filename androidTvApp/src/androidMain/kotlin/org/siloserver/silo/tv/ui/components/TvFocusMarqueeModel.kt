@@ -14,6 +14,7 @@ import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.LocaleInteger
 import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.model.catalog.EpisodeLabel
 import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.OverlaySummary
@@ -336,7 +337,10 @@ data class TvMarqueeEnrichment(
                 backdropUrl = detail.backdropUrl?.takeIf { it.isNotBlank() },
                 backdropThumbhash = detail.backdropThumbhash,
                 backdropIsEpisodeStill = detail.backdropIsEpisodeStill,
-                airDate = detail.airDate?.takeIf { airDateText(it) != null },
+                // A date-labeled game's date already leads the meta row.
+                airDate = detail.airDate?.takeIf {
+                    airDateText(it) != null && EpisodeLabel.airDate(detail.episodeLabels, it) == null
+                },
             )
         }
 

@@ -6990,7 +6990,6 @@ class PlayerViewModel(
         return MobileEpisodeSubtitle(series, season, episode, watchDetail.episodeLabels, watchDetail.airDate)
     }
 
-
     /** English, for state and logs; [displaySubtitle] shows the episode line translated. */
     private fun buildSubtitle(watchDetail: org.siloserver.silo.model.catalog.WatchDetail): String {
         return if (watchDetail.seriesTitle != null && watchDetail.seasonNumber != null && watchDetail.episodeNumber != null) {

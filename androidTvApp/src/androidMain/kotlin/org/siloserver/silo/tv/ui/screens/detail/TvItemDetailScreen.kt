@@ -177,6 +177,7 @@ import org.siloserver.silo.common.audiobook.AudiobookText
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
 
 internal data class TvSeriesDetailRedirect(
     val seriesContentId: String,
@@ -1985,7 +1986,7 @@ private fun HeroActionRow(
                     detail.seriesTitle,
                     // Sent to the server for the party: English data.
                     detail.seasonNumber?.let { season ->
-                        detail.episodeNumber?.let { EpisodeLabel.englishText(season, it, detail.episodeLabels, detail.airDate) }
+                        detail.episodeNumber?.let { EpisodeLabel.englishText(season, it, detail.episodeLabels, detail.airDate, EpisodeCodeStyle.Plain) }
                     },
                 ).joinToString(" · ")
             } else {
@@ -2003,7 +2004,9 @@ private fun HeroActionRow(
             // member, so its fallback text stays English data.
             title = nextUp.title?.takeIf { it.isNotBlank() } ?: "Episode ${nextUp.episodeNumber}",
             subtitle = "${detail.title} · " +
-                EpisodeLabel.englishText(nextUp.seasonNumber, nextUp.episodeNumber, detail.episodeLabels, nextUp.airDate),
+                EpisodeLabel.englishText(
+                    nextUp.seasonNumber, nextUp.episodeNumber, detail.episodeLabels, nextUp.airDate, EpisodeCodeStyle.Plain,
+                ),
             posterUrl = nextUp.stillUrl ?: detail.posterUrl,
             fileId = selectedFileId,
             libraryId = libraryId,

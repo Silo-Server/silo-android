@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.cast
 
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
+import org.siloserver.silo.model.catalog.EpisodeLabel
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
@@ -45,11 +47,15 @@ internal suspend fun resolveCastArtwork(
 internal fun castDisplayTitle(detail: ItemDetail): String? {
     val series = detail.seriesTitle?.takeIf { detail.type == "episode" && it.isNotBlank() }
         ?: return detail.title.takeIf { it.isNotBlank() }
-    return listOfNotNull(
-        series,
-        detail.seasonNumber?.let { "S$it" },
-        detail.episodeNumber?.let { "E$it" },
-    ).joinToString(" · ")
+    val season = detail.seasonNumber
+    val episode = detail.episodeNumber
+    // A date-labeled series (sports) names the game by its air date, as the TV does.
+    val code = if (season != null && episode != null) {
+        listOf(EpisodeLabel.englishText(season, episode, detail.episodeLabels, detail.airDate, EpisodeCodeStyle.Spaced))
+    } else {
+        listOfNotNull(season?.let { "S$it" }, episode?.let { "E$it" })
+    }
+    return (listOf(series) + code).joinToString(" · ")
 }
 
 private suspend fun CatalogRepository.detailOrNull(contentId: String): ItemDetail? =
