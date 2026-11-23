@@ -134,7 +134,8 @@ class AndroidPushRegistrar internal constructor(
         val behind = installations().filter {
             val registration = it.intent.registration
             it.deviceId == device && it.intent.serverId != exceptServerId && it.refusal == null &&
-                registration != null && (registration.token != token || !it.acknowledged || it.bindingCheckDue(time))
+                registration != null && (registration.token != token || (!it.acknowledged && !it.rebindReplayRefused) ||
+                    it.bindingCheckDue(time))
         }
         for (installation in behind) {
             // Before asking: a server that cannot bind yet, or never answers, gets no
@@ -575,6 +576,9 @@ class AndroidPushRegistrar internal constructor(
                         it.intent.profileId != intent.profileId || it.intent.profileToken != intent.profileToken)) {
                     return failure("push_previous_intent_uncertain")
                 }
+                // A rebinding whose replay was refused would get the same answer again,
+                // so it stays as it is until a new intent supersedes it.
+                if (it.rebindReplayRefused && !it.ownerLeaving && it.intent == intent) return ApiResult.Success(it.receipt)
                 if (it.acknowledged && sameRegistration && !rebinding) {
                     // A record from before accounts takes the login's account here too,
                     // without a request: the server holds the same registration.
@@ -623,12 +627,12 @@ class AndroidPushRegistrar internal constructor(
                         settle { stored -> previous.copy(ownerLeaving = stored.ownerLeaving, rebindRefused = result.code != 401) }
                     } else if (entry === previous && previous?.rebindingUnconfirmed == true) {
                         // A replay of a rebinding an earlier send may have applied, so it can't
-                        // go back to the generation before it. It stays as it is: the server
-                        // holds this generation or the one before, the same registration either
-                        // way, so it is still read, still removed above both at sign-out, and
-                        // any new intent supersedes it. Until then it is retried like any
-                        // uncertain intent.
-                        Unit
+                        // go back to the generation before it. It stays pending with its
+                        // receipt: still read, still removed above it at sign-out, and
+                        // superseded by any new intent. A 401 may only be a token that expired
+                        // meanwhile, so that one is asked again; any other refusal would come
+                        // back the same, so it is not sent again.
+                        if (result.code != 401) settle { it.copy(rebindRefused = true) }
                     } else {
                         // No generation rebase or replacement secret after a definite refusal.
                         settle { it.copy(refusal = "push_registration_refused") }

@@ -32,8 +32,8 @@ server did not advertise it) therefore gets one more generation for its unchange
 intent, once its server advertises it. This rebinding departs from the rules above
 in three ways: an acknowledged, unchanged intent sends a request and advances the
 generation, a new intent may supersede it while it is uncertain, because it only
-repeats what the server already holds, and a definite refusal of it does not stop
-it. It keeps its receipt until the new one arrives, so pushes stay readable, and
+repeats what the server already holds, and a definite refusal of it never marks the
+registration refused. It keeps its receipt until the new one arrives, so pushes stay readable, and
 retries the exact generation until acknowledged.
 A definite refusal of a first rebinding is the one refusal that rebases: the
 server refuses before applying anything, and nothing earlier sent that generation,
@@ -41,10 +41,9 @@ so it still holds the generation the rebinding replaced, and the record returns 
 that acknowledged generation and receipt. After a 403, 409 or
 422 it is not rebound again; the next ordinary registration binds it. A 401 is
 asked again later. A refused replay of an uncertain rebinding cannot return to the
-generation before it, since an earlier send may have applied, so it stays uncertain
-with its receipt: the server holds that generation or the one before, the same
-registration either way. It is still read, removed above both at sign-out, and
-superseded by any new intent, and until then it is retried like any uncertain intent.
+generation before it, since an earlier send may have applied, so it stays pending
+with its receipt. It is still read, removed above it at sign-out, and superseded by
+any new intent. After a 403, 409 or 422 it is not sent again; a 401 is asked again.
 A saved server that is not active is asked at most daily whether it can be rebound;
 a rebinding already uncertain retries like any other uncertain intent. A removal or
 a login on its way out is never sent again this way.

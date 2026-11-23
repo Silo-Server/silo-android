@@ -48,8 +48,9 @@ internal data class PushInstallation(
     /** When a saved server that is not active was last asked about binding. */
     val bindingCheckedAtMs: Long = 0,
     /**
-     * The server refused this record's rebinding for good, and it went back to the
-     * registration it held. The next ordinary registration binds it instead.
+     * The server refused this record's rebinding for good. A first rebinding went back
+     * to the registration it held; a replay of one stays pending and is not sent again
+     * ([rebindReplayRefused]). The next ordinary registration binds it instead.
      */
     val rebindRefused: Boolean = false,
 ) {
@@ -72,6 +73,10 @@ internal data class PushInstallation(
      */
     val rebindingUnconfirmed: Boolean
         get() = !acknowledged && receipt != null && intent.registration != null
+
+    /** A rebinding whose replay the server refused for good: kept, but never sent again. */
+    val rebindReplayRefused: Boolean
+        get() = rebindingUnconfirmed && rebindRefused
 
     /** The server delivers to this registration: it confirmed it, or the same one before a rebinding. */
     val deliversPushes: Boolean

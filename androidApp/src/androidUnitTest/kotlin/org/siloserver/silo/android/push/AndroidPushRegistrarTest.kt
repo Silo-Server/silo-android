@@ -258,6 +258,24 @@ class AndroidPushRegistrarTest {
         assertIs<ApiResult.Success<Unit>>(registrar().unregisterDevice("server").result)
         assertEquals(listOf(1L,2L,2L,3L),generations)
     }
+    @Test fun anUncertainRebindRefusedOnReplayIsNotSentAgainUntilANewIntent()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        uncertain=true; registrar().registerIfAvailable(); uncertain=false
+        failCode=403; registrar().registerIfAvailable(); failCode=null
+        assertIs<ApiResult.Success<*>>(registrar().registerIfAvailable()); registrar().registerIfAvailable()
+        assertEquals(listOf(1L,2L,2L),generations); assertTrue(store.entries.single().deliversPushes)
+        // A rotated token supersedes it at the next generation.
+        registrar().registerToken("b".repeat(80)); assertEquals(listOf(1L,2L,2L,3L),generations)
+        assertTrue(store.entries.single().acknowledged)
+    }
+    @Test fun aSavedServerWhoseRebindReplayWasRefusedIsNotSentItAgain()=runTest {
+        savedServerAwaitingBinding()
+        uncertain=true; registrar().registerOtherServersIfBehind(); uncertain=false
+        failCode=403; registrar().registerOtherServersIfBehind(); failCode=null
+        capabilityChecks=0; registrar().registerOtherServersIfBehind(); registrar().registerOtherServersIfBehind()
+        assertEquals(0,capabilityChecks); assertEquals(listOf(1L,2L,2L),generations)
+        assertTrue(store.entries.single { it.serverUrl=="https://cabin.invalid" }.deliversPushes)
+    }
     @Test fun anUncertainRebindRefusedOnReplayWithAnExpiredTokenIsAskedAgain()=runTest {
         registrar().registerToken(token); upgradedFromOlderApp()
         uncertain=true; registrar().registerIfAvailable(); uncertain=false
