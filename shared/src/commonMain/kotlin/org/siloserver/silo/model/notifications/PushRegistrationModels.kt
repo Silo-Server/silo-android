@@ -11,6 +11,13 @@ data class PushDeviceRegisterRequest(
     @SerialName("push_mode") val pushMode: String = "private_push",
 ) { override fun toString() = "PushDeviceRegisterRequest(<redacted>)" }
 
+/** What a server's push registration capabilities report for this client. */
+data class PushRegistrationCapability(
+    val registrationAvailable: Boolean,
+    /** A registration at a new generation records the calling login session. False on servers that predate it. */
+    val bindsLoginSession: Boolean,
+)
+
 @Serializable
 data class PushDeviceRegisterResponse(
     val id: String,

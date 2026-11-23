@@ -44,6 +44,17 @@ class PushTargetResolverTest {
     }
 
     @Test
+    fun `a push stays readable while its registration is being bound to the login session`() = runTest {
+        // Allocated, not yet confirmed: the server delivers either way, for the same login and profile.
+        installations = installations.map { if (it.intent.serverId == "home") it.copy(generation = it.generation + 1, acknowledged = false) else it }
+        assertEquals("home", resolver.resolve(PushIssuer("deploy-home", "kids"))?.serverEntryId)
+
+        // A first registration still pending has no receipt, and the server may not know this device.
+        installations = installations.map { if (it.intent.serverId == "home") it.copy(receipt = null) else it }
+        assertNull(resolver.resolve(PushIssuer("deploy-home", "kids")))
+    }
+
+    @Test
     fun `a registration without a recorded identity is matched by what its saved address answers`() = runTest {
         entries.value = listOf(home, cabin.copy(verifiedServerId = null))
         answeredIdentity[cabin.url] = "deploy-cabin"
