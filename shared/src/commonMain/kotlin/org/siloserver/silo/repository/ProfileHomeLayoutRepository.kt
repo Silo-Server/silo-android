@@ -69,9 +69,27 @@ class ProfileHomeLayoutRepository(
         return result
     }
 
+    /**
+     * After a failed [save] for [owner]: the rows the server now has, or null
+     * when they can't be read. A save whose reply was lost may still have
+     * landed; when the rows match [expected], Home re-reads as after a save.
+     */
+    suspend fun readBack(
+        owner: AuthScopeSnapshot,
+        expected: List<ProfileSectionSetting>,
+    ): List<ProfileSectionSetting>? {
+        val rows = (api.homeSettings(owner) as? ApiResult.Success)?.data ?: return null
+        if (rows.sameLayoutAs(expected)) changes.changed()
+        return rows
+    }
+
     // No message, so the editor shows its own translated load error.
     private fun noProfile() = ApiResult.Error(0, "identity_changed", "")
 }
 
 @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 private fun newOverrideId(): String = kotlin.uuid.Uuid.random().toString()
+
+/** The same rows in the same order, each shown or hidden alike. */
+fun List<ProfileSectionSetting>.sameLayoutAs(other: List<ProfileSectionSetting>): Boolean =
+    map { it.id to it.hidden } == other.map { it.id to it.hidden }

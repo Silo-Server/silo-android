@@ -3,11 +3,13 @@ package org.siloserver.silo.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.siloserver.silo.common.i18n.SharedString
@@ -17,6 +19,7 @@ import org.siloserver.silo.model.section.ProfileSectionSetting
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.repository.ProfileHomeLayoutRepository
+import org.siloserver.silo.repository.sameLayoutAs
 
 data class HomeSectionsEditorState(
     val isLoading: Boolean = true,
@@ -114,19 +117,34 @@ class HomeSectionsEditorViewModel(private val repository: ProfileHomeLayoutRepos
         _state.update { it.copy(rows = next, saveError = null) }
         val edit = ++rowsGeneration
         viewModelScope.launch {
-            saves.withLock {
-                val result = repository.save(owner, next, baseline = confirmed)
-                if (result is ApiResult.Success) {
-                    confirmed = next
-                    _state.update { it.copy(saveError = null) }
-                } else {
+            // Leaving Settings clears this ViewModel; a change the user
+            // already sees saved must still reach the server.
+            withContext(NonCancellable) {
+                saves.withLock {
+                    val result = repository.save(owner, next, baseline = confirmed)
+                    if (result is ApiResult.Success) {
+                        confirmed = next
+                        _state.update { it.copy(saveError = null) }
+                        return@withLock
+                    }
+                    // The reply can be lost after the server stored the
+                    // change, so read back what it has instead of assuming
+                    // the old rows.
+                    val serverRows = repository.readBack(owner, next)
+                    if (serverRows != null) confirmed = serverRows
+                    val landed = serverRows?.sameLayoutAs(next) == true
+                    // A later change or reload carries this one and reports
+                    // its own outcome; only the latest change goes back to
+                    // what the server has and says it failed.
+                    val latest = edit == rowsGeneration
                     _state.update { state ->
                         state.copy(
-                            // A later change carries this one and saves the
-                            // whole list itself; only the last change's list
-                            // goes back, to what the server has.
-                            rows = if (edit == rowsGeneration) confirmed else state.rows,
-                            saveError = result.errorText(SharedString.HomeEditorSaveFailed),
+                            rows = if (latest) confirmed else state.rows,
+                            saveError = when {
+                                !latest -> state.saveError
+                                landed -> null
+                                else -> result.errorText(SharedString.HomeEditorSaveFailed)
+                            },
                         )
                     }
                 }

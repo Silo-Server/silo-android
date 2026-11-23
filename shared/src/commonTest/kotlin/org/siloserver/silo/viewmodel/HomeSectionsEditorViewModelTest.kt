@@ -30,12 +30,15 @@ class HomeSectionsEditorViewModelTest {
         {"id":"ov-recent","section_id":"recent","position":null,"hidden":false,"removed":false,"section_type":"","title":"New this week","featured":null,"item_limit":null,"is_user_added":false,"user_section_type":"","user_title":"","created_at":null,"updated_at":null},
         {"id":"ov-gone","section_id":"gone","position":null,"hidden":false,"removed":true,"section_type":"","title":"","featured":null,"item_limit":null,"is_user_added":false,"user_section_type":"","user_title":"","created_at":null,"updated_at":null}
     ]}"""
+    private var settingsBody = settings
     private var putStatus = HttpStatusCode.NoContent
     /** Statuses for the next PUTs in turn; [putStatus] once they run out. */
     private val putStatuses = ArrayDeque<HttpStatusCode>()
     private var putGate: CompletableDeferred<Unit>? = null
     private var settingsReads = 0
     private var settingsStatus = HttpStatusCode.OK
+    /** Settings the server returns after the next PUT, stored even when the PUT's reply is an error. */
+    private var settingsAfterPut: String? = null
     private val puts = mutableListOf<JsonElement>()
     private val changes = HomeLayoutChanges()
 
@@ -48,12 +51,13 @@ class HomeSectionsEditorViewModelTest {
                 when {
                     request.method == HttpMethod.Put -> {
                         puts += Json.parseToJsonElement((request.body as TextContent).text)
+                        settingsAfterPut?.let { settingsBody = it }
                         putGate?.await()
                         respond("", putStatuses.removeFirstOrNull() ?: putStatus)
                     }
                     request.url.encodedPath.endsWith("/settings") -> {
                         settingsReads++
-                        if (settingsStatus == HttpStatusCode.OK) respond(settings, HttpStatusCode.OK, json)
+                        if (settingsStatus == HttpStatusCode.OK) respond(settingsBody, HttpStatusCode.OK, json)
                         else respond("", settingsStatus)
                     }
                     else -> respond(overrides, HttpStatusCode.OK, json)
@@ -123,6 +127,25 @@ class HomeSectionsEditorViewModelTest {
         assertEquals(listOf("recent", "continue"), vm.state.value.rows.map { it.id })
         assertNotNull(vm.state.value.saveError)
         assertEquals(0L, changes.revision.value)
+    }
+
+    // The PUT is not retried, so an error can arrive after the server stored
+    // the change. The editor shows what the server has, not the old rows.
+    @Test
+    fun aSaveTheServerStoredDespiteAnErrorReplyKeepsTheNewRows() = scenario { vm ->
+        runCurrent()
+        putStatus = HttpStatusCode.GatewayTimeout
+        settingsAfterPut = """{"items":[
+            {"id":"continue","section_type":"continue_watching","title":"Continue Watching","default_title":"Continue Watching","hidden":false,"is_custom":false,"position":0},
+            {"id":"recent","section_type":"recently_added","title":"New this week","default_title":"Recently Added","hidden":false,"is_custom":false,"position":1}
+        ]}"""
+
+        vm.move("continue", -1)
+        runCurrent()
+
+        assertEquals(listOf("continue", "recent"), vm.state.value.rows.map { it.id })
+        assertNull(vm.state.value.saveError)
+        assertEquals(1L, changes.revision.value, "Home re-reads the layout that landed")
     }
 
     @Test
