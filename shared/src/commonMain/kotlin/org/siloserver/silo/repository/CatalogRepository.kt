@@ -264,6 +264,14 @@ class CatalogRepository(
         catalogApi.getItemBoxSet(contentId, libraryId, artwork.request(ArtworkSurface.SIMILAR))
 
     /**
+     * The collections holding [contentId], for the collections row on a movie
+     * or series page. Live only, like [getItemBoxSet]; the cards are sized as
+     * a poster rail.
+     */
+    suspend fun getItemCollections(contentId: String, libraryId: Int? = null): ApiResult<org.siloserver.silo.model.catalog.ItemCollections> =
+        catalogApi.getItemCollections(contentId, libraryId, artwork.request(ArtworkSurface.SIMILAR))
+
+    /**
      * Box sets matching a search, best match first. Box sets only come from
      * libraries with box sets in search, and a failed read answers none, so it
      * never fails the search it sits beside.

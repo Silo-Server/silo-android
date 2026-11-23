@@ -4,15 +4,12 @@ import org.siloserver.silo.android.ui.components.areAllAudiobooks
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import org.koin.compose.koinInject
 import org.siloserver.silo.android.ui.components.CollectionPosterRow
+import org.siloserver.silo.android.ui.components.rememberCollectionOwnerName
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.section.SectionCollectionCard
-import org.siloserver.silo.network.ServerRegistry
 import androidx.compose.ui.Modifier
 import org.siloserver.silo.android.ui.components.CardStyle
 import org.siloserver.silo.android.ui.components.MediaCardActions
@@ -124,24 +121,13 @@ private fun HomeCollectionRow(
     showCounts: Boolean,
     modifier: Modifier,
 ) {
-    val serverRegistry: ServerRegistry = koinInject()
-    val activeAccount by serverRegistry.activeAccount.collectAsState()
-    val activeEntry by serverRegistry.activeEntry.collectAsState()
-    val viewerId = activeEntry?.profileId ?: activeProfileId
-    val profileNames = remember(activeAccount) {
-        activeAccount?.cachedProfiles.orEmpty()
-            .filter { it.name.isNotBlank() }
-            .associate { it.id to it.name }
-    }
+    val ownerName = rememberCollectionOwnerName(activeProfileId)
     CollectionPosterRow(
         title = sectionTitle(section),
         cards = section.collections,
         onCardClick = onCollectionClick,
         byline = { card ->
-            val ownerName = card.creatorProfileId
-                ?.takeIf { card.isUserCollection && viewerId != null && it != viewerId }
-                ?.let { profileNames[it] }
-            ownerName?.let { stringResourceWithNames(CommonR.string.collections_posterCard_byOwner, it) }
+            ownerName(card)?.let { stringResourceWithNames(CommonR.string.collections_posterCard_byOwner, it) }
         },
         modifier = modifier,
         showCounts = showCounts,

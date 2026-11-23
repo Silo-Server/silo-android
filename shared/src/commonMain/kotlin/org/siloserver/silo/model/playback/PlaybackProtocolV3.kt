@@ -60,6 +60,16 @@ const val HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE = "hls_subtitle_renditions_all_
 const val PLAN_ACTIVE_QUALITY_V1_FEATURE = "plan_active_quality_v1"
 
 /**
+ * The client leaves the player with its own paused-too-long notice when the
+ * server ends a session that stayed paused past the admin limit: progress and
+ * replans then answer 410 `playback_session_paused_timeout` instead of
+ * `playback_session_ended`. Attempt-sticky on the server. Phone and TV video
+ * starts send it ([playbackClientFeaturesV3]); Cast and audiobook starts,
+ * which the server does not time out, do not.
+ */
+const val PAUSED_TIMEOUT_V1_FEATURE = "paused_timeout_v1"
+
+/**
  * The server keeps learned bandwidth limits and accepts
  * `bandwidth_estimate_source` and `learned_limit` on start and replan. The
  * server advertises it in the `/api/v2` capability `features`; only then does
@@ -187,8 +197,13 @@ val PLAYBACK_START_CLIENT_FEATURES_V3 = listOf(
  * advertises the feature and enumerates real per-codec channel layouts, so
  * claiming it with an empty entry list would be a claim we cannot back.
  */
-fun playbackClientFeaturesV3(context: ClientPlaybackContext): List<String> = buildList {
+fun playbackClientFeaturesV3(
+    context: ClientPlaybackContext,
+    /** Whether to send [PAUSED_TIMEOUT_V1_FEATURE]: true only for this device's own video player. */
+    pausedTimeout: Boolean = false,
+): List<String> = buildList {
     addAll(PLAYBACK_START_CLIENT_FEATURES_V3)
+    if (pausedTimeout) add(PAUSED_TIMEOUT_V1_FEATURE)
     if (!context.deliveries[DELIVERY_CLASS_ORIGINAL_HTTP]?.subtitles?.nativeEmbedded.isNullOrEmpty()) {
         add(EMBEDDED_SUBTITLES_V1_FEATURE)
     }
@@ -995,6 +1010,19 @@ private fun isCanonicalContainerTrackId(id: String?): Boolean {
 }
 
 /**
+ * [row]'s track in the file an `original_http` stream plays unmodified, the
+ * `Format.id` Media3 gives that track, or null. Any other delivery is a stream
+ * the server made, whose tracks the file's IDs do not name. Listing a track
+ * this way says nothing about whether the player may switch to it; see
+ * [nativeSwitchTrackId].
+ */
+fun PlaybackPlanV3.sourceContainerTrackId(row: PlaybackSubtitleInventoryItemV3): String? {
+    if (delivery != PlaybackDelivery.ORIGINAL_HTTP || row.source != "embedded") return null
+    val trackId = row.containerTrackId?.takeIf(::isCanonicalContainerTrackId) ?: return null
+    return trackId.takeIf { id -> subtitle.inventory.count { it.containerTrackId == id } == 1 }
+}
+
+/**
  * The container track the player may switch [row] to on the `original_http`
  * stream it already plays, before the server answers, or null.
  *
@@ -1010,10 +1038,8 @@ private fun isCanonicalContainerTrackId(id: String?): Boolean {
  * Whether Media3 actually lists the track is the caller's check.
  */
 fun PlaybackPlanV3.nativeSwitchTrackId(row: PlaybackSubtitleInventoryItemV3): String? {
-    if (delivery != PlaybackDelivery.ORIGINAL_HTTP || subtitle.mode == PlaybackSubtitleModeV3.BURN_IN) return null
-    if (row.source != "embedded") return null
-    val trackId = row.containerTrackId?.takeIf(::isCanonicalContainerTrackId) ?: return null
-    if (subtitle.inventory.count { it.containerTrackId == trackId } != 1) return null
+    if (subtitle.mode == PlaybackSubtitleModeV3.BURN_IN) return null
+    val trackId = sourceContainerTrackId(row) ?: return null
     val selectable = when {
         row.nativeSelectable != null -> row.nativeSelectable
         row.streamIndex != null -> false

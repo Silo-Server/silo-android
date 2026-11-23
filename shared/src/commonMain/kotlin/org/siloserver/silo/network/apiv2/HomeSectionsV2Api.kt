@@ -28,10 +28,16 @@ internal fun decodeSectionV2(row: JsonObject): ResolvedSection {
     )
     require(section.id.isNotBlank() && section.items.all { it.contentId.isNotBlank() }) { "Blank section identity." }
     if (cardElements.isNullOrEmpty()) return section
-    // Each card decodes on its own. A card this client can't read or open is
-    // left out, as the server leaves out one the viewer can't see; the rest of
-    // the row, and of Home, still shows.
-    val cards = cardElements.mapNotNull { element ->
+    return section.copy(collections = decodeCollectionCardsV2(cardElements))
+}
+
+/**
+ * Collection cards, each decoded on its own. A card this client can't read or
+ * open is left out, as the server leaves out one the viewer can't see; the
+ * rest of the row, and of the page, still shows.
+ */
+internal fun decodeCollectionCardsV2(elements: JsonArray): List<SectionCollectionCard> =
+    elements.mapNotNull { element ->
         try {
             SiloJson.decodeFromJsonElement<SectionCollectionCard>(element).takeIf { it.isOpenable }
         } catch (_: SerializationException) {
@@ -40,8 +46,6 @@ internal fun decodeSectionV2(row: JsonObject): ResolvedSection {
             null
         }
     }.distinctBy { it.rowKey }
-    return section.copy(collections = cards)
-}
 
 internal fun decodeSectionsV2(body: JsonObject): SectionsResponse {
     val rows = body["sections"] as? JsonArray ?: throw IllegalArgumentException("Missing sections.")

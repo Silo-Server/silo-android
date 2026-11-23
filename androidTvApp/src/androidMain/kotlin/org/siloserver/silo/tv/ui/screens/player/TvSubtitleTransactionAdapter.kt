@@ -17,6 +17,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import androidx.annotation.StringRes
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.player.PlaybackQualityPair
+import org.siloserver.silo.common.player.PlaybackServerEnd
+import org.siloserver.silo.common.player.playbackServerEnd
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackTrackSelectionWriteCoordinator
@@ -41,8 +43,10 @@ import org.siloserver.silo.model.playback.SubtitleTransitionEvent
 import org.siloserver.silo.model.playback.SubtitleTransitionState
 import org.siloserver.silo.model.playback.UpdateAudioPreference
 import org.siloserver.silo.model.playback.UpdateQualityPreference
+import org.siloserver.silo.model.playback.deliveredAs
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.isServerPick
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.reduceSubtitleTransition
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
@@ -685,6 +689,22 @@ internal class TvSubtitleTransactionAdapter(
     }
 
     fun select(identity: SubtitleIdentity) {
+        // The sidecar row whose burn-in already plays: a replan would only
+        // restart the transcode for the same answer. It is still the viewer's
+        // pick, so it settles a stale failure, outranks a pending refresh and
+        // is saved like any explicit commit.
+        if (identity != transition.committed.identity &&
+            identity.playsAs(transition.committed.identity) &&
+            !hasActiveTransaction
+        ) {
+            SubDiag.log("ADAPTER select NOOP $identity plays as ${transition.committed.identity}")
+            refreshGeneration += 1
+            subtitleIntentGeneration += 1
+            failureMessage = null
+            context?.let { persist(transition.committed, it) }
+            publish()
+            return
+        }
         SubDiag.log("ADAPTER select $identity")
         mutate(SelectSubtitle(identity), explicit = true)
     }
@@ -705,7 +725,7 @@ internal class TvSubtitleTransactionAdapter(
      * re-selecting what is already on would arm a pointless remount.
      */
     fun selectAuto(identity: SubtitleIdentity) {
-        if (identity == transition.committed.identity && !hasActiveTransaction) {
+        if (identity.playsAs(transition.committed.identity) && !hasActiveTransaction) {
             SubDiag.log("ADAPTER selectAuto NOOP $identity")
             return
         }
@@ -723,8 +743,10 @@ internal class TvSubtitleTransactionAdapter(
     ) {
         val current = context ?: return
         val priorState = transition
-        if (identity == transition.committed.identity) {
-            if (identity is SubtitleIdentity.ServerBurnIn) {
+        // playsAs: a saved burn-in restores to its sidecar row, which the
+        // server may be burning in again. Nothing is mounted for a burn-in.
+        if (identity.playsAs(transition.committed.identity)) {
+            if (transition.committed.identity is SubtitleIdentity.ServerBurnIn) {
                 if (migrationRequired) persist(transition.committed, current)
             } else {
                 // mutate() refuses to touch local state while a publication is
@@ -1680,7 +1702,7 @@ internal class TvSubtitleTransactionAdapter(
         val rollbackOutputRouteGeneration = committedOutputRouteGeneration
         val freshRestore = pendingFreshRestore
             ?.takeIf { it.generation < validatedState.nextGeneration }
-            ?.takeIf { it.identity == validatedState.committed.identity }
+            ?.takeIf { it.identity.playsAs(validatedState.committed.identity) }
         val priorState = freshRestore?.priorState ?: transition.copy(pending = null)
         transition = if (validatedState.committed.identity.requiresPlayerBoundaryConfirmation()) {
             priorState
@@ -2107,11 +2129,11 @@ internal class TvSubtitleTransactionAdapter(
         ) {
             return
         }
-        if (deferred.identity != transition.committed.identity) {
+        if (!deferred.identity.playsAs(transition.committed.identity)) {
             restoreFreshPreference(deferred.identity, deferred.migrationRequired)
             return
         }
-        if (deferred.identity is SubtitleIdentity.ServerBurnIn) {
+        if (transition.committed.identity is SubtitleIdentity.ServerBurnIn) {
             if (deferred.migrationRequired) persist(transition.committed, current)
             return
         }
@@ -2584,6 +2606,13 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
      * the session's quality and cap.
      */
     private val inPlayerQuality: suspend (String?) -> PlaybackQualityPair? = { null },
+    /**
+     * Called with the session a stage or commit was about when the server
+     * answers it 410 `playback_session_paused_timeout`: that session is over,
+     * so the player leaves if it still plays it. The failed transaction still
+     * settles as a failure.
+     */
+    private val onPausedTimeout: (sessionId: String) -> Unit = {},
 ) : TvSubtitleStagedReplanPort {
     override suspend fun stage(request: TvSubtitleStageRequest): ApiResult<TvStagedSubtitleCandidate> {
         val input = when (val mapped = request.toManagerStageInput()) {
@@ -2636,9 +2665,13 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
                     ),
                 )
             }
-            is ApiResult.Error -> result
+            is ApiResult.Error -> result.alsoLeaveOnPausedTimeout(request.sessionId)
             is ApiResult.NetworkError -> result
         }
+    }
+
+    private fun ApiResult.Error.alsoLeaveOnPausedTimeout(sessionId: String): ApiResult.Error = also {
+        if (playbackServerEnd() == PlaybackServerEnd.PAUSED_TIMEOUT) onPausedTimeout(sessionId)
     }
 
     override suspend fun commit(
@@ -2665,7 +2698,7 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
                     outputRouteGeneration = candidate.outputRouteGeneration,
                 ),
             )
-            is ApiResult.Error -> result
+            is ApiResult.Error -> result.alsoLeaveOnPausedTimeout(candidate.sessionId)
             is ApiResult.NetworkError -> result
         }
     }
@@ -2786,7 +2819,7 @@ private fun TvStagedSubtitleCandidate.authoritativeValidatedState(
     val committedIdentity = if (requested.identity.isClientOwnedSubtitle()) {
         validated.committed.identity
     } else {
-        selectedSubtitleIdentity ?: validated.committed.identity
+        (selectedSubtitleIdentity ?: validated.committed.identity).deliveredAs(subtitleMode)
     }
     return validated.copy(
         committed = validated.committed.copy(
@@ -2825,6 +2858,12 @@ private fun TvStagedSubtitleCandidate.validationFailure(
     is SubtitleIdentity.ServerSidecar -> when {
         selectedSubtitleIndex != identity.serverIndex ->
             TvSubtitleFailure.SubtitleNotSelected.english
+        // The server burns in a track it will not hand the client as a
+        // sidecar (an ASS track on an HLS transcode, which declares no
+        // attached-font support). The replan has already switched the
+        // session's transcode, so this is the requested track and the only
+        // answer it will give.
+        subtitleMode == PlaybackSubtitleModeV3.BURN_IN -> null
         subtitleMode != PlaybackSubtitleModeV3.RENDER &&
             subtitleMode != PlaybackSubtitleModeV3.CONVERT ->
             TvSubtitleFailure.SidecarNotRendered.english
@@ -2834,9 +2873,12 @@ private fun TvStagedSubtitleCandidate.validationFailure(
     is SubtitleIdentity.ServerBurnIn -> when {
         selectedSubtitleIndex != identity.serverIndex ->
             TvSubtitleFailure.SubtitleNotSelected.english
-        subtitleMode != PlaybackSubtitleModeV3.BURN_IN ->
-            TvSubtitleFailure.NotBurnedIn.english
-        else -> null
+        subtitleMode == PlaybackSubtitleModeV3.BURN_IN -> null
+        // A sidecar pick committed as burn-in comes back as a sidecar once a
+        // later replan (quality, audio, output route) leaves the transcode.
+        hasSidecar &&
+            (subtitleMode == PlaybackSubtitleModeV3.RENDER || subtitleMode == PlaybackSubtitleModeV3.CONVERT) -> null
+        else -> TvSubtitleFailure.NotBurnedIn.english
     }
     is SubtitleIdentity.Embedded -> if (
         selectedSubtitleIndex == identity.serverIndex &&

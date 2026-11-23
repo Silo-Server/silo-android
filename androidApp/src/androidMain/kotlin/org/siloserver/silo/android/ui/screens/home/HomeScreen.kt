@@ -144,6 +144,10 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
+        viewModel.onShown(refreshOnResume = true)
+        onPauseOrDispose { viewModel.onHidden() }
+    }
     val serverRegistry: ServerRegistry = koinInject()
     val activeServerId by serverRegistry.activeServerId.collectAsState()
     val activeEntry by serverRegistry.activeEntry.collectAsState()
