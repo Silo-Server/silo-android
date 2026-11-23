@@ -248,6 +248,40 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
+    @Test fun stopAfterAPausedTimeoutSettlesTheAttemptSoLaterStartsLeaveItAlone() = runTest {
+        val identity = Identity(); val store = Store(); var starts = 0
+        val deletes = mutableListOf<PlaybackStopV2>()
+        val ended = """{"type":"https://siloserver.org/docs/api/v2/problems/playback_session_paused_timeout",""" +
+            """"title":"Playback session paused too long","status":410,"detail":"Playback stopped because it was paused for too long."}"""
+        // The server's own stop already won: a later stop replays its receipt.
+        val serverStopId = "33333333-3333-5333-8333-333333333333"
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> { starts++; reply(decision("session-$starts"), HttpStatusCode.Created) }
+            "/api/v2/playback/session-1/progress", "/api/v2/playback/session-1/replan" -> reply(ended, HttpStatusCode.Gone)
+            "/api/v2/playback/session-1" -> {
+                deletes += SiloJson.decodeFromString<PlaybackStopV2>(req.body.toByteArray().decodeToString())
+                reply("""{"outcome":"replayed","stop_id":"$serverStopId"}""")
+            }
+            else -> error("Unexpected request ${req.url}")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request()))
+            val progress = assertIs<ApiResult.Error>(runtime.progress("session-1", 600.0, true))
+            assertEquals(410 to "playback_session_paused_timeout", progress.code to progress.error)
+            assertEquals(410, assertIs<ApiResult.Error>(runtime.replan("session-1", replanRequest())).code)
+
+            assertIs<ApiResult.Success<Unit>>(runtime.stop("session-1"))
+            assertTrue(store.entries.single { it.attemptId == "attempt-1" }.terminal)
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
+            // One stop, carrying the sample the server never accepted; the next start sends none.
+            assertEquals(1, deletes.size)
+            assertEquals(1L, deletes.single().sequence)
+        } finally { c.close() }
+    }
+
     @Test fun failedJournalWritePreventsStartDispatch() = runTest {
         val identity = Identity(); val store = Store().apply { fail = true }; var starts = 0
         val c = client { req -> when (req.url.encodedPath) {

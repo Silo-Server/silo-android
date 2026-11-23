@@ -27,7 +27,8 @@ import org.siloserver.silo.common.player.FinalPlaybackPosition
 import org.siloserver.silo.common.player.FinalPlaybackPositionWriter
 import org.siloserver.silo.common.player.Playability
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
-import org.siloserver.silo.common.player.isPlaybackSessionEnded
+import org.siloserver.silo.common.player.PlaybackServerEnd
+import org.siloserver.silo.common.player.playbackServerEnd
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.FollowedSession
 import org.siloserver.silo.common.player.NetworkQualityFollower
@@ -121,7 +122,6 @@ import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.model.playback.deliveredAs
 import org.siloserver.silo.model.playback.playsAs
-import org.siloserver.silo.playback.ADMIN_ENDED_PLAYBACK_NOTICE
 import org.siloserver.silo.playback.PlaybackMarkersUpdate
 import org.siloserver.silo.playback.PlaybackSubtitleReady
 import org.siloserver.silo.playback.PlaybackSubtitleTimingChanged
@@ -743,12 +743,16 @@ class PlayerViewModel(
     private val mobileSubtitleTransactions = MobileSubtitleTransactionAdapter(
         scope = viewModelScope,
         // An Auto picked in the player takes the saved cap for the connection.
-        stagedPort = PlaybackSessionManagerMobileSubtitleStagedReplanPort(playbackSessionManager) { preference ->
-            playerSettingsStore.inPlayerQualityPair(
-                preference,
-                tier = networkEvidenceProvider.snapshot().networkTier,
-            )
-        },
+        stagedPort = PlaybackSessionManagerMobileSubtitleStagedReplanPort(
+            playbackSessionManager,
+            inPlayerQuality = { preference ->
+                playerSettingsStore.inPlayerQualityPair(
+                    preference,
+                    tier = networkEvidenceProvider.snapshot().networkTier,
+                )
+            },
+            onPausedTimeout = { leaveServerEndedSession(PlaybackServerEnd.PAUSED_TIMEOUT) },
+        ),
         persistencePort = object : MobileSubtitlePersistencePort {
             override suspend fun persist(
                 committed: CommittedSubtitle,
@@ -821,7 +825,7 @@ class PlayerViewModel(
     // The control socket can stop the session and display a message; neither has a
     // VM-owned channel today (teardown is screen-local, notice is lifecycle-owned),
     // so expose thin ones here.
-    private val _remoteStopRequests = kotlinx.coroutines.flow.MutableSharedFlow<String?>(
+    private val _remoteStopRequests = kotlinx.coroutines.flow.MutableSharedFlow<UiText?>(
         replay = 0,
         extraBufferCapacity = 1,
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
@@ -830,7 +834,7 @@ class PlayerViewModel(
      * PlayerScreen collects this and tears the screen down (mirrors a back press),
      * showing the notice when there is one.
      */
-    val remoteStopRequests: kotlinx.coroutines.flow.SharedFlow<String?> = _remoteStopRequests.asSharedFlow()
+    val remoteStopRequests: kotlinx.coroutines.flow.SharedFlow<UiText?> = _remoteStopRequests.asSharedFlow()
 
     private var remoteMessageCounter = 0L
     private val _remoteMessage = MutableStateFlow<RemoteMessage?>(null)
@@ -1545,8 +1549,8 @@ class PlayerViewModel(
             }
         }
         viewModelScope.launch {
-            sessionLifecycle.sessionEndedEvents.collect { endedSessionId ->
-                if (_uiState.value.sessionId == endedSessionId) leaveServerEndedSession()
+            sessionLifecycle.sessionEndedEvents.collect { ended ->
+                if (_uiState.value.sessionId == ended.sessionId) leaveServerEndedSession(ended.end)
             }
         }
         viewModelScope.launch {
@@ -3008,15 +3012,18 @@ class PlayerViewModel(
                         }
                     }
                 }
-                is ApiResult.Error -> if (result.isPlaybackSessionEnded()) {
-                    leaveServerEndedSession()
-                } else {
-                    onReplanRequestFailed(
-                        classification,
-                        notice,
-                        result.message,
-                        quiet = qualityPair != null || bufferingQuality != null,
-                    )
+                is ApiResult.Error -> {
+                    val serverEnd = result.playbackServerEnd()
+                    if (serverEnd != null) {
+                        leaveServerEndedSession(serverEnd)
+                    } else {
+                        onReplanRequestFailed(
+                            classification,
+                            notice,
+                            result.message,
+                            quiet = qualityPair != null || bufferingQuality != null,
+                        )
+                    }
                 }
                 is ApiResult.NetworkError ->
                     onReplanRequestFailed(
@@ -3824,7 +3831,11 @@ class PlayerViewModel(
                                 failureMessage = SEEK_UNSUPPORTED_MESSAGE
                             }
                         }
-                        is ApiResult.Error -> if (result.error == "seek_reanchor_not_supported") {
+                        is ApiResult.Error -> if (result.playbackServerEnd() == PlaybackServerEnd.PAUSED_TIMEOUT) {
+                            // The session is over; a fallback replan would get the same answer.
+                            leaveServerEndedSession(PlaybackServerEnd.PAUSED_TIMEOUT)
+                            return
+                        } else if (result.error == "seek_reanchor_not_supported") {
                             failureMessage = SEEK_UNSUPPORTED_MESSAGE
                         } else {
                             pinnedRequest = PinnedSeekRecoveryRequest(
@@ -3908,15 +3919,21 @@ class PlayerViewModel(
                             SEEK_UNSUPPORTED_MESSAGE,
                         )
                     }
-                    is ApiResult.Error -> publishSeekFailure(
-                        request,
-                        recoveryGeneration,
-                        if (fallbackResult.error == "seek_reanchor_not_supported") {
-                            SEEK_UNSUPPORTED_MESSAGE
-                        } else {
-                            SEEK_FAILED_MESSAGE.also { Log.w(TAG, "Seek recovery failed: ${fallbackResult.message}") }
-                        },
-                    )
+                    is ApiResult.Error -> {
+                        if (fallbackResult.playbackServerEnd() == PlaybackServerEnd.PAUSED_TIMEOUT) {
+                            leaveServerEndedSession(PlaybackServerEnd.PAUSED_TIMEOUT)
+                            return
+                        }
+                        publishSeekFailure(
+                            request,
+                            recoveryGeneration,
+                            if (fallbackResult.error == "seek_reanchor_not_supported") {
+                                SEEK_UNSUPPORTED_MESSAGE
+                            } else {
+                                SEEK_FAILED_MESSAGE.also { Log.w(TAG, "Seek recovery failed: ${fallbackResult.message}") }
+                            },
+                        )
+                    }
                     is ApiResult.NetworkError -> publishSeekFailure(
                         request,
                         recoveryGeneration,
@@ -4709,16 +4726,17 @@ class PlayerViewModel(
     fun remoteUnpause() { _uiState.update { it.copy(isPaused = false) } }
     fun remoteTogglePlayPause() { onPlayPause() }
     fun remoteSeek(positionSeconds: Double) { seekImmediate(positionSeconds) }
-    fun remoteStop(notice: String? = null) { _remoteStopRequests.tryEmit(notice) }
+    fun remoteStop(notice: String? = null) { _remoteStopRequests.tryEmit(notice?.let(UiText::Raw)) }
 
     /**
      * The server ended this session for good: an administrator stopped it
-     * while the control socket could not reach this player. Leave the way a
-     * remote stop does rather than renewing into a fresh session.
+     * while the control socket could not reach this player, or it stayed
+     * paused too long. Leave the way a remote stop does, with [end]'s notice,
+     * rather than renewing into a fresh session.
      */
-    private fun leaveServerEndedSession() {
-        Log.i(TAG, "The server ended this playback session; leaving playback")
-        remoteStop(ADMIN_ENDED_PLAYBACK_NOTICE)
+    private fun leaveServerEndedSession(end: PlaybackServerEnd) {
+        Log.i(TAG, "The server ended this playback session ($end); leaving playback")
+        _remoteStopRequests.tryEmit(end.exitNotice)
     }
     // Carry a monotonic id so an identical message repeated within the toast
     // window still re-triggers (StateFlow would dedup equal values otherwise).

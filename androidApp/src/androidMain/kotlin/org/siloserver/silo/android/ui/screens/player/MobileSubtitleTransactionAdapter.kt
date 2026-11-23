@@ -15,6 +15,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.common.player.PlaybackQualityPair
+import org.siloserver.silo.common.player.PlaybackServerEnd
+import org.siloserver.silo.common.player.playbackServerEnd
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.PlaybackTrackSelectionWriteCoordinator
 import org.siloserver.silo.common.player.StagedVideoReplan
@@ -1346,6 +1348,12 @@ internal class PlaybackSessionManagerMobileSubtitleStagedReplanPort(
      * the session's quality and cap.
      */
     private val inPlayerQuality: suspend (String?) -> PlaybackQualityPair? = { null },
+    /**
+     * Called when the server answers a stage or commit with 410
+     * `playback_session_paused_timeout`: the session is over, so the player
+     * leaves. The failed transaction still settles as a failure.
+     */
+    private val onPausedTimeout: () -> Unit = {},
 ) : MobileSubtitleStagedReplanPort {
     override suspend fun stage(
         request: MobileSubtitleStageRequest,
@@ -1379,8 +1387,12 @@ internal class PlaybackSessionManagerMobileSubtitleStagedReplanPort(
                 ),
             )
         }
-        is ApiResult.Error -> result
+        is ApiResult.Error -> result.alsoLeaveOnPausedTimeout()
         is ApiResult.NetworkError -> result
+    }
+
+    private fun ApiResult.Error.alsoLeaveOnPausedTimeout(): ApiResult.Error = also {
+        if (playbackServerEnd() == PlaybackServerEnd.PAUSED_TIMEOUT) onPausedTimeout()
     }
 
     override suspend fun commit(
@@ -1401,7 +1413,7 @@ internal class PlaybackSessionManagerMobileSubtitleStagedReplanPort(
                         ?: result.data.plan.effectiveMediaFileId,
                 ),
             )
-            is ApiResult.Error -> result
+            is ApiResult.Error -> result.alsoLeaveOnPausedTimeout()
             is ApiResult.NetworkError -> result
         }
     }
