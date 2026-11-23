@@ -5,6 +5,7 @@ package org.siloserver.silo.tv.ui.screens.player
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.playback.SubtitleSyncNotice
 import android.app.Activity
 import android.content.ComponentName
@@ -624,12 +625,13 @@ fun TvPlayerScreen(
         if (staleCastLaunch) latestOnStaleCastLaunch { exitPlayer(false) {} }
     }
     // A remote "stop"/"terminate" command tears the screen down like a Back press.
-    // An administrator's stop also says why, once: a 410 for the same stop
-    // arriving after the command finds the exit already under way.
+    // An administrator's stop, or the server's end of a session paused too
+    // long, also says why, once: a 410 for the same stop arriving after the
+    // command finds the exit already under way.
     LaunchedEffect(Unit) {
         viewModel.remoteStopRequests.collect { notice ->
             if (notice != null && !exitRequested) {
-                Toast.makeText(context, notice, Toast.LENGTH_LONG).show()
+                Toast.makeText(context, notice.text(context), Toast.LENGTH_LONG).show()
             }
             stopPlaybackAndExit()
         }

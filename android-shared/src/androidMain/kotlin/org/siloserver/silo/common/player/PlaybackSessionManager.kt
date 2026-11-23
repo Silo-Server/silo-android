@@ -40,6 +40,7 @@ import org.siloserver.silo.model.playback.FAILURE_RECOVERY_V3_OPERATION
 import org.siloserver.silo.model.playback.INTENT_V3_OPERATIONS
 import org.siloserver.silo.model.playback.QUALITY_CHANGE_V3_OPERATION
 import org.siloserver.silo.model.playback.SEEK_FAILURE_RECOVERY_V3_OPERATION
+import org.siloserver.silo.model.playback.PAUSED_TIMEOUT_V1_FEATURE
 import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_FEATURE
 import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_OPERATION
 import org.siloserver.silo.model.playback.TRACK_CHANGE_V3_OPERATION
@@ -209,6 +210,11 @@ open class PlaybackSessionManager(
          * the session. Null until this attempt has replanned at least once.
          */
         val serverPlanCursor: ServerPlanCursor? = null,
+        /**
+         * Whether the start advertised [PAUSED_TIMEOUT_V1_FEATURE]. The server
+         * holds the feature for the whole attempt, so every replan repeats it.
+         */
+        val pausedTimeout: Boolean = false,
     )
 
     /** Atomic identity tuple used by control requests after a local rollback. */
@@ -531,6 +537,12 @@ open class PlaybackSessionManager(
          * was admitted through. Replans keep that cap.
          */
         allowsLocalRoute: Boolean = false,
+        /**
+         * Advertise [PAUSED_TIMEOUT_V1_FEATURE]: the caller leaves the player
+         * when the server ends a session that stayed paused too long. Only the
+         * phone and TV video players do; Cast and audiobook starts keep false.
+         */
+        pausedTimeout: Boolean = false,
     ): ApiResult<VideoSessionStartV3> = contentStartMutex.withLock {
         if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
             return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
@@ -611,7 +623,7 @@ open class PlaybackSessionManager(
                 // identical without tripping the validator. The replan path and
                 // the track id above already filter negatives the same way.
                 subtitleTrackIndex = subtitleTrackIndex?.takeIf { it >= 0 },
-                clientFeatures = playbackClientFeaturesV3(clientPlaybackContext),
+                clientFeatures = playbackClientFeaturesV3(clientPlaybackContext, pausedTimeout),
                 bandwidthCapKbps = maxBitrateKbps?.takeIf { it > 0 },
                 bandwidthEstimateKbps = probeEstimateKbps,
                 // SequencedPlayback strips the source and learned_limit for a
@@ -840,6 +852,7 @@ open class PlaybackSessionManager(
             attemptCount = 1,
             startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
             firstFrameReported = false,
+            pausedTimeout = PAUSED_TIMEOUT_V1_FEATURE in request.clientFeatures,
         ).also { rememberPlan(it, request.bandwidthEstimateKbps) } // The probe's estimate, if the start sent one.
     }
 
@@ -1194,7 +1207,7 @@ open class PlaybackSessionManager(
         // After a rollback those differ, and using the rendered plan sends a
         // retired failedPlanId that the server rejects with 409.
         val request = PlaybackReplanRequestV3(
-            clientFeatures = playbackClientFeaturesV3(currentContext),
+            clientFeatures = playbackClientFeaturesV3(currentContext, active.pausedTimeout),
             operation = operation,
             playbackAttemptId = active.playbackAttemptId,
             replanRequestId = UUID.randomUUID().toString(),
@@ -2189,7 +2202,7 @@ open class PlaybackSessionManager(
 
         val network = networkEvidenceProvider.snapshot()
         val request = PlaybackReplanRequestV3(
-            clientFeatures = playbackClientFeaturesV3(active.context),
+            clientFeatures = playbackClientFeaturesV3(active.context, active.pausedTimeout),
             operation = SEEK_REANCHOR_V3_OPERATION,
             playbackAttemptId = active.playbackAttemptId,
             replanRequestId = UUID.randomUUID().toString(),
@@ -2466,7 +2479,7 @@ open class PlaybackSessionManager(
         val nextAttemptCount = requestAttemptCount + 1
         val nextAttemptId = UUID.randomUUID().toString()
         val request = PlaybackReplanRequestV3(
-            clientFeatures = playbackClientFeaturesV3(active.context),
+            clientFeatures = playbackClientFeaturesV3(active.context, active.pausedTimeout),
             operation = SEEK_FAILURE_RECOVERY_V3_OPERATION,
             playbackAttemptId = active.playbackAttemptId,
             replanRequestId = UUID.randomUUID().toString(),

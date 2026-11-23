@@ -414,6 +414,7 @@ internal class MobileVideoPlaybackStarter(
                     expectedMetadataOwner = expectedMetadataOwner,
                     allowAlternateVersions = allowAlternateVersions,
                     allowsLocalRoute = allowsLocalRoute,
+                    pausedTimeout = true,
                 )
             ) {
                 is ApiResult.Success -> r.data
