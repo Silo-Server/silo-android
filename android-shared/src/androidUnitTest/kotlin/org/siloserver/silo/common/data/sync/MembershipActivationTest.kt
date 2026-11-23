@@ -167,6 +167,31 @@ class MembershipActivationTest {
         assertEquals(listOf(HttpMethod.Put, HttpMethod.Get, HttpMethod.Get, HttpMethod.Get), methods)
         assertEquals(1, db.dirtyOperationDao().count())
     }
+    @Test fun startupRestoreResendsOnlyARecentUnconfirmedChange() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        var online = false
+        val writes = mutableListOf<String>()
+        val client = client(MockEngine { request ->
+            when {
+                request.method == HttpMethod.Get -> respond("", HttpStatusCode.NotFound)
+                !online -> respond("", HttpStatusCode.ServiceUnavailable)
+                else -> { writes += request.url.encodedPath.substringAfterLast('/'); respond("", HttpStatusCode.NoContent) }
+            }
+        })
+        val (repository, port) = repository(client)
+        for (item in listOf("recent", "old")) {
+            val intent = repository.memberships.begin(item, MembershipPort.Kind.FAVORITE, true)
+            repository.memberships.perform(intent) // Offline: unconfirmed after its retries.
+            assertFalse(repository.memberships.confirmed(intent))
+        }
+        // The "old" choice was made long before this launch, the "recent" one just before it.
+        db.openHelper.writableDatabase.execSQL("UPDATE dirty_operations SET createdAtMs = 0 WHERE targetContentId = 'old'")
+        online = true
+        MembershipActions(port, barrier).restorePending() // The next launch, back online.
+        assertEquals(listOf("recent"), writes) // The old choice is only read; it can't overwrite a newer change.
+        assertEquals(1, db.dirtyOperationDao().count())
+    }
+
     @Test fun homeFailedFavoriteDoesNotRollbackConcurrentWatchlistOrRefreshedContent() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()

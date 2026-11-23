@@ -23,5 +23,7 @@ interface MembershipPort {
     suspend fun reconcile(command: Command): Completion
     /** Reads first and resends only if the server still differs and [command] is the item's latest. */
     suspend fun retry(command: Command): Completion
+    /** The one retry for a command restored from an earlier run: resends only a recent unconfirmed one, else only reads. */
+    suspend fun restore(command: Command): Completion
     suspend fun projection(authority: DurableLoginAuthority, itemId: String, kind: Kind): Projection?
 }

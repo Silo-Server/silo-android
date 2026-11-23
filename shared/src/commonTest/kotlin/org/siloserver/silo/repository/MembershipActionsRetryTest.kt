@@ -36,7 +36,7 @@ class MembershipActionsRetryTest {
         assertTrue(failures.isEmpty())
     }
 
-    @Test fun startupRetryOwnsARestoredChangeUntilItsRetryFinishes() = runTest {
+    @Test fun aTapOnARestoredChangeStillWaitingForItsRetryTakesItOver() = runTest {
         val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
         val port = object : MembershipPort by FakePort(confirmOnRetry = null) {
             val authority = DurableLoginAuthority("login", AuthScopeSnapshot("s", "p", "https://example.invalid", null))
@@ -50,6 +50,7 @@ class MembershipActionsRetryTest {
                 commands.single { it.itemId == itemId }.let {
                     MembershipPort.Projection(it.id, true, MembershipPort.Disposition.NEEDS_RECONCILIATION)
                 }
+            override suspend fun restore(command: MembershipPort.Command) = retry(command)
             override suspend fun retry(command: MembershipPort.Command): MembershipPort.Completion {
                 val count = (retries[command.itemId] ?: 0) + 1
                 retries[command.itemId] = count
@@ -59,19 +60,19 @@ class MembershipActionsRetryTest {
             }
         }
         val actions = MembershipActions(port, DefaultIdentityTransitionBarrier())
-        val restoring = launch { actions.restorePending() }; runCurrent()
+        val restoring = launch { actions.restorePending() }; runCurrent() // a's restore retry hangs; b waits its turn.
         val intent = actions.begin("b", MembershipPort.Kind.FAVORITE, true) // The viewer repeats the restored choice.
-        val performing = launch { actions.perform(intent) }; runCurrent()
-        gate.complete(Unit); advanceUntilIdle(); restoring.join(); performing.join()
-        assertEquals(1, port.retries["b"])
-        assertTrue(actions.confirmed(intent))
+        actions.perform(intent)
+        assertTrue(actions.confirmed(intent), "b must not wait behind a's retry")
+        gate.complete(Unit); restoring.join()
+        assertEquals(1, port.retries["b"]) // The restore pass doesn't retry it again.
     }
 
     @Test fun cancelledRestoreReleasesWitnessesItAlreadyClaimedAndRetriesThemLater() = runTest {
         var blockB = true
         val port = object : MembershipPort by FakePort(confirmOnRetry = 1) {
             val retried = mutableListOf<String>()
-            override suspend fun retry(command: MembershipPort.Command): MembershipPort.Completion {
+            override suspend fun restore(command: MembershipPort.Command): MembershipPort.Completion {
                 retried += command.itemId
                 return MembershipPort.Completion(MembershipPort.Disposition.ACKNOWLEDGED, true)
             }
@@ -90,6 +91,7 @@ class MembershipActionsRetryTest {
         val restoring = launch { actions.restorePending() }; runCurrent()
         restoring.cancel(); restoring.join()
         assertEquals(false, actions.actions.value[MembershipActions.Key("a", MembershipPort.Kind.FAVORITE)]?.busy)
+        assertTrue(port.retried.isEmpty()) // The scan was cancelled before any retry ran.
         blockB = false
         actions.restorePending() // The host returns in the same process and identity.
         assertEquals(listOf("a", "b"), port.retried)
@@ -97,31 +99,118 @@ class MembershipActionsRetryTest {
         assertEquals(listOf("a", "b"), port.retried) // Each restored command gets one retry, not one per pass.
     }
 
-    @Test fun repeatingAChoiceDuringAFailedStartupRetryReportsIt() = runTest {
+    @Test fun repeatingAChoiceDuringAStartupRetryWaitsForItAndTakesOverWhenItFails() = runTest {
       for (restored in listOf(MembershipPort.Disposition.NEEDS_RECONCILIATION, MembershipPort.Disposition.PAUSED)) {
         val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
         val port = object : MembershipPort by FakePort(confirmOnRetry = null) {
             val authority = DurableLoginAuthority("login", AuthScopeSnapshot("s", "p", "https://example.invalid", null))
             val command = MembershipPort.Command(1L, authority, "item", MembershipPort.Kind.FAVORITE, true)
+            var retries = 0
             override suspend fun captureAuthority() = authority
             override suspend fun pending(authority: DurableLoginAuthority, limit: Int) = listOf(command)
             override suspend fun projection(authority: DurableLoginAuthority, itemId: String, kind: MembershipPort.Kind) =
                 MembershipPort.Projection(command.id, true, restored)
-            override suspend fun retry(command: MembershipPort.Command): MembershipPort.Completion {
+            override suspend fun restore(command: MembershipPort.Command): MembershipPort.Completion {
                 gate.await(); return MembershipPort.Completion(MembershipPort.Disposition.NEEDS_RECONCILIATION, false)
             }
+            override suspend fun retry(command: MembershipPort.Command) =
+                MembershipPort.Completion(MembershipPort.Disposition.NEEDS_RECONCILIATION, false).also { retries++ }
         }
         val actions = MembershipActions(port, DefaultIdentityTransitionBarrier())
         val failures = mutableListOf<MembershipActions.Key>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { actions.unconfirmedAttempts.collect { failures += it.key } }
         val restoring = launch { actions.restorePending() }; runCurrent()
         val intent = actions.begin("item", MembershipPort.Kind.FAVORITE, true) // Joins the startup retry.
-        actions.perform(intent)
-        assertTrue(failures.isEmpty(), "restored as $restored") // The tap joined the running retry.
-        gate.complete(Unit); restoring.join()
+        val performing = launch { actions.perform(intent) }; runCurrent()
+        assertFalse(performing.isCompleted, "restored as $restored: the tap waits for the retry it joined")
+        gate.complete(Unit); restoring.join(); performing.join()
+        assertEquals(4, port.retries, "restored as $restored: the tap's own retry and its three automatic ones")
         assertEquals(listOf(intent.key), failures, "restored as $restored")
       }
     }
+
+    @Test fun aServerThatNeverAnswersGetsItsNoticeWithinTheAttemptBudget() = runTest {
+      for (sendHangs in listOf(true, false)) {
+        val port = object : MembershipPort by FakePort(confirmOnRetry = null) {
+            override suspend fun send(command: MembershipPort.Command): MembershipPort.Completion =
+                if (sendHangs) kotlinx.coroutines.awaitCancellation()
+                else MembershipPort.Completion(MembershipPort.Disposition.NEEDS_RECONCILIATION, false)
+            override suspend fun retry(command: MembershipPort.Command): MembershipPort.Completion = kotlinx.coroutines.awaitCancellation()
+        }
+        val actions = budgeted(port)
+        val failures = mutableListOf<MembershipActions.Key>()
+        val collecting = launch(UnconfinedTestDispatcher(testScheduler)) { actions.unconfirmedAttempts.collect { failures += it.key } }
+        val intent = actions.begin("item", MembershipPort.Kind.WATCHLIST, true)
+        val performing = launch { actions.perform(intent) }
+        advanceTimeBy(39_999); runCurrent()
+        assertFalse(performing.isCompleted, "send hangs: $sendHangs")
+        advanceTimeBy(2); runCurrent()
+        assertTrue(performing.isCompleted, "send hangs: $sendHangs")
+        assertEquals(listOf(intent.key), failures, "send hangs: $sendHangs")
+        collecting.cancel()
+      }
+    }
+
+    @Test fun aTapJoiningAStartupRetryThatNeverAnswersGetsItsNoticeWithinTheBudget() = runTest {
+        val port = restoringPort(restore = { kotlinx.coroutines.awaitCancellation() })
+        val actions = budgeted(port)
+        val failures = mutableListOf<MembershipActions.Key>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { actions.unconfirmedAttempts.collect { failures += it.key } }
+        val restoring = launch { actions.restorePending() }
+        advanceTimeBy(10_000); runCurrent()
+        val intent = actions.begin("item", MembershipPort.Kind.FAVORITE, true)
+        val performing = launch { actions.perform(intent) }
+        advanceTimeBy(40_001); runCurrent()
+        assertTrue(performing.isCompleted, "the 40 s count from the tap, not from the end of the startup retry")
+        assertEquals(listOf(intent.key), failures)
+        restoring.join()
+    }
+
+    @Test fun aTapWaitingOnAStartupRetryIsStillSentWhenItsCallerIsCancelled() = runTest {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val port = restoringPort(restore = { gate.await(); unconfirmed })
+        val actions = MembershipActions(port, DefaultIdentityTransitionBarrier())
+        val failures = mutableListOf<MembershipActions.Key>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { actions.unconfirmedAttempts.collect { failures += it.key } }
+        val restoring = launch { actions.restorePending() }; runCurrent()
+        val intent = actions.begin("item", MembershipPort.Kind.FAVORITE, true)
+        val performing = launch { actions.perform(intent) }; runCurrent()
+        performing.cancel() // The viewer leaves the screen while the tap waits.
+        gate.complete(Unit); restoring.join(); advanceUntilIdle()
+        assertEquals(3, port.retries, "the tap's three automatic retries still run")
+        assertEquals(listOf(intent.key), failures)
+    }
+
+    @Test fun twoTapsDuringOneStartupRetryTakeItOverOnce() = runTest {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val port = restoringPort(restore = { gate.await(); unconfirmed })
+        val actions = MembershipActions(port, DefaultIdentityTransitionBarrier())
+        val failures = mutableListOf<MembershipActions.Key>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { actions.unconfirmedAttempts.collect { failures += it.key } }
+        val restoring = launch { actions.restorePending() }; runCurrent()
+        val taps = List(2) { launch { actions.perform(actions.begin("item", MembershipPort.Kind.FAVORITE, true)) } }; runCurrent()
+        gate.complete(Unit); restoring.join(); taps.forEach { it.join() }
+        assertEquals(4, port.retries, "one takeover: its retry and three automatic ones")
+        assertEquals(1, failures.size)
+    }
+
+    private val unconfirmed = MembershipPort.Completion(MembershipPort.Disposition.NEEDS_RECONCILIATION, false)
+
+    /** One restored, unconfirmed favorite whose startup retry runs [restore]; viewer retries never confirm. */
+    private fun restoringPort(restore: suspend () -> MembershipPort.Completion) = object : MembershipPort by FakePort(confirmOnRetry = null) {
+        val authority = DurableLoginAuthority("login", AuthScopeSnapshot("s", "p", "https://example.invalid", null))
+        val command = MembershipPort.Command(1L, authority, "item", MembershipPort.Kind.FAVORITE, true)
+        var retries = 0
+        override suspend fun captureAuthority() = authority
+        override suspend fun pending(authority: DurableLoginAuthority, limit: Int) = listOf(command)
+        override suspend fun projection(authority: DurableLoginAuthority, itemId: String, kind: MembershipPort.Kind) =
+            MembershipPort.Projection(command.id, true, MembershipPort.Disposition.NEEDS_RECONCILIATION)
+        override suspend fun restore(command: MembershipPort.Command) = restore()
+        override suspend fun retry(command: MembershipPort.Command) = unconfirmed.also { retries++ }
+    }
+
+    private fun TestScope.budgeted(port: MembershipPort) =
+        MembershipActions(port, DefaultIdentityTransitionBarrier(), testScheduler.timeSource, StandardTestDispatcher(testScheduler))
 
     @Test fun restoreCancelledDuringItsRetryRetriesAgainLater() = runTest {
         var hang = true
@@ -133,7 +222,7 @@ class MembershipActionsRetryTest {
             override suspend fun pending(authority: DurableLoginAuthority, limit: Int) = listOf(command)
             override suspend fun projection(authority: DurableLoginAuthority, itemId: String, kind: MembershipPort.Kind) =
                 MembershipPort.Projection(command.id, true, MembershipPort.Disposition.NEEDS_RECONCILIATION)
-            override suspend fun retry(command: MembershipPort.Command): MembershipPort.Completion {
+            override suspend fun restore(command: MembershipPort.Command): MembershipPort.Completion {
                 attempts++
                 if (hang) kotlinx.coroutines.awaitCancellation() // The host leaves composition mid-retry.
                 return MembershipPort.Completion(MembershipPort.Disposition.ACKNOWLEDGED, true)
@@ -159,6 +248,7 @@ class MembershipActionsRetryTest {
         override suspend fun retry(command: MembershipPort.Command) =
             if (++retries == confirmOnRetry) MembershipPort.Completion(MembershipPort.Disposition.ACKNOWLEDGED, true) else unconfirmed
         override suspend fun reconcile(command: MembershipPort.Command) = error("Recovery must use retry")
+        override suspend fun restore(command: MembershipPort.Command) = retry(command)
         override suspend fun read(authority: DurableLoginAuthority, itemId: String, kind: MembershipPort.Kind): ApiResult<Boolean> = ApiResult.Success(false)
         override suspend fun pending(authority: DurableLoginAuthority, limit: Int) = emptyList<MembershipPort.Command>()
         override suspend fun hasLegacyQuarantine() = false

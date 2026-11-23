@@ -131,6 +131,7 @@ class TvMembershipConsumerTest {
             reads++; return MembershipPort.Completion(MembershipPort.Disposition.RECONCILED, true)
         }
         override suspend fun retry(command: MembershipPort.Command) = reconcile(command)
+        override suspend fun restore(command: MembershipPort.Command) = reconcile(command)
         override suspend fun read(authority: DurableLoginAuthority, itemId: String, kind: MembershipPort.Kind): ApiResult<Boolean> {
             readRelease?.await(); return ApiResult.Success(false)
         }

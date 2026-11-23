@@ -46,7 +46,9 @@ publication remains subject to the consumer's identity/generation checks at its
 actual UI update; the returned publication hint is not a synchronization lock.
 
 Cancellation or any unconfirmed response transitions the claimed command to
-reconciliation. Retry first issues a captured-authority GET. Observing the desired
+reconciliation. A write refused with 400, 404, 410 or 422, which a resend can't
+change, is never resent: it is read once right away, and that read resolves or
+pauses it as below. Retry first issues a captured-authority GET. Observing the desired
 state resolves that command as reconciled. A mismatch pauses it and, while it is
 still the item's latest command and no sibling is sending, reclaims and resends
 it through the same claim protocol. A command that was mid-send when a newer one
@@ -134,15 +136,29 @@ roll back another field or replace a newer home snapshot. Personal-list removals
 retain their row, total and continuation until acknowledged or reconciled.
 
 An unconfirmed user change retries automatically after 2, 5 and 15 seconds, even
-if the screen that started it closes. Repeating the same choice retries it again, or
-joins the retry already running for it.
+if the screen that started it closes. The whole attempt, its requests included,
+ends within 40 seconds of the tap, so a server that never answers can't delay the
+dialog for minutes of request timeouts. Repeating the same choice retries it again;
+while an attempt for it is already running, the repeat waits for that attempt so
+its caller sees the outcome. A refused write (adding an item that is gone or
+hidden) pauses after its one read and isn't retried, and the dialog says the
+change wasn't saved; removing an item that is gone resolves. A 403 stays
+retryable, since verifying the profile again can clear it.
 The field keeps its last confirmed value. The root notice host restores a bounded
-set of current-authority commands, retries each unconfirmed one once, silently, and
-keeps collecting Room invalidations. It opens a dialog (phone `SiloDialog`, TV
-`TvDialog`) only when one of the viewer's own attempts, including one whose caller
-was cancelled, is still unconfirmed after its retries
-(`MembershipActions.unconfirmedAttempts`). A restored command opens one only when the
-viewer repeated its choice during its retry; NOT_CLAIMED results never open one; the dialog waits while a player route is showing. It names
+set of current-authority commands and keeps collecting Room invalidations. Each
+restored unconfirmed command gets one silent retry, but only a reconcile command
+recorded in the last 10 minutes may be resent; a paused or older one is only read,
+so a stale choice can't overwrite a newer change made on another device. A
+restored command is busy only while its retry runs: repeating its choice before
+then takes it over, and repeating it during the retry waits and, if the retry
+fails, continues with the viewer's own retries, even if the screen closes while it
+waits. Only the first such repeat takes over; the startup retry also ends within
+40 seconds. It opens a dialog (phone
+`SiloDialog`, TV `TvDialog`) only when one of the viewer's own attempts, including
+one whose caller was cancelled, is still unconfirmed after its retries
+(`MembershipActions.unconfirmedAttempts`). Restored commands never open one by
+themselves; NOT_CLAIMED results never open one; the dialog waits while a player
+route is showing. It names
 the list and the change, offers Try Again, which retries the command (or sends it
 when none was recorded), and closes with OK or Back without touching the command.
 Legacy quarantine keeps its separate non-modal notice directing the user to

@@ -99,6 +99,9 @@ class RoomMembershipPort(
     override suspend fun retry(command: MembershipPort.Command): MembershipPort.Completion =
         completion(command, runtime.retry(command.id, command.authority))
 
+    override suspend fun restore(command: MembershipPort.Command): MembershipPort.Completion =
+        completion(command, runtime.restore(command.id, command.authority))
+
     private suspend fun completion(command: MembershipPort.Command, result: MembershipOutbox.Result): MembershipPort.Completion {
         val current = projection(command.authority, command.itemId, command.kind)
         val durable = current?.disposition?.takeIf {

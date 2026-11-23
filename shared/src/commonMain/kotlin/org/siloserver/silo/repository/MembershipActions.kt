@@ -1,11 +1,18 @@
 package org.siloserver.silo.repository
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -13,17 +20,28 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.collect
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.repository.port.MembershipPort
 
 /** Shared per-field intent ownership. No transport bypasses the durable port. */
-class MembershipActions(private val port: MembershipPort?, private val identity: IdentityTransitionBarrier) {
+class MembershipActions(
+    private val port: MembershipPort?,
+    private val identity: IdentityTransitionBarrier,
+    /** Measures [ATTEMPT_BUDGET]; tests pass their scheduler's clock and [timer]. */
+    private val clock: TimeSource = TimeSource.Monotonic,
+    private val timer: CoroutineContext = Dispatchers.Default,
+) {
     data class Key(val itemId: String, val kind: MembershipPort.Kind)
     data class Intent(val key: Key, val present: Boolean, val generation: Long, val revision: Long)
+    /** [restored]: the latest attempt was the startup retry of a restored command, and no tap has taken it over. */
     data class Action(val intent: Intent, val command: MembershipPort.Command? = null,
         val completion: MembershipPort.Completion? = null, val busy: Boolean = false,
-        val baseline: Intent? = null, val joined: Boolean = false) {
+        val baseline: Intent? = null, val restored: Boolean = false) {
         val confirmed: Boolean get() = completion?.mayPublish == true && completion.disposition in setOf(
             MembershipPort.Disposition.ACKNOWLEDGED, MembershipPort.Disposition.RECONCILED)
     }
@@ -37,9 +55,9 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
     /**
      * The viewer's own attempts ([perform]) still unconfirmed after their automatic
      * retries, including one whose caller was cancelled. A command restored by
-     * [restorePending] appears only when the viewer repeated its choice during its
-     * retry, so a notice raised from this flow answers something the viewer just did. NOT_CLAIMED is left out: another sender owns the
-     * command and its result arrives through [restorePending].
+     * [restorePending] never appears by itself, so a notice raised from this flow
+     * answers something the viewer just did. NOT_CLAIMED is left out: another sender
+     * owns the command and its result arrives through [restorePending].
      */
     val unconfirmedAttempts: SharedFlow<Intent> = mutableUnconfirmedAttempts.asSharedFlow()
 
@@ -73,15 +91,21 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
 
     suspend fun perform(intent: Intent) {
         if (!current(intent)) return
-        val prior = mutableActions.value[intent.key] ?: return
-        if (prior.confirmed) return
+        val started = clock.markNow()
+        var prior = mutableActions.value[intent.key] ?: return
         if (prior.busy) {
-            // The viewer repeated a choice that is already retrying. A restored witness's owner
-            // reports it if that retry fails; this attempt's own finally reports it otherwise.
-            update(intent) { it.copy(joined = true) }
-            return
+            // The viewer repeated a choice that is already being sent: wait for that attempt, so the
+            // caller sees its outcome. An earlier tap's attempt reports its own failure. A restored
+            // command's startup retry reports nothing, so the first tap waiting on it takes over when
+            // it ends unconfirmed, even if that tap's caller is cancelled meanwhile.
+            withContext(NonCancellable) {
+                mutableActions.first { states -> !current(intent) || states[intent.key]?.busy != true }
+            }
+            prior = mutableActions.value[intent.key]?.takeIf { current(intent) && it.restored && !it.busy } ?: return
         }
-        update(intent) { it.copy(busy = true) }
+        if (prior.confirmed) return
+        update(intent) { it.copy(busy = true, restored = false) }
+        val resending = prior.command != null
         var command = prior.command
         // This attempt retries the command itself, so a later restore pass must not retry it again.
         command?.let { owned -> unretriedRestores.update { it - owned.id } }
@@ -98,7 +122,9 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
                 }
             }
             coroutineContext.ensureActive()
-            complete(intent, if (prior.command == null) activePort.send(recorded) else activePort.retry(recorded))
+            complete(intent, withinBudget(ATTEMPT_BUDGET - started.elapsedNow()) {
+                if (resending) activePort.retry(recorded) else activePort.send(recorded)
+            } ?: UNCONFIRMED)
         } catch (cancelled: CancellationException) {
             complete(intent, UNCONFIRMED)
             throw cancelled
@@ -108,21 +134,46 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
             // Finish the change even if the screen that started it closes. A stale attempt,
             // for an identity that is already changing, neither retries nor reports.
             withContext(NonCancellable) {
-                if (!stale) command?.let { recover(intent, it) }
-                update(intent) { it.copy(busy = false, joined = false) }
+                if (!stale) command?.let { recover(intent, it, started) }
+                update(intent) { it.copy(busy = false) }
                 if (!stale) reportIfUnconfirmed(intent)
             }
         }
     }
 
-    /** Retries an unconfirmed command after each delay until it is confirmed or settled otherwise. */
-    private suspend fun recover(intent: Intent, command: MembershipPort.Command) {
+    /**
+     * Retries an unconfirmed command after each delay until it is confirmed or settled otherwise.
+     * The whole attempt stays within [ATTEMPT_BUDGET], so a server that never answers can't hold
+     * the viewer's notice back for minutes of request timeouts.
+     */
+    private suspend fun recover(intent: Intent, command: MembershipPort.Command, started: TimeMark) {
         val activePort = port ?: return
-        for (delayMs in RETRY_DELAYS_MS) {
+        for (wait in RETRY_DELAYS) {
             if (!needsRetry(intent)) return
-            delay(delayMs)
+            val remaining = ATTEMPT_BUDGET - started.elapsedNow() - wait
+            if (remaining <= Duration.ZERO) return
+            delay(wait)
             if (!current(intent)) return
-            complete(intent, try { activePort.retry(command) } catch (_: Exception) { UNCONFIRMED })
+            complete(intent, try { withinBudget(remaining) { activePort.retry(command) } ?: UNCONFIRMED } catch (_: Exception) { UNCONFIRMED })
+        }
+    }
+
+    /**
+     * Runs [block] on the caller's dispatcher, or gives up after [budget], measured on [timer]. Under
+     * a test scheduler, a timeout on the caller's dispatcher would expire at once while [block] waits
+     * on real I/O (Room, HTTP). The deadline isn't a child, so finishing never waits on [timer].
+     */
+    private suspend fun <T> withinBudget(budget: Duration, block: suspend () -> T): T? {
+        if (budget <= Duration.ZERO) return null
+        return coroutineScope {
+            val work = async { block() }
+            val deadline = CoroutineScope(timer).launch { delay(budget); work.cancel() }
+            try {
+                work.await()
+            } catch (cancelled: CancellationException) {
+                coroutineContext.ensureActive() // The caller was cancelled, not the budget.
+                null
+            } finally { deadline.cancel() }
         }
     }
 
@@ -184,60 +235,47 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
         }
         val pending = activePort.pending(authority)
         if (generation.value != authority.scope.identityGeneration) return
-        val unresolved = mutableListOf<Pair<Intent, MembershipPort.Command>>()
-        var next = 0
-        try {
-            for (command in pending) {
-                val key = Key(command.itemId, command.kind)
-                val projection = activePort.projection(authority, command.itemId, command.kind) ?: continue
-                if (projection.commandId != command.id || generation.value != authority.scope.identityGeneration) continue
-                val intent = Intent(key, command.present, generation.value, kotlin.random.Random.nextLong())
-                // READY commands belong to the sync worker; earlier unconfirmed ones get one retry here.
-                // The restored witness stays busy until that retry ends so perform can't run beside it.
-                val retry = projection.disposition != null
-                mutableActions.update { states ->
-                    if (states.containsKey(key)) {
-                        val existing = states.getValue(key)
-                        if (existing.command == null && !existing.busy && existing.completion != null &&
-                            existing.intent.present == command.present && existing.intent.generation == authority.scope.identityGeneration) {
-                            states + (key to existing.copy(command = command))
-                        } else states
-                    } else states + (key to Action(intent, command,
-                        MembershipPort.Completion(projection.disposition ?: MembershipPort.Disposition.NEEDS_RECONCILIATION, false), busy = retry))
-                }
-                if (!retry) continue
-                if (mutableActions.value[key]?.intent == intent) unretriedRestores.update { it + command.id }
-                if (command.id !in unretriedRestores.value) continue
-                // A witness an earlier, cancelled pass restored but never retried gets its retry now.
-                val witness = mutableActions.value[key]?.takeIf { it.command?.id == command.id && current(it.intent) && !it.confirmed } ?: continue
-                if (witness.intent != intent) {
-                    if (witness.busy) continue
-                    update(witness.intent) { it.copy(busy = true) }
-                }
-                unresolved += witness.intent to command
+        val unresolved = mutableListOf<MembershipPort.Command>()
+        for (command in pending) {
+            val key = Key(command.itemId, command.kind)
+            val projection = activePort.projection(authority, command.itemId, command.kind) ?: continue
+            if (projection.commandId != command.id || generation.value != authority.scope.identityGeneration) continue
+            val intent = Intent(key, command.present, generation.value, kotlin.random.Random.nextLong())
+            mutableActions.update { states ->
+                if (states.containsKey(key)) {
+                    val existing = states.getValue(key)
+                    if (existing.command == null && !existing.busy && existing.completion != null &&
+                        existing.intent.present == command.present && existing.intent.generation == authority.scope.identityGeneration) {
+                        states + (key to existing.copy(command = command))
+                    } else states
+                } else states + (key to Action(intent, command,
+                    MembershipPort.Completion(projection.disposition ?: MembershipPort.Disposition.NEEDS_RECONCILIATION, false)))
             }
-            while (next < unresolved.size) {
-                val (intent, command) = unresolved[next++]
-                if (!current(intent)) continue
-                unretriedRestores.update { it - command.id }
-                try {
-                    complete(intent, activePort.retry(command))
-                } catch (cancelled: CancellationException) {
-                    // The retry may not have run; a later pass in this process gets it again.
-                    unretriedRestores.update { it + command.id }
-                    throw cancelled
-                } catch (_: Exception) {
-                    complete(intent, UNCONFIRMED)
-                } finally { update(intent) { it.copy(busy = false) } }
-                // A viewer who repeated this choice while it retried hears about a failure.
-                if (mutableActions.value[intent.key]?.joined == true) {
-                    update(intent) { it.copy(joined = false) }
-                    reportIfUnconfirmed(intent)
-                }
-            }
-        } finally {
-            // Release restored witnesses a cancelled scan or retry pass never reached.
-            for (index in next until unresolved.size) update(unresolved[index].first) { it.copy(busy = false) }
+            // READY commands belong to the sync worker; earlier unconfirmed ones get one retry here.
+            if (projection.disposition == null) continue
+            if (mutableActions.value[key]?.intent == intent) unretriedRestores.update { it + command.id }
+            // A command an earlier, cancelled pass restored but never retried gets its retry now.
+            if (command.id in unretriedRestores.value) unresolved += command
+        }
+        for (command in unresolved) {
+            // A restored witness is busy only while its retry runs. Until then, the viewer repeating
+            // the choice takes it over through perform, which removes it from unretriedRestores.
+            val witness = mutableActions.value[Key(command.itemId, command.kind)]?.takeIf {
+                it.command?.id == command.id && current(it.intent) && !it.confirmed && !it.busy
+            } ?: continue
+            if (command.id !in unretriedRestores.value) continue
+            val intent = witness.intent
+            unretriedRestores.update { it - command.id }
+            update(intent) { it.copy(busy = true, restored = true) }
+            try {
+                complete(intent, withinBudget(ATTEMPT_BUDGET) { activePort.restore(command) } ?: UNCONFIRMED)
+            } catch (cancelled: CancellationException) {
+                // The retry may not have run; a later pass in this process gets it again.
+                unretriedRestores.update { it + command.id }
+                throw cancelled
+            } catch (_: Exception) {
+                complete(intent, UNCONFIRMED)
+            } finally { update(intent) { it.copy(busy = false) } }
         }
         val retained = activePort.hasLegacyQuarantine()
         if (generation.value == authority.scope.identityGeneration) mutableLegacyNotice.value = retained
@@ -247,7 +285,9 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
 
     private companion object {
         val UNCONFIRMED = MembershipPort.Completion(MembershipPort.Disposition.NEEDS_RECONCILIATION, false)
-        val RETRY_DELAYS_MS = listOf(2_000L, 5_000L, 15_000L)
+        val RETRY_DELAYS = listOf(2.seconds, 5.seconds, 15.seconds)
+        /** From the viewer's choice to its last automatic retry; the notice opens by then. */
+        val ATTEMPT_BUDGET = 40.seconds
     }
 
     private fun update(intent: Intent, transform: (Action) -> Action) {
