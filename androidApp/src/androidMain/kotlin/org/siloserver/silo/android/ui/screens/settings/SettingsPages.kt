@@ -426,23 +426,8 @@ fun SettingsNotificationsScreen(viewModel: SettingsViewModel, onBackClick: () ->
             item(key = "topics") {
                 SettingsSection(
                     title = stringResource(CommonR.string.settings_notifications_topics),
-                    footer = stringResource(CommonR.string.settings_notifications_topicsFooter),
+                    footer = stringResource(CommonR.string.settings_notifications_nextUpFooter),
                 ) {
-                    SettingsSwitchRow(
-                        label = stringResource(CommonR.string.menu_favorites),
-                        checked = state.notifyFavorites,
-                        onCheckedChange = viewModel::setNotifyFavorites,
-                    )
-                    SettingsSwitchRow(
-                        label = stringResource(CommonR.string.menu_watchlist),
-                        checked = state.notifyWatchlist,
-                        onCheckedChange = viewModel::setNotifyWatchlist,
-                    )
-                    SettingsSwitchRow(
-                        label = stringResource(CommonR.string.home_section_continueWatching),
-                        checked = state.notifyContinueWatching,
-                        onCheckedChange = viewModel::setNotifyContinueWatching,
-                    )
                     SettingsSwitchRow(
                         label = stringResource(CommonR.string.home_section_nextUp),
                         checked = state.notifyNextUp,

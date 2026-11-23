@@ -344,7 +344,9 @@ private fun TvInboxRow(
                     style = MaterialTheme.typography.titleMedium,
                     color = Color.White,
                     fontWeight = if (card.isUnread) FontWeight.SemiBold else FontWeight.Normal,
-                    maxLines = 1,
+                    // A card without a subtitle, such as "<title> is now available",
+                    // carries its whole message in the title.
+                    maxLines = if (subtitle.isNullOrBlank()) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 subtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->

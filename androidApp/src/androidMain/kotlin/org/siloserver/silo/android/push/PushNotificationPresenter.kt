@@ -257,6 +257,13 @@ class PushNotificationPresenter internal constructor(
                     ?: text.getString(CommonR.string.notifications_push_requestBody),
                 route = route,
             )
+            NotificationType.WatchlistAvailable -> PushNotificationContent(
+                title = row.seriesTitle.ifBlank { null }
+                    ?.let { text.getString(CommonR.string.notifications_type_watchlistAvailable, it) }
+                    ?: text.getString(CommonR.string.notifications_type_watchlistAvailableUntitled),
+                body = text.getString(CommonR.string.notifications_push_watchlistBody),
+                route = route,
+            )
             NotificationType.Unknown -> PushNotificationContent(
                 title = fallbackTitle?.takeIf { it.isNotBlank() }
                     ?: row.rawType.substringBefore('.')
