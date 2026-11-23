@@ -65,7 +65,6 @@ import org.siloserver.silo.common.player.seek.sourcePositionForPlayer
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.MarkerReconciliationFence
-import org.siloserver.silo.common.player.video.markerSkipTarget
 import org.siloserver.silo.common.player.video.NextUpTransitionGate
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
@@ -222,7 +221,7 @@ import org.siloserver.silo.common.i18n.currentNumberLocale
  * [PlaybackSessionLifecycle]. Per-profile playback preferences are read from
  * [PlayerSettingsStore]. The intro-skip prompt (never / ask / always, its
  * timer, and which intros the viewer has already decided) is owned by
- * [IntroAutoSkipController].
+ * [IntroAutoSkipController]; a second instance owns the recap and credits pill.
  */
 /**
  * Text the player screen shows from its state: a catalog message, resolved in
@@ -409,6 +408,8 @@ class PlayerViewModel(
     // Phase 1 Phase 0-infra dependencies:
     private val playerSettingsStore: PlayerSettingsStore,
     private val introAutoSkipController: IntroAutoSkipController,
+    // The recap and credits pill: a second instance, always under the `ask` table.
+    private val segmentSkipController: IntroAutoSkipController,
     private val sessionLifecycle: PlaybackSessionLifecycle,
     // Phase 2 sleep timer:
     private val sleepTimer: SleepTimerController,
@@ -857,6 +858,26 @@ class PlayerViewModel(
     /** Total seconds a fresh intro prompt runs for, for the fill's arithmetic. */
     val introSkipTotalSeconds: Int = introAutoSkipController.totalCountdownSeconds
 
+    /** The recap and credits pill, timed like the intro pill. */
+    val segmentSkipState: StateFlow<IntroAutoSkipState> = segmentSkipController.state
+    val segmentSkipCountdownRun: StateFlow<Int> = segmentSkipController.countdownRun
+    val segmentSkipTimerRunning: StateFlow<Boolean> = segmentSkipController.timerRunning
+
+    /**
+     * Whether the overlay shows its controls, as PlayerOverlay draws them (it
+     * owns the docked-menu and tabletop conditions). A skip pill that timed out
+     * returns, untimed, while this is true and no scrub is running.
+     */
+    private val overlayControlsShown = MutableStateFlow(false)
+    private val scrubbingNow = MutableStateFlow(false)
+    private val skipPillControlsVisible = combine(overlayControlsShown, scrubbingNow) { shown, scrub ->
+        shown && !scrub
+    }.distinctUntilChanged()
+
+    fun onOverlayControlsShownChanged(shown: Boolean) {
+        overlayControlsShown.value = shown
+    }
+
     // ---- Buffering quality ------------------------------------------------------
     //
     // Lowers quality when playback keeps buffering. The contract is the
@@ -958,19 +979,20 @@ class PlayerViewModel(
         }
         // At most one actionable pill: intro skip, the recap/credits skip pill
         // and Next Up outrank a buffering pill, which waits (or hides with its
-        // timer frozen) while one shows. Outside a Watch Party (the only place
-        // the controller runs) each shows whenever this state says so; the
-        // marker pill mirrors PlayerOverlay's own condition. A player in
-        // picture in picture or in the background shows no pill at all: a
-        // prompt waits there the same way, and an undo pill runs on unseen.
+        // timer frozen) while one shows, timed or returned with the controls.
+        // Outside a Watch Party (the only place the controller runs) each
+        // shows whenever this state says so; the marker pill mirrors
+        // PlayerOverlay's own condition. A player in picture in picture or in
+        // the background shows no pill at all: a prompt waits there the same
+        // way, and an undo pill runs on unseen.
         viewModelScope.launch {
             combine(
                 introAutoSkipController.state.map { it.isVisible },
-                _uiState.map { state ->
-                    state.showUpNext ||
-                        (!state.isLoading && markerSkipTarget(state.position, state.markerTimeline) != null)
-                },
-            ) { introVisible, otherVisible -> introVisible || otherVisible }
+                segmentSkipController.state.map { it.isVisible },
+                _uiState.map { state -> state.showUpNext to state.isLoading },
+            ) { introVisible, segmentVisible, (upNext, loading) ->
+                introVisible || upNext || (segmentVisible && !loading)
+            }
                 .distinctUntilChanged()
                 .collect { blocked ->
                     Log.i(TAG, "buffering_quality pill_blocked=$blocked")
@@ -1348,6 +1370,7 @@ class PlayerViewModel(
     // True while the seek bar is dragged; see onScrubbingChanged.
     private var scrubbing = false
     private var introObserverJob: Job? = null
+    private var segmentObserverJob: Job? = null
     private var lifecycleObserverJob: Job? = null
     private var resolveNextEpisodeJob: Job? = null
     private val exitPrepared = AtomicBoolean(false)
@@ -1781,6 +1804,7 @@ class PlayerViewModel(
         if (room != null) beginRoomLoad(room)
         // A fresh load resets any in-flight intro countdown / cancellation memory.
         introAutoSkipController.reset()
+        segmentSkipController.reset()
         beginBufferingQualityLoad(contentId)
         // New item: re-arm the once-per-episode auto-advance trigger. (The
         // AutoPlayGuard streak intentionally PERSISTS across episodes.)
@@ -2343,30 +2367,48 @@ class PlayerViewModel(
         val introOccurrence = _uiState
             .map { it.markerTimeline.occurrenceAt(MarkerKind.Intro, it.position) }
             .distinctUntilChanged()
+        val position = _uiState
+            .map { it.position }
+            .distinctUntilChanged()
+        val playbackKey = _uiState
+            .map { state ->
+                val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId
+                "${state.sessionId}:${fileId}"
+            }
+            .distinctUntilChanged()
+        // Filtered, not raw: isPlaying dips for a rebuffer exactly as it
+        // does for a deliberate pause, and a pause that reaches the
+        // controller freezes the timer. isPaused is the viewer's own press
+        // and needs no filtering, so it freezes on the frame of the press.
+        val playbackActive = _uiState
+            .map { it.isPlaying && !it.isLoading }
+            .settlingFalseEdges(
+                graceMillis = PLAYBACK_PAUSE_GRACE_MS,
+                deliberatelyInactive = _uiState.map { it.isPaused },
+            )
         introObserverJob?.cancel()
         introObserverJob = introAutoSkipController.observe(
-            position = _uiState
-                .map { it.position }
-                .distinctUntilChanged(),
+            position = position,
             introRange = introOccurrence,
             mode = introMode,
-            introKey = _uiState
-                .map { state ->
-                    val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId
-                    "${state.sessionId}:${fileId}"
-                }
-                .distinctUntilChanged(),
+            introKey = playbackKey,
             onSeek = { seekToSec -> onSeek(seekToSec) },
-            // Filtered, not raw: isPlaying dips for a rebuffer exactly as it
-            // does for a deliberate pause, and a pause that reaches the
-            // controller freezes the timer. isPaused is the viewer's own press
-            // and needs no filtering, so it freezes on the frame of the press.
-            playbackActive = _uiState
-                .map { it.isPlaying && !it.isLoading }
-                .settlingFalseEdges(
-                    graceMillis = PLAYBACK_PAUSE_GRACE_MS,
-                    deliberatelyInactive = _uiState.map { it.isPaused },
-                ),
+            playbackActive = playbackActive,
+            controlsVisible = skipPillControlsVisible,
+        )
+        // The recap and credits pill freezes, or waits to start, while the
+        // intro pill or Up Next covers it, so it shows with the time it had.
+        segmentObserverJob?.cancel()
+        segmentObserverJob = segmentSkipController.observeSegmentPill(
+            position = position,
+            markers = _uiState.map { it.markerTimeline }.distinctUntilChanged(),
+            playbackKey = playbackKey,
+            playbackActive = combine(
+                playbackActive,
+                introAutoSkipController.state,
+                _uiState.map { it.showUpNext },
+            ) { active, intro, upNext -> active && !intro.isVisible && !upNext },
+            controlsVisible = skipPillControlsVisible,
         )
     }
 
@@ -6132,6 +6174,16 @@ class PlayerViewModel(
      */
     fun onDismissIntroPrompt(): Boolean = introAutoSkipController.dismiss()
 
+    /**
+     * The recap or credits pill's Select: resolves the range and returns where
+     * to go (its end), or null when no pill is showing. The screen performs
+     * the seek, as a room seek in a Watch Party.
+     */
+    fun selectSegmentPromptTarget(): Double? = segmentSkipController.select()
+
+    /** Back while the timed recap or credits pill shows; true when it was taken. */
+    fun onDismissSegmentPrompt(): Boolean = segmentSkipController.dismiss()
+
     // ---- F2 next-episode auto-advance + pass-out protection ----
 
     /**
@@ -6896,6 +6948,7 @@ class PlayerViewModel(
      */
     fun onScrubbingChanged(active: Boolean) {
         scrubbing = active
+        scrubbingNow.value = active
         scheduleControlsHide()
     }
 
@@ -6958,9 +7011,11 @@ class PlayerViewModel(
         }
         controlsHideJob?.cancel()
         introObserverJob?.cancel()
+        segmentObserverJob?.cancel()
         searchJob?.cancel()
         aiJobHandle?.cancel()
         introAutoSkipController.reset()
+        segmentSkipController.reset()
         resetBufferingQuality()
         _uiState.update {
             it.copy(
@@ -7276,11 +7331,13 @@ class PlayerViewModel(
         clearedSessionId?.let { lifecycleTeardown.stopDetached(expectedSessionId = it) }
         controlsHideJob?.cancel()
         introObserverJob?.cancel()
+        segmentObserverJob?.cancel()
         lifecycleObserverJob?.cancel()
         searchJob?.cancel()
         aiJobHandle?.cancel()
         upNextCountdownJob?.cancel()
         introAutoSkipController.reset()
+        segmentSkipController.reset()
         resetBufferingQuality()
         super.onCleared()
     }

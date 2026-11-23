@@ -705,6 +705,8 @@ val androidTvModule = module {
             // auto-skip controller, lifecycle, sleep timer).
             playerSettingsStore = get(),
             introAutoSkipController = get(),
+            // A factory binding: this is a second, independent instance.
+            segmentSkipController = get(),
             sessionLifecycle = get(),
             sleepTimer = get(),
             subtitlesRepository = get(),

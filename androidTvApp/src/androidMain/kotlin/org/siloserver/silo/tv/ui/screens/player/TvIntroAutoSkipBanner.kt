@@ -47,13 +47,16 @@ import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 
 /**
- * TV variant of the phone's `IntroAutoSkipBanner` — the single intro-skip pill.
+ * TV variant of the phone's `IntroAutoSkipBanner` — a skip pill. It draws the
+ * intro pill and, with [skipLabel], the recap and credits pill.
  *
- * Two copies, one treatment: "Skip Intro" while the `ask` offer is up, and a
+ * Two copies, one treatment: [skipLabel] while the `ask` offer is up, and a
  * small "Intro skipped" caption over a "Watch Intro" button while `always`'s
  * undo is — the confirmation and the action are separate lines so neither
  * has to read as the other. The fill tracks the
- * time left and lands full exactly as the timer ends. Select, Back and D-pad
+ * time left and lands full exactly as the timer ends. The offer that returns
+ * with the controls after its timer ran out ([IntroAutoSkipState.Returned])
+ * has no fill and never takes focus; Up from the scrubber reaches it. Select, Back and D-pad
  * are handled by the player screen's root key handler, not here, because the
  * pill is not reliably in the focus tree.
  *
@@ -94,6 +97,8 @@ fun TvIntroAutoSkipBanner(
      * does not take focus out from under them.
      */
     mayTakeFocus: Boolean = true,
+    /** The `ask` action's label: "Skip Intro" unless the pill skips a recap or credits. */
+    skipLabel: String = stringResource(CommonR.string.introSkip_pill_skip),
 ) {
     // Keyed on the state kind so the per-second ticks recompose this slot rather
     // than recreating the subtree, which would restart the fill.
@@ -101,6 +106,7 @@ fun TvIntroAutoSkipBanner(
         IntroAutoSkipState.Hidden -> 0
         is IntroAutoSkipState.Asking -> 1
         is IntroAutoSkipState.Skipped -> 2
+        IntroAutoSkipState.Returned -> 3
     }
     val fill = rememberNoticeCountdownFill(state.secondsRemainingOrNull, totalSeconds, countdownRun, timerRunning)
 
@@ -122,11 +128,22 @@ fun TvIntroAutoSkipBanner(
             }
             1 -> {
                 TvIntroPromptPill(
-                    label = stringResource(CommonR.string.introSkip_pill_skip),
+                    label = skipLabel,
                     progress = fill.floatValue,
                     onSelect = onSelect,
                     onSeek = onSeek,
                     autoFocus = mayTakeFocus,
+                )
+            }
+            // Its own slot: the pill captures autoFocus once, and the timed
+            // pill's focus must not carry over to the untimed one.
+            3 -> {
+                TvIntroPromptPill(
+                    label = skipLabel,
+                    progress = 0f,
+                    onSelect = onSelect,
+                    onSeek = onSeek,
+                    autoFocus = false,
                 )
             }
             else -> {
@@ -246,17 +263,5 @@ private fun TvIntroPromptPill(
                 modifier = Modifier.padding(horizontal = 32.dp, vertical = 18.dp),
             )
         }
-    }
-}
-
-@Composable
-fun TvMarkerSkipPill(
-    label: String,
-    onSelect: () -> Unit,
-    onSeek: (direction: Int, hold: Boolean) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Box(modifier) {
-        TvIntroPromptPill(label = label, progress = 0f, onSelect = onSelect, onSeek = onSeek, autoFocus = false)
     }
 }

@@ -13,9 +13,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
-/** What the intro skip pill should be showing. */
+/** What a skip pill (intro, or recap and credits) should be showing. */
 sealed interface IntroAutoSkipState {
-    /** No pill: outside an intro, this intro is resolved, or the mode is `never`. */
+    /** No pill: outside the range, the range is resolved, or the mode is `never`. */
     data object Hidden : IntroAutoSkipState
 
     /**
@@ -35,25 +35,44 @@ sealed interface IntroAutoSkipState {
      */
     data class Skipped(val secondsRemaining: Int) : IntroAutoSkipState
 
-    /** Seconds left on the timer, or null while [Hidden]. */
+    /**
+     * `ask`: the offer timed out, the position is still inside the range, and
+     * the controls are up, so the pill is back without a timer. It hides with
+     * the controls, never takes focus, and claims neither root Select nor
+     * Back; activating it skips the range as [Asking] would.
+     */
+    data object Returned : IntroAutoSkipState
+
+    /** Seconds left on the timer, or null while no timer runs. */
     val secondsRemainingOrNull: Int?
         get() = when (this) {
             is Asking -> secondsRemaining
             is Skipped -> secondsRemaining
-            Hidden -> null
+            Returned, Hidden -> null
         }
 
-    /** True while a pill is on screen. */
+    /** True while a pill is on screen, timed or not. */
     val isVisible: Boolean get() = this !is Hidden
+
+    /**
+     * True while the timed pill is on screen: the one that may take focus and
+     * that root Select and Back act on.
+     */
+    val isTimed: Boolean get() = this is Asking || this is Skipped
 }
 
 /**
  * The one intro-skip prompt state machine, shared by the phone and TV players.
  *
  * The contract is the server repo's `docs/design/2026-08-16-intro-skip-mode.md`
- * ("Prompt behaviour"); its `never` / `ask` / `always` tables are the test
- * oracle and `IntroAutoSkipControllerTest` asserts them case for case. Read that
- * document before changing anything here.
+ * ("Prompt behaviour"); its `never` / `ask` / `always` tables, "When the
+ * controls are up" and "Recap and credits pills" are the test oracle and
+ * `IntroAutoSkipControllerTest` asserts them case for case. Read that document
+ * before changing anything here.
+ *
+ * Each player runs two instances: one for the intro through [observe], and one
+ * for the recap and credits pill through [observeSegmentPill], which follows
+ * the `ask` table whatever the intro mode is.
  *
  * Callers drive it with playback inputs through [observe] and act on the pill
  * through [select] / [dismiss]. Everything else — timing, which intros have been
@@ -78,7 +97,7 @@ class IntroAutoSkipController(
          * The spec's `INTRO_PROMPT_SECONDS`. Shared with the UI that draws the
          * fill so the timer and the bar cannot drift.
          */
-        const val DEFAULT_COUNTDOWN_SECONDS: Int = 5
+        const val DEFAULT_COUNTDOWN_SECONDS: Int = 10
     }
 
     /** Which pill the current run is showing; distinguishes the two timers' expiries. */
@@ -100,6 +119,12 @@ class IntroAutoSkipController(
      * the position leaves the range (or the intro, mode or content changes).
      */
     private var expiredKey: String? = null
+
+    /** The range [expiredKey] names, so the [IntroAutoSkipState.Returned] pill can still skip it. */
+    private var expiredRange: TimeRange? = null
+
+    /** Whether the controls are up, as last observed; decides whether a timed-out offer returns. */
+    private var controlsVisible: Boolean = false
 
     private var timerJob: Job? = null
     private var activeKey: String? = null
@@ -142,6 +167,8 @@ class IntroAutoSkipController(
      * (`settlingFalseEdges`); a pause that reaches here freezes the timer.
      * [introKey] names the playback the intro belongs to (session and file);
      * each [introRange] under it is a separate intro, decided on its own.
+     * [controlsVisible] is whether the controls overlay is up (and no scrub is
+     * running); an `ask` offer that timed out returns, untimed, while it is.
      */
     fun observe(
         position: Flow<Double>,
@@ -150,15 +177,63 @@ class IntroAutoSkipController(
         introKey: Flow<String?>,
         onSeek: suspend (toSeconds: Double) -> Unit,
         playbackActive: Flow<Boolean> = flowOf(true),
+        controlsVisible: Flow<Boolean> = flowOf(false),
     ): Job {
-        return scope.launch {
-            combine(position, introRange, mode, introKey, playbackActive) {
-                    pos, range, activeMode, key, playing ->
-                Inputs(pos, range, activeMode, key, playing)
-            }
-                .distinctUntilChanged()
-                .collect { handle(it, onSeek) }
+        val inputs = combine(position, introRange, mode, introKey, playbackActive) {
+                pos, range, activeMode, key, playing ->
+            Inputs(pos, range, activeMode, key, playing, controlsVisible = false)
         }
+        return launchHandling(inputs, controlsVisible, onSeek)
+    }
+
+    /**
+     * Drives the recap and credits pill: the recap occurrence playing, else
+     * the credits one, offered under the `ask` table whatever the intro mode
+     * is. It never seeks on its own.
+     *
+     * Each range is keyed by its kind as well as its bounds, so a recap and a
+     * credits range with the same bounds are decided separately. The range
+     * and its key come from one emission, so a key can never lag its range.
+     *
+     * [playbackActive] gates the timer as in [observe]; a caller also holds it
+     * false while something covers the pill (the Next Up screen, or the intro
+     * pill, which outranks this one), so the timer freezes there and an offer
+     * that waited starts its full timer when it first shows.
+     */
+    fun observeSegmentPill(
+        position: Flow<Double>,
+        markers: Flow<MarkerTimeline>,
+        playbackKey: Flow<String?>,
+        playbackActive: Flow<Boolean> = flowOf(true),
+        controlsVisible: Flow<Boolean> = flowOf(false),
+    ): Job {
+        val inputs = combine(position, markers, playbackKey, playbackActive) { pos, timeline, prefix, playing ->
+            val recap = timeline.active(MarkerKind.Recap, pos)
+            val (kind, range) = if (recap != null) {
+                MarkerKind.Recap to recap
+            } else {
+                MarkerKind.Credits to timeline.active(MarkerKind.Credits, pos)
+            }
+            Inputs(
+                position = pos,
+                range = range,
+                mode = IntroSkipMode.ASK,
+                key = prefix?.let { "$it:${kind.wire}" },
+                playbackActive = playing,
+                controlsVisible = false,
+            )
+        }
+        return launchHandling(inputs, controlsVisible) { }
+    }
+
+    private fun launchHandling(
+        inputs: Flow<Inputs>,
+        controlsVisible: Flow<Boolean>,
+        onSeek: suspend (toSeconds: Double) -> Unit,
+    ): Job = scope.launch {
+        combine(inputs, controlsVisible) { base, controls -> base.copy(controlsVisible = controls) }
+            .distinctUntilChanged()
+            .collect { handle(it, onSeek) }
     }
 
     /**
@@ -166,15 +241,24 @@ class IntroAutoSkipController(
      *
      * Resolves the intro, hides the pill, and returns the position the caller
      * must seek to: the intro's `end` for the `ask` offer (skip it) and its
-     * `start` for the `always` undo (play it after all). Null when no pill is
-     * showing, so a stray press is a no-op.
+     * `start` for the `always` undo (play it after all). The untimed
+     * [IntroAutoSkipState.Returned] pill skips like the `ask` offer. Null when
+     * no pill is showing, so a stray press is a no-op.
      */
     fun select(): Double? {
+        if (_state.value is IntroAutoSkipState.Returned) {
+            val key = expiredKey ?: return null
+            val range = expiredRange ?: return null
+            resolved.add(key)
+            clearExpired()
+            clearPrompt()
+            return range.end
+        }
         val key = activeKey ?: return null
         val range = activeRange ?: return null
         val prompt = activePrompt ?: return null
         resolved.add(key)
-        expiredKey = null
+        clearExpired()
         clearPrompt()
         return when (prompt) {
             Prompt.ASKING -> range.end
@@ -186,12 +270,14 @@ class IntroAutoSkipController(
      * Back / Escape / Android system back while the pill is showing: hide it and
      * resolve the intro without moving playback. Returns true when a pill was
      * actually dismissed, so the caller can consume the press only then — a
-     * second Back must behave normally.
+     * second Back must behave normally. Only the timed pill takes Back: with
+     * the untimed [IntroAutoSkipState.Returned] pill up this returns false and
+     * changes nothing.
      */
     fun dismiss(): Boolean {
         val key = activeKey ?: return false
         resolved.add(key)
-        expiredKey = null
+        clearExpired()
         clearPrompt()
         return true
     }
@@ -199,7 +285,7 @@ class IntroAutoSkipController(
     /** Clears all per-intro state, for when playback moves to different content. */
     fun reset() {
         resolved.clear()
-        expiredKey = null
+        clearExpired()
         lastMode = null
         clearPrompt()
     }
@@ -208,7 +294,8 @@ class IntroAutoSkipController(
         inputs: Inputs,
         onSeek: suspend (toSeconds: Double) -> Unit,
     ) {
-        val (pos, range, mode, playbackKey, playbackActive) = inputs
+        val (pos, range, mode, playbackKey, playbackActive, controls) = inputs
+        controlsVisible = controls
         // An episode may have several intros. Keying each by its range here,
         // rather than trusting a caller key derived from the same position,
         // keeps a key that lags its range by one emission from pinning a new
@@ -219,7 +306,7 @@ class IntroAutoSkipController(
         // down, never -> always skips the intro the viewer is sitting in.
         if (mode != lastMode) {
             lastMode = mode
-            expiredKey = null
+            clearExpired()
             clearPrompt()
         }
 
@@ -236,7 +323,7 @@ class IntroAutoSkipController(
         if (!inside) {
             // Leaving the range clears the timed-out marker, so seeking back in
             // re-offers with a full timer. It does not clear `resolved`.
-            expiredKey = null
+            clearExpired()
             clearPrompt()
             return
         }
@@ -246,12 +333,19 @@ class IntroAutoSkipController(
         val safeKey = key!!
 
         if (activeKey != null && activeKey != safeKey) {
-            expiredKey = null
+            clearExpired()
             clearPrompt()
         }
 
-        if (mode == IntroSkipMode.NEVER || safeKey in resolved || safeKey == expiredKey) {
+        if (mode == IntroSkipMode.NEVER || safeKey in resolved) {
             clearPrompt()
+            return
+        }
+
+        if (safeKey == expiredKey) {
+            // Timed out, still inside: the offer is back without a timer while
+            // the controls are up, and hidden while they are not.
+            showReturnedIfControlsUp()
             return
         }
 
@@ -332,12 +426,32 @@ class IntroAutoSkipController(
      */
     private fun expire() {
         val key = activeKey
-        when (activePrompt) {
+        val prompt = activePrompt
+        when (prompt) {
             Prompt.SKIPPED -> if (key != null) resolved.add(key)
-            Prompt.ASKING -> expiredKey = key
+            Prompt.ASKING -> {
+                expiredKey = key
+                expiredRange = activeRange
+            }
             null -> Unit
         }
         clearPrompt()
+        // With the controls already up, the pill stays and loses its timer.
+        if (prompt == Prompt.ASKING) showReturnedIfControlsUp()
+    }
+
+    private fun showReturnedIfControlsUp() {
+        val next = if (controlsVisible && expiredRange != null) {
+            IntroAutoSkipState.Returned
+        } else {
+            IntroAutoSkipState.Hidden
+        }
+        if (_state.value != next) _state.value = next
+    }
+
+    private fun clearExpired() {
+        expiredKey = null
+        expiredRange = null
     }
 
     private fun stopTimerKeepingState() {
@@ -364,5 +478,6 @@ class IntroAutoSkipController(
         val mode: IntroSkipMode,
         val key: String?,
         val playbackActive: Boolean,
+        val controlsVisible: Boolean,
     )
 }

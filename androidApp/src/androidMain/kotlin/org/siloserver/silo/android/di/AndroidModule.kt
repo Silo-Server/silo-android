@@ -487,6 +487,8 @@ val androidModule = module {
             serverReachabilityMonitor = get(),
             playerSettingsStore = get(),
             introAutoSkipController = get(),
+            // A factory binding: this is a second, independent instance.
+            segmentSkipController = get(),
             sessionLifecycle = get(),
             sleepTimer = get(),
             subtitlesRepository = get(),

@@ -932,6 +932,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                 },
                 playerSettingsStore = FakePlayerSettingsStore(),
                 introAutoSkipController = IntroAutoSkipController(scope),
+                segmentSkipController = IntroAutoSkipController(scope),
                 sessionLifecycle = lifecycle,
                 sleepTimer = SleepTimerController(scope),
                 subtitlesRepository = SubtitlesRepository(

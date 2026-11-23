@@ -142,8 +142,6 @@ import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackPreflightListener
 import org.siloserver.silo.common.player.NoticeTone
 import org.siloserver.silo.common.player.PlayerNotice
-import org.siloserver.silo.common.player.video.markerSkipTarget
-import org.siloserver.silo.common.player.video.MarkerSkipTarget
 import org.siloserver.silo.common.player.video.ManualMarkerKind
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.rememberPlayerSpinnerVisible
@@ -202,6 +200,8 @@ private val LEGACY_TV_VIDEO_SEEK_INTERVALS = SeekIntervalPair(backSeconds = 10, 
 private const val SKIP_FEEDBACK_HIDE_MS = 1_200L
 private const val CLEAN_SEEK_HOLD_THRESHOLD_MS = 300L
 private const val CLEAN_QUICK_SKIP_CAPTURE_MS = 200L
+/** How long after a pill answered Back in the key bridge the BackHandler still treats it as that press. */
+private const val PILL_BACK_PRESS_WINDOW_MS = 1_000L
 
 private enum class TvIdleOverlayFocusTarget {
     Scrubber,
@@ -394,6 +394,9 @@ fun TvPlayerScreen(
     val activeMarkerSkipTarget by viewModel.manualMarkerSkipTarget.collectAsState()
     val introSkipCountdownRun by viewModel.introSkipCountdownRun.collectAsState()
     val introSkipTimerRunning by viewModel.introSkipTimerRunning.collectAsState()
+    val segmentSkipState by viewModel.segmentSkipState.collectAsState()
+    val segmentSkipCountdownRun by viewModel.segmentSkipCountdownRun.collectAsState()
+    val segmentSkipTimerRunning by viewModel.segmentSkipTimerRunning.collectAsState()
     val bufferingPill by viewModel.bufferingPill.collectAsState()
     val bufferingCountdownRun by viewModel.bufferingCountdownRun.collectAsState()
     val bufferingTimerRunning by viewModel.bufferingTimerRunning.collectAsState()
@@ -671,15 +674,19 @@ fun TvPlayerScreen(
         activeMarkerSkipTarget, canSeekInRoom, visibleIntroSkipState.isVisible,
         state.isLoading || state.error != null, qualityOfferVisible,
     )
-    val latestManualSkipTarget by rememberUpdatedState(manualSkipTarget)
+    // The recap and credits pill as displayed: behind the gates above, which
+    // also name its label.
+    val visibleSegmentSkipState = if (manualSkipTarget != null) segmentSkipState else IntroAutoSkipState.Hidden
+    val latestSegmentSkipState by rememberUpdatedState(visibleSegmentSkipState)
     // The intro, recap and credits skip pills and Next Up outrank the
     // buffering pill: it hides (its timer frozen) while any of them shows.
     // As displayed: in a room the intro pill shows only to members who may
-    // seek, and the marker pill only when its own gates allow. The HUD shows
-    // no pill, so the buffering pill waits there the same way. Picture in
-    // picture is reported on its own below: an undo pill runs on unseen
-    // there. Leaving the player otherwise pauses or closes it.
-    val bufferingPillBlocked = visibleIntroSkipState.isVisible || manualSkipTarget != null ||
+    // seek, and the marker pill only when its own gates allow. A skip pill
+    // that returned with the controls counts too. The HUD shows no pill, so
+    // the buffering pill waits there the same way. Picture in picture is
+    // reported on its own below: an undo pill runs on unseen there. Leaving
+    // the player otherwise pauses or closes it.
+    val bufferingPillBlocked = visibleIntroSkipState.isVisible || visibleSegmentSkipState.isVisible ||
         state.showNextUp || state.hudOpen
     LaunchedEffect(bufferingPillBlocked) {
         viewModel.onOtherPillDisplayed(bufferingPillBlocked)
@@ -795,12 +802,14 @@ fun TvPlayerScreen(
         val current = viewModel.uiState.value
         if (!current.hudOpen && !current.showNextUp) refocusAfterPillHides()
     }
-    val onIntroPillFocusChanged = rememberRefocusWhenPillHides(
-        visible = visibleIntroSkipState.isVisible,
+    // A timed pill that runs out with the controls up stays, untimed, and
+    // gives up its focus: the form change refocuses as hiding does.
+    val onIntroPillFocusChanged = rememberRefocusWhenPillChanges(
+        form = visibleIntroSkipState.pillForm,
         refocus = refocusAfterSkipPillHides,
     )
-    val onMarkerPillFocusChanged = rememberRefocusWhenPillHides(
-        visible = manualSkipTarget != null,
+    val onMarkerPillFocusChanged = rememberRefocusWhenPillChanges(
+        form = visibleSegmentSkipState.pillForm,
         refocus = refocusAfterSkipPillHides,
     )
     val onBufferingPillFocusChanged: (TvBufferingPillAction?) -> Unit = remember(viewModel) {
@@ -815,16 +824,21 @@ fun TvPlayerScreen(
         }
     }
 
-    fun handleManualMarkerSelect() {
+    // The recap or credits pill's Select, timed or returned: the same shape
+    // as the intro pill's, with permission checked before the range resolves.
+    fun handleSegmentPromptSelect(): Boolean {
         val current = viewModel.uiState.value
-        val target = markerSkipTarget(current.position, current.markerTimeline) ?: return
+        if (!latestSegmentSkipState.isVisible) return false
         if (watchParty != null) {
-            if (!watchParty.canSeek()) return
-            watchParty.seek(target.endSeconds)
+            if (!watchParty.canSeek()) return true
+            val target = viewModel.onSelectSegmentPrompt() ?: return false
+            watchParty.seek(target)
         } else {
-            viewModel.seekImmediate(target.endSeconds)
+            val target = viewModel.onSelectSegmentPrompt() ?: return false
+            viewModel.seekImmediate(target)
         }
         if (current.showControls) requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Scrubber)
+        return true
     }
 
     fun armQuickSkipCapture() {
@@ -1099,6 +1113,18 @@ fun TvPlayerScreen(
         }
     }
 
+    // The downTime of the last Back press a pill answered in the key bridge.
+    // Where the system also delivers that press to the BackHandler below, the
+    // pill is already gone by then, so the handler has to recognise the press
+    // instead of acting on it again (hiding the controls or leaving).
+    val pillAnsweredBackPress = remember { longArrayOf(-1L) }
+    fun consumePillAnsweredBackPress(): Boolean {
+        val downTime = pillAnsweredBackPress[0]
+        if (downTime < 0 || SystemClock.uptimeMillis() - downTime > PILL_BACK_PRESS_WINDOW_MS) return false
+        pillAnsweredBackPress[0] = -1L
+        return true
+    }
+
     // More-specific overlays register their own BackHandlers later in the
     // composition and therefore run first. This screen callback owns the
     // remaining player-state ladder on Android 16, where KEYCODE_BACK is no
@@ -1110,6 +1136,7 @@ fun TvPlayerScreen(
                 "cleanSeek=$cleanSeekRate paused=${state.isPaused}"
         }
         when {
+            consumePillAnsweredBackPress() -> Unit
             cleanSeekRate != 0 -> stopCleanPlaybackSeek()
             state.isScrubbing -> viewModel.cancelScrub()
             // Below the seek/scrub entries deliberately: a Back during a scrub
@@ -1117,8 +1144,18 @@ fun TvPlayerScreen(
             // the most transient thing on screen. Handled HERE and not only in
             // the legacy key bridge — on API 36 Back never reaches
             // dispatchKeyEvent, so a countdown Back would otherwise fall
-            // through to hiding the controls or exiting the player.
-            latestIntroSkipState.isVisible -> viewModel.onDismissIntroPrompt()
+            // through to hiding the controls or exiting the player. Only the
+            // timed pills take Back, and only while on screen: the HUD and Up
+            // Next do not compose them, and Back there belongs to them.
+            // Consumed whatever dismiss returns: where the key bridge also sees
+            // Back, it has already dismissed the pill by the time this runs,
+            // and the press must not fall through to an exit.
+            latestIntroSkipState.isTimed && !state.hudOpen && !state.showNextUp -> {
+                viewModel.onDismissIntroPrompt()
+            }
+            latestSegmentSkipState.isTimed && !state.hudOpen && !state.showNextUp -> {
+                viewModel.onDismissSegmentPrompt()
+            }
             // Same rank as the intro pill, while it is on screen (the HUD and
             // Up Next do not compose it). Falls through when the pill went
             // away first and did not consume the press.
@@ -1319,13 +1356,19 @@ fun TvPlayerScreen(
                 return@handler false
             }
 
-            // Back takes the pill down and resolves the intro. Consumed so the
-            // press cannot also exit playback; afterwards no pill is showing,
-            // so a second Back behaves normally. Mirrors the BackHandler
-            // ladder's priority: a scrub or clean seek owns Back first, so the
-            // pill must not swallow it here on older Android and leave the
-            // scrub running.
-            if (latestIntroSkipState.isVisible &&
+            // Back takes a timed skip pill down and resolves its range.
+            // Consumed so the press cannot also hide the controls or exit
+            // playback; afterwards no timed pill is showing, so a second Back
+            // behaves normally. The pill that returned with the controls does
+            // not take Back. Mirrors the BackHandler ladder's priority: a scrub
+            // or clean seek owns Back first, so the pill must not swallow it
+            // here on older Android and leave the scrub running.
+            val timedSkipPillDismiss: (() -> Boolean)? = when {
+                latestIntroSkipState.isTimed -> viewModel::onDismissIntroPrompt
+                latestSegmentSkipState.isTimed -> viewModel::onDismissSegmentPrompt
+                else -> null
+            }
+            if (timedSkipPillDismiss != null &&
                 event.keyCode == KeyEvent.KEYCODE_BACK &&
                 cleanSeekRate == 0 &&
                 !state.isScrubbing
@@ -1334,8 +1377,9 @@ fun TvPlayerScreen(
                 // activity's back dispatcher. The latch keeps the UP once the
                 // pill has gone.
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    viewModel.onDismissIntroPrompt()
+                    timedSkipPillDismiss()
                     pillBackDownTime = event.downTime
+                    pillAnsweredBackPress[0] = event.downTime
                 }
                 return@handler true
             }
@@ -1353,6 +1397,7 @@ fun TvPlayerScreen(
                 if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return@handler true
                 if (viewModel.onBufferingBack()) {
                     pillBackDownTime = event.downTime
+                    pillAnsweredBackPress[0] = event.downTime
                     return@handler true
                 }
             }
@@ -1380,7 +1425,7 @@ fun TvPlayerScreen(
 
             if (event.action == KeyEvent.ACTION_DOWN &&
                 event.repeatCount == 0 &&
-                latestIntroSkipState.isVisible &&
+                latestIntroSkipState.isTimed &&
                 // Only while the transport overlay is hidden: with controls up
                 // a focused button owns Select — hijacking it here made every
                 // OK press skip the intro for the whole intro window.
@@ -1394,11 +1439,14 @@ fun TvPlayerScreen(
                 return@handler handleIntroPromptSelect()
             }
 
-            if (latestManualSkipTarget != null && !playerState.showControls &&
+            // The recap and credits pill takes root Select only while its timer
+            // runs. After it, OK is normal Select again: it shows the controls
+            // (the unmapped-key branch below) and skips nothing.
+            if (latestSegmentSkipState.isTimed && !playerState.showControls &&
                 !playerState.isScrubbing && cleanSeekRate == 0 &&
                 event.keyCode in setOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)
             ) {
-                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) handleManualMarkerSelect()
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) handleSegmentPromptSelect()
                 return@handler true
             }
 
@@ -2780,8 +2828,11 @@ fun TvPlayerScreen(
             nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
             autoPlayNextEnabled = autoPlayNextEnabled,
             introSkipState = visibleIntroSkipState,
-            manualSkipTarget = manualSkipTarget,
-            onManualMarkerSelect = { handleManualMarkerSelect() },
+            segmentSkipState = visibleSegmentSkipState,
+            segmentSkipKind = manualSkipTarget?.kind,
+            onSegmentPromptSelect = { handleSegmentPromptSelect() },
+            segmentSkipCountdownRun = segmentSkipCountdownRun,
+            segmentSkipTimerRunning = segmentSkipTimerRunning,
             onSkipPillSeek = { direction, hold -> handleSkipPillSeek(direction, hold) },
             onIntroPillFocusChanged = onIntroPillFocusChanged,
             onMarkerPillFocusChanged = onMarkerPillFocusChanged,
@@ -4288,31 +4339,44 @@ private fun TvPlayerClockScope(
     content(pendingSeekSec?.let { clock.copy(position = it) } ?: clock)
 }
 
+/** Which form of a skip pill is on screen: null when none, else timed or untimed. */
+private enum class SkipPillForm { Timed, Untimed }
+
+private val IntroAutoSkipState.pillForm: SkipPillForm?
+    get() = when {
+        isTimed -> SkipPillForm.Timed
+        isVisible -> SkipPillForm.Untimed
+        else -> null
+    }
+
 /**
- * Remembers whether a pill held focus and, when it hides while holding it,
- * calls [refocus]: the focus leaves with the pill. Returns the pill's focus
- * callback (true while it, or something in it, has focus).
+ * Remembers which form of a pill held focus and, when the pill hides or
+ * changes form while holding it, calls [refocus]: the focus leaves with the
+ * pill, and the untimed pill never inherits the timed pill's focus. Returns
+ * the pill's focus callback (true while it, or something in it, has focus).
  */
 @Composable
-private fun rememberRefocusWhenPillHides(
-    visible: Boolean,
+private fun rememberRefocusWhenPillChanges(
+    form: SkipPillForm?,
     refocus: suspend () -> Unit,
 ): (Boolean) -> Unit {
-    val latestVisible by rememberUpdatedState(visible)
+    val latestForm by rememberUpdatedState(form)
     val latestRefocus by rememberUpdatedState(refocus)
-    var heldFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(visible) {
-        if (visible || !heldFocus) return@LaunchedEffect
-        heldFocus = false
+    // The form that held focus, or null when the pill does not hold it.
+    var focusedForm by remember { mutableStateOf<SkipPillForm?>(null) }
+    LaunchedEffect(form) {
+        val held = focusedForm ?: return@LaunchedEffect
+        if (held == form) return@LaunchedEffect
+        focusedForm = null
         latestRefocus()
     }
     return remember {
         { focused ->
             if (focused) {
-                heldFocus = true
-            } else if (latestVisible) {
+                focusedForm = latestForm
+            } else if (latestForm == focusedForm) {
                 // Focus moved off a pill that stays up (or a menu covered it).
-                heldFocus = false
+                focusedForm = null
             }
         }
     }
@@ -4347,8 +4411,12 @@ private fun TvPlayerOverlays(
     shuffle: TvShuffleUiState?,
     autoPlayNextEnabled: Boolean,
     introSkipState: IntroAutoSkipState,
-    manualSkipTarget: MarkerSkipTarget?,
-    onManualMarkerSelect: () -> Unit,
+    /** The recap and credits pill, as displayed, and which of the two it skips. */
+    segmentSkipState: IntroAutoSkipState,
+    segmentSkipKind: ManualMarkerKind?,
+    onSegmentPromptSelect: () -> Unit,
+    segmentSkipCountdownRun: Int,
+    segmentSkipTimerRunning: Boolean,
     /** Left/Right on a focused skip pill; see [TvIntroAutoSkipBanner]'s onSeek. */
     onSkipPillSeek: (direction: Int, hold: Boolean) -> Unit,
     /** Whether each skip pill holds focus, so focus can be placed when it hides. */
@@ -4558,14 +4626,23 @@ private fun TvPlayerOverlays(
                         .padding(bottom = introSkipBottomInset, end = 32.dp),
                     contentAlignment = Alignment.BottomEnd,
                 ) {
-                    if (manualSkipTarget != null) {
-                        TvMarkerSkipPill(
-                            modifier = Modifier.onFocusChanged { onMarkerPillFocusChanged(it.hasFocus) },
-                            label = stringResource(if (manualSkipTarget.kind == ManualMarkerKind.Recap) CommonR.string.marker_skipRecap else CommonR.string.marker_skipCredits),
-                            onSelect = onManualMarkerSelect,
-                            onSeek = onSkipPillSeek,
-                        )
-                    }
+                    TvIntroAutoSkipBanner(
+                        modifier = Modifier.onFocusChanged { onMarkerPillFocusChanged(it.hasFocus) },
+                        state = segmentSkipState,
+                        onSelect = onSegmentPromptSelect,
+                        onSeek = onSkipPillSeek,
+                        totalSeconds = introSkipTotalSeconds,
+                        countdownRun = segmentSkipCountdownRun,
+                        timerRunning = segmentSkipTimerRunning,
+                        mayTakeFocus = introBannerMayTakeFocus,
+                        skipLabel = stringResource(
+                            if (segmentSkipKind == ManualMarkerKind.Recap) {
+                                CommonR.string.marker_skipRecap
+                            } else {
+                                CommonR.string.marker_skipCredits
+                            },
+                        ),
+                    )
                     TvIntroAutoSkipBanner(
                         modifier = Modifier.onFocusChanged { onIntroPillFocusChanged(it.hasFocus) },
                         state = introSkipState,

@@ -62,6 +62,7 @@ import org.siloserver.silo.common.player.PlayerNotice
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.domain.player.BufferingQualityNotice
 import org.siloserver.silo.domain.player.BufferingQualityPill
+import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.PlaybackQualityOption
 import org.siloserver.silo.model.playback.playbackQualityMenu
@@ -217,11 +218,29 @@ fun PlayerOverlay(
     val trickplayThumbnail by viewModel.trickplayThumbnail.collectAsState()
     val introSkipCountdownRun by viewModel.introSkipCountdownRun.collectAsState()
     val introSkipTimerRunning by viewModel.introSkipTimerRunning.collectAsState()
-    // Back while the pill is up dismisses it and is consumed; a second Back
+    val segmentSkipState by viewModel.segmentSkipState.collectAsState()
+    val segmentSkipCountdownRun by viewModel.segmentSkipCountdownRun.collectAsState()
+    val segmentSkipTimerRunning by viewModel.segmentSkipTimerRunning.collectAsState()
+    // The recap and credits pill, as drawn: it yields to Up Next and to the
+    // intro pill, and its only action is a seek, so members who may not seek
+    // never see it.
+    val visibleSegmentSkipState = if (
+        !state.showUpNext && !(introSkipState.isVisible && introPillAllowed) && seekEnabled && !state.isLoading
+    ) {
+        segmentSkipState
+    } else {
+        IntroAutoSkipState.Hidden
+    }
+    // Back while a timed pill is up dismisses it and is consumed; a second Back
     // behaves normally, because by then no pill is showing and this handler is
-    // disabled. The player has no other BackHandler of its own — sheets live in
-    // their own dialog windows, so an open sheet's Back never reaches here.
-    BackHandler(enabled = introSkipState.isVisible && introPillAllowed) { viewModel.onDismissIntroPrompt() }
+    // disabled. The pill that returns with the controls does not take Back,
+    // and Up Next, which hides the pills, keeps it. The player has no other
+    // BackHandler of its own — sheets live in their own dialog windows, so an
+    // open sheet's Back never reaches here.
+    BackHandler(enabled = introSkipState.isTimed && introPillAllowed && !state.showUpNext) {
+        viewModel.onDismissIntroPrompt()
+    }
+    BackHandler(enabled = visibleSegmentSkipState.isTimed) { viewModel.onDismissSegmentPrompt() }
     val bufferingPill by viewModel.bufferingPill.collectAsState()
     val bufferingCountdownRun by viewModel.bufferingCountdownRun.collectAsState()
     val bufferingTimerRunning by viewModel.bufferingTimerRunning.collectAsState()
@@ -229,9 +248,13 @@ fun PlayerOverlay(
     // Hidden under Next Up, as the intro pill is.
     val bufferingPillShown = bufferingPill.isVisible && !state.showUpNext
     // Back on a buffering pill is consumed: Keep quality on the prompt, hide
-    // on the undo. The controller holds its pill while the intro pill shows;
-    // should both still be up, the intro pill takes Back.
-    BackHandler(enabled = bufferingPillShown && !(introSkipState.isVisible && introPillAllowed)) {
+    // on the undo. The controller holds its pill while a skip pill shows;
+    // should both still be up, the timed skip pill takes Back.
+    BackHandler(
+        enabled = bufferingPillShown &&
+            !(introSkipState.isTimed && introPillAllowed) &&
+            !visibleSegmentSkipState.isTimed,
+    ) {
         viewModel.onBufferingBack()
     }
     val bufferingNotice = bufferingNoticeKind?.let { kind ->
@@ -361,6 +384,9 @@ fun PlayerOverlay(
         // item's first frame.
         val controlsShown = (alwaysShowControls || state.showControls) && !state.showUpNext && !menuDocked &&
             !state.awaitingFirstFrame
+        // A skip pill that timed out comes back, untimed, while these controls show.
+        LaunchedEffect(controlsShown) { viewModel.onOverlayControlsShownChanged(controlsShown) }
+        DisposableEffect(viewModel) { onDispose { viewModel.onOverlayControlsShownChanged(false) } }
         // Up Next draws the spinner in its own video frame.
         if (spinnerVisible && !controlsShown && !state.showUpNext) {
             PlayerLoadingSpinner(modifier = Modifier.align(Alignment.Center))
@@ -583,15 +609,25 @@ fun PlayerOverlay(
             }
         }
 
-        if (!state.showUpNext && !introSkipState.isVisible && seekEnabled && !state.isLoading) {
+        // Recap and credits pill: timed like the intro pill, and back without a
+        // timer while the controls show after it timed out.
+        if (visibleSegmentSkipState.isVisible) {
             val target = markerSkipTarget(state.position, state.markerTimeline)
-            if (target != null) {
-                Box(modifier = bottomEndSlotModifier, contentAlignment = Alignment.BottomEnd) {
-                    MarkerSkipPill(
-                        label = stringResource(if (target.kind == ManualMarkerKind.Recap) CommonR.string.marker_skipRecap else CommonR.string.marker_skipCredits),
-                        onClick = { gatedSeek(target.endSeconds) },
-                    )
-                }
+            Box(modifier = bottomEndSlotModifier, contentAlignment = Alignment.BottomEnd) {
+                IntroAutoSkipBanner(
+                    state = visibleSegmentSkipState,
+                    onSelect = { if (seekEnabled) viewModel.selectSegmentPromptTarget()?.let(onSeek) },
+                    totalSeconds = viewModel.introSkipTotalSeconds,
+                    countdownRun = segmentSkipCountdownRun,
+                    timerRunning = segmentSkipTimerRunning,
+                    skipLabel = stringResource(
+                        if (target?.kind == ManualMarkerKind.Recap) {
+                            CommonR.string.marker_skipRecap
+                        } else {
+                            CommonR.string.marker_skipCredits
+                        },
+                    ),
+                )
             }
         }
 
