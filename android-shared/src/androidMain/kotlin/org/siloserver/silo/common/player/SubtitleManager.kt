@@ -923,6 +923,65 @@ internal fun subtitleCanvasRectFor(
 }
 
 /**
+ * Where the libass overlay goes inside the caption canvas: over [videoRect],
+ * the whole displayed video, in [canvasRect]'s own coordinates, or null when
+ * the canvas already is the video and the overlay simply fills it.
+ *
+ * The canvas is laid out for Media3's cues and takes insets they need (TV
+ * title safe area, a detected letterbox, the Bottom preset's reach into the
+ * bar). libass renders ASS in the script's PlayRes space scaled to its frame,
+ * with the script's own margins, so it needs the video's frame, not the
+ * canvas: inheriting the title-safe inset cut off signs authored near the
+ * frame edges. Both rects are in the content frame's space.
+ *
+ * A side the canvas pads (the phone's docked player menu pads the right)
+ * still bounds the overlay, as it bounds Media3's cues, so ASS re-centres in
+ * the part of the picture left visible.
+ */
+internal fun libassOverlayRectInCanvas(
+    videoRect: SubtitleVideoRect,
+    canvasRect: SubtitleVideoRect,
+    canvasPaddingLeft: Int = 0,
+    canvasPaddingRight: Int = 0,
+): SubtitleVideoRect? {
+    if (videoRect == canvasRect || videoRect.width <= 0 || videoRect.height <= 0) return null
+    var left = videoRect.left - canvasRect.left
+    var right = left + videoRect.width
+    if (canvasPaddingLeft > 0) left = maxOf(left, canvasPaddingLeft)
+    if (canvasPaddingRight > 0) right = minOf(right, canvasRect.width - canvasPaddingRight)
+    return videoRect.copy(
+        left = left,
+        top = videoRect.top - canvasRect.top,
+        width = (right - left).coerceAtLeast(1),
+    )
+}
+
+/**
+ * How much of the libass overlay's height stays visible, from its top, or
+ * null when all of it does.
+ *
+ * While the TV's controls are up they pad the canvas's bottom so Media3's
+ * cues rise above them. The overlay keeps the video's frame instead (see
+ * [libassOverlayRectInCanvas]), so what it would draw under the controls is
+ * hidden, and only that: its other edges reach past the canvas on purpose.
+ * [overlayRect] is in the canvas's coordinates.
+ */
+internal fun libassOverlayVisibleHeight(
+    overlayRect: SubtitleVideoRect,
+    canvasHeight: Int,
+    canvasPaddingBottom: Int,
+): Int? {
+    if (canvasPaddingBottom <= 0) return null
+    val visibleHeight = canvasHeight - canvasPaddingBottom - overlayRect.top
+    if (visibleHeight >= overlayRect.height) return null
+    return visibleHeight.coerceAtLeast(0)
+}
+
+/** True when this overlay rect, in the canvas's coordinates, reaches outside the canvas. */
+private fun SubtitleVideoRect.overflows(canvasWidth: Int, canvasHeight: Int): Boolean =
+    left < 0 || top < 0 || left + width > canvasWidth || top + height > canvasHeight
+
+/**
  * The bottom padding fraction for a canvas that may extend past the picture.
  *
  * Media3 reads the fraction against the SubtitleView's own height, so the
@@ -1163,6 +1222,8 @@ private class SubtitleVideoRectSync(
     private var relayoutAttempts = 0
     private var pendingLayoutRequest = false
     private var pendingCanvasPlacement = false
+    /** The pending placement must lay the canvas out even if its bounds match. */
+    private var pendingCanvasPlacementForced = false
     /** Mirrors the content frame's `clipChildren`, which starts out enabled. */
     private var contentFrameClipped = true
 
@@ -1423,6 +1484,7 @@ private class SubtitleVideoRectSync(
                     playerBottomInParentSpace > parentHeight
                 )
         ) {
+            val overlayMoved = libassBridge?.fillHost() == true
             applyLayoutParams(
                 subtitleView = subtitleView,
                 width = FrameLayout.LayoutParams.MATCH_PARENT,
@@ -1430,9 +1492,10 @@ private class SubtitleVideoRectSync(
                 leftMargin = 0,
                 topMargin = 0,
                 gravity = gravity,
+                childrenChanged = overlayMoved,
             )
             setContentFrameClipping(clipped = true)
-            libassBridge?.constrainOverlayHeight(0)
+            setCanvasClipping(subtitleView, clipped = true)
             applyBottomPadding(
                 subtitleView = subtitleView,
                 position = position,
@@ -1460,27 +1523,49 @@ private class SubtitleVideoRectSync(
             videoPixelWidthHeightRatio = videoSize.pixelWidthHeightRatio,
             resizeMode = resizeMode,
         )
-        val pictureRect = selectSubtitleCanvasRect(
+        val videoRect = selectSubtitleCanvasRect(
             contentFrameRect = playerView.contentFrameSubtitleRect(),
             displayedVideoRect = displayedVideoRect,
-        ).insetByLetterbox(letterbox).insetByTitleSafe(titleSafeFraction)
+        )
+        val pictureRect = videoRect.insetByLetterbox(letterbox).insetByTitleSafe(titleSafeFraction)
         val rect = subtitleCanvasRectFor(
             position = position,
             pictureRect = pictureRect,
             playerBottomInParentSpace = playerBottomInParentSpace,
         )
-        // Only a canvas that actually reaches past the frame needs the frame to
-        // stop clipping, and only while it does: extending back over the
-        // title-safe bottom inset stays inside the frame and changes nothing.
-        // The canvas never leaves the PlayerView, so the frame is the one
-        // ancestor in the way.
-        setContentFrameClipping(clipped = rect.top + rect.height <= parentHeight)
-        // libass scales the script to the frame it is given, so the ASS overlay
-        // must NOT follow the canvas into the bar — authored typesetting keeps
-        // the picture on every preset.
-        libassBridge?.constrainOverlayHeight(
-            if (rect.height > pictureRect.height) pictureRect.height else 0,
-        )
+        // The ASS overlay covers the whole video, not the canvas; see
+        // libassOverlayRectInCanvas. Where that reaches outside the canvas
+        // (the title-safe inset), the canvas must not clip it, and neither may
+        // the frame, which clips the canvas's drawing to the canvas's bounds.
+        val overlayRect = libassBridge
+            ?.takeIf(LibassBridge::isRenderingSupported)
+            ?.let {
+                libassOverlayRectInCanvas(
+                    videoRect = videoRect,
+                    canvasRect = rect,
+                    canvasPaddingLeft = subtitleView.paddingLeft,
+                    canvasPaddingRight = subtitleView.paddingRight,
+                )
+            }
+        val overlayOverflows = overlayRect?.overflows(rect.width, rect.height) == true
+        // Otherwise only a canvas that actually reaches past the frame needs
+        // the frame to stop clipping, and only while it does: extending back
+        // over the title-safe bottom inset stays inside the frame and changes
+        // nothing. The canvas never leaves the PlayerView, so the frame is the
+        // one ancestor in the way.
+        setContentFrameClipping(clipped = rect.top + rect.height <= parentHeight && !overlayOverflows)
+        setCanvasClipping(subtitleView, clipped = !overlayOverflows)
+        val overlayMoved = if (overlayRect == null) {
+            libassBridge?.fillHost() == true
+        } else {
+            // With the canvas's padding clip off, hide only what the TV's
+            // controls lift would have hidden. A padding change re-lays out
+            // the frame, which runs this again.
+            libassBridge?.clipOverlayBelow(
+                libassOverlayVisibleHeight(overlayRect, rect.height, subtitleView.paddingBottom) ?: -1,
+            )
+            libassBridge?.placeOverlay(overlayRect.left, overlayRect.top, overlayRect.width, overlayRect.height) == true
+        }
         applyLayoutParams(
             subtitleView = subtitleView,
             width = rect.width,
@@ -1488,6 +1573,9 @@ private class SubtitleVideoRectSync(
             leftMargin = rect.left,
             topMargin = rect.top,
             gravity = gravity,
+            // The overlay's new params, written during this layout pass, need
+            // the canvas laid out again even when the canvas itself is right.
+            childrenChanged = overlayMoved,
         )
         applyBottomPadding(
             subtitleView = subtitleView,
@@ -1527,6 +1615,19 @@ private class SubtitleVideoRectSync(
         )
         subtitleView.setBottomPaddingFraction(fraction)
         canvasBottomPaddingFraction = fraction
+    }
+
+    /**
+     * Lets the ASS overlay draw outside the caption canvas while it covers
+     * video the canvas leaves out. Media3's own cue output stays inside the
+     * canvas either way, so only the overlay can use it.
+     */
+    private fun setCanvasClipping(subtitleView: SubtitleView, clipped: Boolean) {
+        if (subtitleView.clipChildren != clipped) subtitleView.clipChildren = clipped
+        // A padded canvas (the TV lifts cues over its controls with bottom
+        // padding) also clips children to the padded area on every side, which
+        // would cut the overlay at the title-safe inset again.
+        if (subtitleView.clipToPadding != clipped) subtitleView.clipToPadding = clipped
     }
 
     /**
@@ -1584,6 +1685,7 @@ private class SubtitleVideoRectSync(
         leftMargin: Int,
         topMargin: Int,
         gravity: Int,
+        childrenChanged: Boolean = false,
     ) {
         val requested = RequestedCanvas(width, height, leftMargin, topMargin, gravity)
         if (requested != requestedCanvas) {
@@ -1615,9 +1717,10 @@ private class SubtitleVideoRectSync(
         // consulted: the stuck state IS a set flag that no ancestor acts on, so
         // reading it as "a layout is coming" is what makes the wedge permanent.
         // The laid-out bounds are the only honest signal.
-        if (subtitleLayoutMatches(subtitleView, width, height, leftMargin, topMargin)) return
+        if (!childrenChanged && subtitleLayoutMatches(subtitleView, width, height, leftMargin, topMargin)) return
+        if (childrenChanged) relayoutAttempts = 0
         requestSubtitleLayout(subtitleView)
-        placeSubtitleCanvas(subtitleView, width, height, leftMargin, topMargin)
+        placeSubtitleCanvas(subtitleView, width, height, leftMargin, topMargin, force = childrenChanged)
     }
 
     /**
@@ -1674,8 +1777,10 @@ private class SubtitleVideoRectSync(
      * willing to run it. `SubtitleView.onLayout` still positions its own
      * children from here, so the ASS overlay keeps matching.
      *
-     * Only ever reached when the bounds already disagree, so it cannot fight a
-     * parent that is doing its job. Deferred out of an in-progress layout pass,
+     * Only reached when the bounds already disagree, so it cannot fight a
+     * parent that is doing its job, or with [force] when the ASS overlay's
+     * params changed under a canvas that is already right, so the canvas has
+     * to lay that child out again. Deferred out of an in-progress layout pass,
      * where measuring another subtree is not safe.
      */
     private fun placeSubtitleCanvas(
@@ -1684,16 +1789,20 @@ private class SubtitleVideoRectSync(
         height: Int,
         leftMargin: Int,
         topMargin: Int,
+        force: Boolean = false,
     ) {
         if (subtitleView.isInLayout) {
+            pendingCanvasPlacementForced = pendingCanvasPlacementForced || force
             if (pendingCanvasPlacement) return
             pendingCanvasPlacement = true
             subtitleView.post {
                 pendingCanvasPlacement = false
+                val forced = pendingCanvasPlacementForced
+                pendingCanvasPlacementForced = false
                 if (
                     !isDisposed &&
                     subtitleView.isAttachedToWindow &&
-                    !subtitleLayoutMatches(subtitleView, width, height, leftMargin, topMargin)
+                    (forced || !subtitleLayoutMatches(subtitleView, width, height, leftMargin, topMargin))
                 ) {
                     measureAndLayoutSubtitleCanvas(
                         subtitleView,
