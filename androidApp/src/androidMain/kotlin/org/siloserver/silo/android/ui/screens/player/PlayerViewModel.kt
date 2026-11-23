@@ -1383,6 +1383,13 @@ class PlayerViewModel(
      * because exit clears the UI state before the player's last pause.
      */
     private var localPlaybackRunStartedAtMs: Long? = null
+
+    /**
+     * Where the playing download's end credits start, from its offline manifest;
+     * null for streaming and for downloads that have none stored. Reaching it
+     * finishes the title, as the server judges a streamed stop.
+     */
+    private var localEndCreditsStartSeconds: Double? = null
     private val initialPlayerLoadGate = InitialPlayerLoadGate()
 
     fun claimInitialRouteLoad(): Boolean = initialPlayerLoadGate.claim()
@@ -1801,6 +1808,7 @@ class PlayerViewModel(
 
         finalPositionScope = null
         localPlaybackRunStartedAtMs = null
+        localEndCreditsStartSeconds = null
         val newLoadJob = viewModelScope.launch {
             finalPositionScope = finalPlaybackPositionWriter.captureScope()
             var unpublishedReadySessionId: String? = null
@@ -3383,9 +3391,14 @@ class PlayerViewModel(
                 positionSeconds = state.position,
                 durationSeconds = state.duration.takeIf { it > 0.0 },
                 runStartedAtMs = runStartedAtMs,
+                reachedEndCredits = reachedEndCredits(state.position),
             ),
         )
     }
+
+    /** Whether a downloaded run's [positionSec] is in its end credits. */
+    private fun reachedEndCredits(positionSec: Double): Boolean =
+        localEndCreditsStartSeconds?.let { positionSec >= it } == true
 
     private fun currentFileId(): Int? =
         _uiState.value.versions.getOrNull(_uiState.value.selectedVersionIndex)?.fileId
@@ -3410,11 +3423,13 @@ class PlayerViewModel(
         lastRecordedKey = key
         lastRecordedPositionSec = positionSec
         val eventTimeMs = System.currentTimeMillis()
+        val reachedEndCredits = reachedEndCredits(positionSec)
         viewModelScope.launch {
             userItemStatePort.recordPosition(
                 scope, contentId, fileId, positionSec, durationSec.takeIf { it > 0.0 },
                 eventTimeMs = eventTimeMs,
                 runStartedAtMs = runStartedAtMs,
+                reachedEndCredits = reachedEndCredits,
             )
         }
     }
@@ -6937,6 +6952,7 @@ class PlayerViewModel(
                     durationSeconds = state.duration.takeIf { it > 0.0 },
                     serverTrackedAtMs = serverTrackedAtMs,
                     runStartedAtMs = runStartedAtMs,
+                    reachedEndCredits = reachedEndCredits(state.position),
                 )
             )
         }
@@ -7136,6 +7152,7 @@ class PlayerViewModel(
         val published = loadOwners.runIfOwned(loadOwner) {
             trackChoiceOwner = localTrackChoiceOwner
             localPlaybackRunStartedAtMs = System.currentTimeMillis()
+            localEndCreditsStartSeconds = offlineTracks?.endCreditsStartSeconds
             val mountGeneration = expectNextMediaMount()
             val preservesNextUp = nextUpTransitionGate.expectMount(
                 contentId = contentId,
