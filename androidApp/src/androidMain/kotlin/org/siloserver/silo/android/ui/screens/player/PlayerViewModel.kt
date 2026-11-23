@@ -751,7 +751,11 @@ class PlayerViewModel(
                     tier = networkEvidenceProvider.snapshot().networkTier,
                 )
             },
-            onPausedTimeout = { leaveServerEndedSession(PlaybackServerEnd.PAUSED_TIMEOUT) },
+            onPausedTimeout = { sessionId ->
+                // A late answer about a session this player moved on from
+                // must not end the playback that replaced it.
+                if (_uiState.value.sessionId == sessionId) leaveServerEndedSession(PlaybackServerEnd.PAUSED_TIMEOUT)
+            },
         ),
         persistencePort = object : MobileSubtitlePersistencePort {
             override suspend fun persist(

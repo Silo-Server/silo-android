@@ -2607,11 +2607,12 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
      */
     private val inPlayerQuality: suspend (String?) -> PlaybackQualityPair? = { null },
     /**
-     * Called when the server answers a stage or commit with 410
-     * `playback_session_paused_timeout`: the session is over, so the player
-     * leaves. The failed transaction still settles as a failure.
+     * Called with the session a stage or commit was about when the server
+     * answers it 410 `playback_session_paused_timeout`: that session is over,
+     * so the player leaves if it still plays it. The failed transaction still
+     * settles as a failure.
      */
-    private val onPausedTimeout: () -> Unit = {},
+    private val onPausedTimeout: (sessionId: String) -> Unit = {},
 ) : TvSubtitleStagedReplanPort {
     override suspend fun stage(request: TvSubtitleStageRequest): ApiResult<TvStagedSubtitleCandidate> {
         val input = when (val mapped = request.toManagerStageInput()) {
@@ -2664,13 +2665,13 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
                     ),
                 )
             }
-            is ApiResult.Error -> result.alsoLeaveOnPausedTimeout()
+            is ApiResult.Error -> result.alsoLeaveOnPausedTimeout(request.sessionId)
             is ApiResult.NetworkError -> result
         }
     }
 
-    private fun ApiResult.Error.alsoLeaveOnPausedTimeout(): ApiResult.Error = also {
-        if (playbackServerEnd() == PlaybackServerEnd.PAUSED_TIMEOUT) onPausedTimeout()
+    private fun ApiResult.Error.alsoLeaveOnPausedTimeout(sessionId: String): ApiResult.Error = also {
+        if (playbackServerEnd() == PlaybackServerEnd.PAUSED_TIMEOUT) onPausedTimeout(sessionId)
     }
 
     override suspend fun commit(
@@ -2697,7 +2698,7 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
                     outputRouteGeneration = candidate.outputRouteGeneration,
                 ),
             )
-            is ApiResult.Error -> result.alsoLeaveOnPausedTimeout()
+            is ApiResult.Error -> result.alsoLeaveOnPausedTimeout(candidate.sessionId)
             is ApiResult.NetworkError -> result
         }
     }

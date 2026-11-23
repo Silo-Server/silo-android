@@ -1580,7 +1580,11 @@ class TvPlayerViewModel(
             inPlayerQuality = { preference ->
                 playerSettingsStore.inPlayerQualityPair(preference, tier = PlaybackNetworkTier.UNMETERED)
             },
-            onPausedTimeout = { leaveServerEndedSession(PlaybackServerEnd.PAUSED_TIMEOUT) },
+            onPausedTimeout = { sessionId ->
+                // A late answer about a session this player moved on from
+                // must not end the playback that replaced it.
+                if (_uiState.value.sessionId == sessionId) leaveServerEndedSession(PlaybackServerEnd.PAUSED_TIMEOUT)
+            },
         ),
         settlementScope = TvSubtitleSettlementOwner.scope,
         persistencePort = object : TvSubtitlePersistencePort {
