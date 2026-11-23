@@ -33,6 +33,8 @@ import org.siloserver.silo.model.playback.SubtitleTransitionEvent
 import org.siloserver.silo.model.playback.SubtitleTransitionState
 import org.siloserver.silo.model.playback.UpdateAudioPreference
 import org.siloserver.silo.model.playback.UpdateQualityPreference
+import org.siloserver.silo.model.playback.deliveredAs
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.isServerPick
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
@@ -411,6 +413,21 @@ internal class MobileSubtitleTransactionAdapter(
     }
 
     fun select(identity: SubtitleIdentity) {
+        // The sidecar row whose burn-in already plays: a replan would only
+        // restart the transcode for the same answer. It is still the viewer's
+        // pick, so it settles a stale failure, outranks a pending refresh and
+        // is saved like any explicit commit.
+        if (identity != transition.committed.identity &&
+            identity.playsAs(transition.committed.identity) &&
+            !hasActiveTransaction
+        ) {
+            refreshGeneration += 1
+            subtitleIntentGeneration += 1
+            failureMessage = null
+            context?.let { persist(transition.committed, it) }
+            publish()
+            return
+        }
         mutate(SelectSubtitle(identity), explicit = true)
     }
 
@@ -1466,7 +1483,7 @@ private fun MobileStagedSubtitleCandidate.authoritativeValidatedState(
     val committedIdentity = if (requested.identity.isClientOwnedSubtitle()) {
         validated.committed.identity
     } else {
-        returnedIdentity ?: validated.committed.identity
+        (returnedIdentity ?: validated.committed.identity).deliveredAs(subtitleMode)
     }
     return validated.copy(
         committed = validated.committed.copy(
@@ -1505,6 +1522,12 @@ private fun MobileStagedSubtitleCandidate.validationFailure(
     is SubtitleIdentity.ServerSidecar -> when {
         selectedSubtitleIndex != identity.serverIndex ->
             "The candidate did not select the requested subtitle."
+        // The server burns in a track it will not hand the client as a
+        // sidecar (an ASS track on an HLS transcode, which declares no
+        // attached-font support). The replan has already switched the
+        // session's transcode, so this is the requested track and the only
+        // answer it will give.
+        subtitleMode == PlaybackSubtitleModeV3.BURN_IN -> null
         subtitleMode != PlaybackSubtitleModeV3.RENDER &&
             subtitleMode != PlaybackSubtitleModeV3.CONVERT ->
             "The candidate did not render the requested sidecar."
@@ -1514,9 +1537,12 @@ private fun MobileStagedSubtitleCandidate.validationFailure(
     is SubtitleIdentity.ServerBurnIn -> when {
         selectedSubtitleIndex != identity.serverIndex ->
             "The candidate did not select the requested subtitle."
-        subtitleMode != PlaybackSubtitleModeV3.BURN_IN ->
-            "The candidate did not burn in the requested subtitle."
-        else -> null
+        subtitleMode == PlaybackSubtitleModeV3.BURN_IN -> null
+        // A sidecar pick committed as burn-in comes back as a sidecar once a
+        // later replan (quality, audio) leaves the transcode.
+        hasSidecar &&
+            (subtitleMode == PlaybackSubtitleModeV3.RENDER || subtitleMode == PlaybackSubtitleModeV3.CONVERT) -> null
+        else -> "The candidate did not burn in the requested subtitle."
     }
     is SubtitleIdentity.Embedded -> if (
         selectedSubtitleIndex == identity.serverIndex &&

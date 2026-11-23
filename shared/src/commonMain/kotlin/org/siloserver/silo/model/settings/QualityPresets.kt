@@ -46,8 +46,17 @@ object QualityPresets {
 
     val ALL: List<QualityPreset> = listOf(
         QualityPreset(
+            id = "auto-10mbps",
+            label = QualityChoices.summary(RESOLUTION_AUTO, 10_000),
+            resolution = RESOLUTION_AUTO,
+            bitrateKbps = 10_000,
+        ),
+        QualityPreset(
             id = "auto",
-            label = QualityChoices.resolutionText(RESOLUTION_AUTO),
+            label = UiText.Key(
+                SharedString.QualitySummaryNoLimit,
+                listOf(QualityChoices.resolutionText(RESOLUTION_AUTO)),
+            ),
             resolution = RESOLUTION_AUTO,
             bitrateKbps = null,
         ),

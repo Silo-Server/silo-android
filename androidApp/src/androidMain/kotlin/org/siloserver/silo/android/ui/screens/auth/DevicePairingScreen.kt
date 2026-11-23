@@ -382,7 +382,8 @@ private fun ApprovalCard(
                 textAlign = TextAlign.Center,
             )
             // "Android TV · requested just now", as on the web approval page.
-            val platform = platformLabel(lookup.devicePlatform)
+            val rawPlatform = platformLabel(lookup.devicePlatform)
+            val platform = rawPlatform?.takeUnless { deviceName != null && it.equals(deviceName, ignoreCase = true) }
             val requested = requestedLabel(lookup.requestedAt)
             val deviceLine = when {
                 platform != null && requested != null ->
@@ -622,6 +623,7 @@ private fun platformLabel(platform: String?): String? {
     return when (raw.lowercase().replace("_", "-")) {
         "android-tv", "androidtv" -> stringResource(CommonR.string.platform_androidTv)
         "tvos", "apple-tv", "appletv" -> stringResource(CommonR.string.platform_appleTv)
+        "roku" -> "Roku"
         else -> raw
     }
 }

@@ -88,6 +88,7 @@ class TvQuickSubtitlePickerChromePolicyTest {
             hudOpen = true,
             focusedStableId = rows.firstOrNull()?.stableId,
             focusTrapActive = true,
+            committedIdentity = SubtitleIdentity.Off,
         )
 
     private fun row(identity: SubtitleIdentity, stableId: String): TvSubtitleHudRow =

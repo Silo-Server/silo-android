@@ -14,13 +14,11 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -40,7 +38,8 @@ import org.siloserver.silo.network.api.SectionApi
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.SectionRepository
-import java.util.Collections
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -134,7 +133,7 @@ class CatalogLetterIndexViewModelTest {
         server.lettersGate = gate
         val second = BrowseViewModel(server.catalog, SavedStateHandle(mapOf("libraryId" to "1")))
         second.applyFilterState(titleOrder)
-        assertNotNull(second.letterJump.value, "the rail shows before the fresh index arrives")
+        awaitState("cached letter index") { second.letterJump.value != null }
         awaitState("fresh letters request") { server.lettersRequests.size == 2 }
         gate.complete(Unit)
 
@@ -160,6 +159,8 @@ class CatalogLetterIndexViewModelTest {
 
         viewModel.selectBrowseSort(CatalogSortField.Title)
         awaitState("letter index") { viewModel.letterJump.value != null }
+        val jump = assertNotNull(viewModel.letterJump.value)
+        awaitState("seeded page") { jump.pager.isLoaded(0..99) }
         assertEquals("1", server.lettersRequests.single()["library_id"])
         assertEquals("asc", server.lettersRequests.single()["order"])
         assertEquals("100", server.catalogRequests.last { it["seek"] == null }["limit"])
@@ -201,32 +202,40 @@ class CatalogLetterIndexViewModelTest {
         assertEquals(catalogRequestCount, server.catalogRequests.size)
     }
 
-    private fun runCatalogTest(block: suspend TestScope.() -> Unit) = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+    /**
+     * Run the test on a single-threaded main dispatcher, matching Android's
+     * main looper. [CatalogLetterJump] and [CatalogPositionPager] are
+     * main-thread-confined; `UnconfinedTestDispatcher` resumes Ktor's mock
+     * responses on Ktor's own worker threads, letting `install()` and `seed()`
+     * race concurrently.
+     */
+    private fun runCatalogTest(block: suspend () -> Unit) {
+        val mainDispatcher = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "catalog-letter-index-test-main").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+        Dispatchers.setMain(mainDispatcher)
         try {
-            block()
+            runBlocking(mainDispatcher) { block() }
         } finally {
             Dispatchers.resetMain()
+            mainDispatcher.close()
         }
     }
 
-    /** A jump's brief wait for its titles runs in real time, like the mock engine. */
-    private suspend fun jumpPosition(read: suspend () -> Int?): Int? = withContext(Dispatchers.IO) { read() }
+    /** Runs on the single-threaded main dispatcher in real time. */
+    private suspend fun jumpPosition(read: suspend () -> Int?): Int? = read()
 
     /**
      * Wait for the view model to reach a state, in real time: the Ktor mock
-     * engine answers on its own threads, which the test scheduler can neither
-     * see nor advance. The budget catches a hang, not latency on a loaded
-     * build machine.
+     * engine answers on its own threads, and `delay` yields the single main
+     * thread so pending `viewModelScope` resumptions can run.
      */
     private suspend fun awaitState(description: String, predicate: () -> Boolean) {
-        withContext(Dispatchers.IO) {
-            val reached = withTimeoutOrNull(30_000L) {
-                while (!predicate()) delay(10)
-                true
-            }
-            assertTrue(reached == true, "view model never reached $description")
+        val reached = withTimeoutOrNull(30_000L) {
+            while (!predicate()) delay(10)
+            true
         }
+        assertTrue(reached == true, "view model never reached $description")
     }
 
     /**
@@ -234,8 +243,8 @@ class CatalogLetterIndexViewModelTest {
      * puts `#` at 0, A at 10, M at 210 and Z at 280.
      */
     private class FakeServer(private val lettersStatus: HttpStatusCode = HttpStatusCode.OK) {
-        val catalogRequests: MutableList<Map<String, String?>> = Collections.synchronizedList(mutableListOf())
-        val lettersRequests: MutableList<Map<String, String?>> = Collections.synchronizedList(mutableListOf())
+        val catalogRequests: MutableList<Map<String, String?>> = CopyOnWriteArrayList()
+        val lettersRequests: MutableList<Map<String, String?>> = CopyOnWriteArrayList()
         @Volatile var lettersGate: CompletableDeferred<Unit>? = null
 
         private val client = HttpClient(

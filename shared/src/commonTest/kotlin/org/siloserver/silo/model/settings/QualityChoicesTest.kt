@@ -75,9 +75,9 @@ class QualityChoicesTest {
         assertEquals(20, CellularQuality.minimumRevision(SettingKeys.PLAYBACK_CELLULAR_PREFERRED_QUALITY))
         assertEquals(20, CellularQuality.minimumRevision(SettingKeys.PLAYBACK_CELLULAR_MAX_BITRATE_KBPS))
         assertNull(CellularQuality.minimumRevision(SettingKeys.PLAYBACK_PREFERRED_QUALITY))
-        // The default is the 720p preset.
+        // The default is the Auto (up to 10 Mbps) preset.
         assertEquals(
-            QualityPresets.byId("720p")?.label,
+            QualityPresets.byId("auto-10mbps")?.label,
             CellularQuality.label(CellularQuality.DEFAULT_RESOLUTION, CellularQuality.DEFAULT_MAX_BITRATE_KBPS),
         )
     }

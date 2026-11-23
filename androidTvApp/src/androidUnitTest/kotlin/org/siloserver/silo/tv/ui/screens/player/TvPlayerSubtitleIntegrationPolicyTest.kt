@@ -367,6 +367,38 @@ class TvPlayerSubtitleIntegrationPolicyTest {
     }
 
     @Test
+    fun `a sidecar pick the server burned in keeps its provenance and restores to its row`() {
+        val assRow = PlayerSubtitleInfo(
+            index = 4,
+            language = "en",
+            codec = "ass",
+            label = "Full Subs (ASS)",
+            source = "embedded",
+            forced = false,
+            url = "/stream/s1/subtitles/4.ass",
+            serverTrackId = "file:22:subtitle:4",
+            serverDelivery = "sidecar",
+        )
+        val sidecar = assertIs<SubtitleIdentity.ServerSidecar>(tvSubtitleIdentity(assRow))
+        val burnedIn = SubtitleIdentity.ServerBurnIn(sidecar.serverIndex, sidecar.media)
+
+        // Auto picked the row; the server burning it in is not the viewer choosing.
+        assertEquals(
+            TrackSelectionFingerprintUpdate.Preserve,
+            tvSubtitlePersistenceUpdate(committedIdentity = burnedIn, automaticIdentity = sidecar),
+        )
+        // A viewer pick saved as burn-in restores to the sidecar row next time.
+        assertEquals(
+            TvFreshSubtitlePreferenceResolution(sidecar),
+            resolveTvFreshSubtitlePreference(
+                preference = encodeSubtitleIdentityPreference(burnedIn),
+                catalogTracks = emptyList(),
+                hydratedRows = listOf(assRow),
+            ),
+        )
+    }
+
+    @Test
     fun `a viewer pick writes the durable subtitle preference`() {
         val automatic = tvSubtitleIdentity(embeddedPgsRow())
         val chosen = SubtitleIdentity.Off
