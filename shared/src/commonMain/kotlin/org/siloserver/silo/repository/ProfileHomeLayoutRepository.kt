@@ -69,7 +69,8 @@ class ProfileHomeLayoutRepository(
         return result
     }
 
-    private fun noProfile() = ApiResult.Error(0, "identity_changed", "Choose a profile to arrange its Home rows.")
+    // No message, so the editor shows its own translated load error.
+    private fun noProfile() = ApiResult.Error(0, "identity_changed", "")
 }
 
 @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
