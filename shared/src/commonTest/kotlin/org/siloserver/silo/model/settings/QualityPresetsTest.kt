@@ -69,6 +69,7 @@ class QualityPresetsTest {
         // that is not mirrored on the other shows up here.
         assertEquals(
             listOf(
+                "auto" to 10000,
                 "auto" to null,
                 "2160p" to null,
                 "1080p" to 10000,

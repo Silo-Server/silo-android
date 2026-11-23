@@ -34,7 +34,7 @@ import org.siloserver.silo.common.player.NetworkQualityFollower
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackQualityPair
 import org.siloserver.silo.common.player.inPlayerQualityPair
-import org.siloserver.silo.common.player.usesCellularQuality
+import org.siloserver.silo.common.player.networkTier
 import org.siloserver.silo.common.player.PlaybackTeardownGate
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
@@ -119,6 +119,8 @@ import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
+import org.siloserver.silo.model.playback.deliveredAs
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.playback.ADMIN_ENDED_PLAYBACK_NOTICE
 import org.siloserver.silo.playback.PlaybackMarkersUpdate
 import org.siloserver.silo.playback.PlaybackSubtitleReady
@@ -137,6 +139,8 @@ import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
 import org.siloserver.silo.model.subtitles.SubtitleAiJob
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
 import org.siloserver.silo.model.subtitles.SubtitleAiStatus
+import org.siloserver.silo.model.subtitles.SUBTITLE_PROVIDER_STATUS_TIMEOUT_MS
+import org.siloserver.silo.model.subtitles.subtitleSearchAvailabilityAfter
 import org.siloserver.silo.model.subtitles.SubtitleDownloadRequest
 import org.siloserver.silo.model.subtitles.SubtitleResult
 import org.siloserver.silo.model.subtitles.SubtitleSearchRequest
@@ -742,7 +746,7 @@ class PlayerViewModel(
         stagedPort = PlaybackSessionManagerMobileSubtitleStagedReplanPort(playbackSessionManager) { preference ->
             playerSettingsStore.inPlayerQualityPair(
                 preference,
-                cellular = networkEvidenceProvider.snapshot().usesCellularQuality,
+                tier = networkEvidenceProvider.snapshot().networkTier,
             )
         },
         persistencePort = object : MobileSubtitlePersistencePort {
@@ -1256,6 +1260,11 @@ class PlayerViewModel(
     data class SubtitleToolsUiState(
         /** null until probed (lazily, on first TracksSheet open); fetch failure → SubtitleAiStatus(false, false). */
         val aiStatus: SubtitleAiStatus? = null,
+        /**
+         * Whether the server offers provider search ("Find more"); null until
+         * the first provider-status answer. A failed probe offers search.
+         */
+        val providerSearchAvailable: Boolean? = null,
         val searchLoading: Boolean = false,
         val searchAttempted: Boolean = false,
         val searchResults: List<SubtitleResult> = emptyList(),
@@ -2254,9 +2263,22 @@ class PlayerViewModel(
             }
 
             val mountedState = _uiState.value
-            val committedIdentity = mountedState.subtitleTracks
-                .getOrNull(mountedState.selectedSubtitleIndex)
+            // The row says how the track can be fetched; the plan says how it
+            // plays. An ASS row on an HLS transcode stays a sidecar row while
+            // the plan burns it in. The mode belongs to the plan's own track
+            // only: an explicit pick resolved to another row keeps its row's
+            // identity.
+            val planSubtitleMode = playbackState.playbackPlanV3?.subtitle?.mode
+            val planSubtitleIndex = playbackState.playbackPlan?.selectedTracks?.subtitleIndex
+            val committedRow = mountedState.subtitleTracks.getOrNull(mountedState.selectedSubtitleIndex)
+            val committedIdentity = committedRow
                 ?.let(::mobileSubtitleIdentity)
+                ?.let { identity ->
+                    planSubtitleMode
+                        ?.takeIf { committedRow.index == planSubtitleIndex }
+                        ?.let(identity::deliveredAs)
+                        ?: identity
+                }
                 ?: SubtitleIdentity.Off
             mobileSubtitleTransactions.resetContent(
                 context = mobileSubtitleContext(mountedState),
@@ -2270,7 +2292,7 @@ class PlayerViewModel(
                 mobileSubtitleTransactions.persistCommittedSelection()
             }
             deferredSubtitleIdentity
-                ?.takeIf { it != committedIdentity }
+                ?.takeIf { !it.playsAs(committedIdentity) }
                 ?.let(mobileSubtitleTransactions::select)
 
             // Seeded whether or not it differs from what the server reported.
@@ -2838,6 +2860,7 @@ class PlayerViewModel(
                         val returnedSubtitleIdentity = recoveredSubtitles
                             .getOrNull(returnedSubtitleOrdinal)
                             ?.let(::mobileSubtitleIdentity)
+                            ?.deliveredAs(decision.plan.subtitle.mode)
                             ?: SubtitleIdentity.Off
                         val returnedAudioIndex = decision.plan.selectedTracks.audio?.index
                             ?: decision.session.audioTrackIndex
@@ -4013,6 +4036,7 @@ class PlayerViewModel(
         val returnedSubtitleIdentity = authoritativeSubtitles
             .getOrNull(returnedSubtitleOrdinal)
             ?.let(::mobileSubtitleIdentity)
+            ?.deliveredAs(decision.plan.subtitle.mode)
             ?: SubtitleIdentity.Off
         val returnedAudioIndex = decision.plan.selectedTracks.audio?.index
             ?: decision.session.audioTrackIndex
@@ -5183,7 +5207,7 @@ class PlayerViewModel(
             identity = identity,
             save = !state.isLocalFilePlayback(),
         )
-        if (state.pendingSubtitleIdentity == null && state.committedSubtitleIdentity == identity) {
+        if (state.pendingSubtitleIdentity == null && identity.playsAs(state.committedSubtitleIdentity)) {
             stagedSubtitleWrite.set(null)
             saveSeriesSubtitle(write)
         } else {
@@ -5289,7 +5313,7 @@ class PlayerViewModel(
         identity: SubtitleIdentity,
         rows: List<org.siloserver.silo.model.playback.PlayerSubtitleInfo>,
     ): Boolean {
-        if (identity == write.identity) return true
+        if (write.identity.playsAs(identity)) return true
         val described = org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(identity, rows) ?: return false
         return described.subtitleMode == write.choice.subtitleMode &&
             described.trackSignature == write.choice.trackSignature
@@ -5309,7 +5333,7 @@ class PlayerViewModel(
     /** Sends the staged picks [committed] made final; each goes out once. */
     private fun sendCommittedSeriesWrites(committed: CommittedSubtitle) {
         stagedSubtitleWrite.get()
-            ?.takeIf { it.identity == committed.identity && stagedSubtitleWrite.compareAndSet(it, null) }
+            ?.takeIf { it.identity.playsAs(committed.identity) && stagedSubtitleWrite.compareAndSet(it, null) }
             ?.let(::saveSeriesSubtitle)
         if (committed.audioPreferenceSpecified) {
             val state = _uiState.value
@@ -5687,6 +5711,8 @@ class PlayerViewModel(
     fun onTracksSheetOpened() {
         // Opening re-reads sync state so a job that finished meanwhile shows.
         subtitleSync.reload()
+        // Search needs a live session; downloaded playback never shows it.
+        if (_uiState.value.sessionId != null && _uiState.value.mediaFileId != null) refreshSubtitleProviderStatus()
         if (aiStatusFetched) return
         aiStatusFetched = true
         viewModelScope.launch {
@@ -5695,6 +5721,26 @@ class PlayerViewModel(
                 else -> SubtitleAiStatus(enabled = false, transcribeEnabled = false)
             }
             _subtitleTools.update { it.copy(aiStatus = status) }
+        }
+    }
+
+    private var subtitleProviderStatusGeneration = 0L
+
+    /**
+     * Re-reads whether the server has a subtitle provider on every panel open,
+     * so a provider an administrator added or removed shows or hides
+     * "Find more" without restarting playback.
+     */
+    private fun refreshSubtitleProviderStatus() {
+        // Reopening the panel can start a probe while an older one is still
+        // pending; only the newest answer is applied.
+        val generation = ++subtitleProviderStatusGeneration
+        viewModelScope.launch {
+            val result = withTimeoutOrNull(SUBTITLE_PROVIDER_STATUS_TIMEOUT_MS) { subtitlesRepository.providerStatus() }
+            if (generation != subtitleProviderStatusGeneration) return@launch
+            _subtitleTools.update {
+                it.copy(providerSearchAvailable = subtitleSearchAvailabilityAfter(result, it.providerSearchAvailable))
+            }
         }
     }
 
@@ -5721,8 +5767,8 @@ class PlayerViewModel(
                         searchWarnings = r.data.warnings,
                     )
                 }
-                // No capability probe exists: "no providers configured" arrives
-                // as a plain server error — surface its text verbatim.
+                // A provider removed after the panel opened arrives as a plain
+                // server error — surface its text verbatim.
                 is ApiResult.Error, is ApiResult.NetworkError -> _subtitleTools.update {
                     it.copy(searchLoading = false, searchError = r.subtitleToolsError(CommonR.string.player_subtitleTools_searchFailed))
                 }

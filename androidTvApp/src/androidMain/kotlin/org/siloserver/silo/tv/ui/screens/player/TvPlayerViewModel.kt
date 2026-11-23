@@ -26,6 +26,7 @@ import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.isPlaybackSessionEnded
 import org.siloserver.silo.common.player.PlaybackSessionManager
+import org.siloserver.silo.common.player.PlaybackNetworkTier
 import org.siloserver.silo.common.player.inPlayerQualityPair
 import org.siloserver.silo.common.player.PlaybackTeardownGate
 import org.siloserver.silo.common.player.video.MountedAudioTrack
@@ -143,6 +144,8 @@ import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleCho
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.model.playback.videoQualityPreference
+import org.siloserver.silo.model.playback.deliveredAs
+import org.siloserver.silo.model.playback.playsAs
 import org.siloserver.silo.playback.ADMIN_ENDED_PLAYBACK_NOTICE
 import org.siloserver.silo.playback.PlaybackMarkersUpdate
 import org.siloserver.silo.playback.PlaybackSubtitleReady
@@ -157,6 +160,8 @@ import org.siloserver.silo.playback.activeSyncKey
 import org.siloserver.silo.playback.statusLabelFor
 import org.siloserver.silo.playback.syncKeyFor
 import org.siloserver.silo.playback.timingActionsFor
+import org.siloserver.silo.model.subtitles.SUBTITLE_PROVIDER_STATUS_TIMEOUT_MS
+import org.siloserver.silo.model.subtitles.subtitleSearchAvailabilityAfter
 import org.siloserver.silo.model.subtitles.SubtitleSyncState
 import org.siloserver.silo.common.player.subtitleSyncName
 import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
@@ -883,6 +888,11 @@ data class TvPlayerLaunchArgs(
  * list has been refreshed — the dialog observes it and dismisses itself.
  */
 data class SubtitleSearchUiState(
+    /**
+     * Whether the server offers provider search ("Search online"); null until
+     * the first provider-status answer. A failed probe offers search.
+     */
+    val providerAvailable: Boolean? = null,
     val language: String = "en",
     val isSearching: Boolean = false,
     val hasSearched: Boolean = false,
@@ -1566,7 +1576,7 @@ class TvPlayerViewModel(
         stagedPort = PlaybackSessionManagerTvSubtitleStagedReplanPort(
             playbackSessionManager,
             sessionLifecycle,
-        ) { preference -> playerSettingsStore.inPlayerQualityPair(preference, cellular = false) },
+        ) { preference -> playerSettingsStore.inPlayerQualityPair(preference, tier = PlaybackNetworkTier.UNMETERED) },
         settlementScope = TvSubtitleSettlementOwner.scope,
         persistencePort = object : TvSubtitlePersistencePort {
             override suspend fun persist(
@@ -2261,23 +2271,29 @@ class TvPlayerViewModel(
         } else {
             transportMountSequence + 1L
         }
-        subtitleServerIndexToRestore?.let { serverIndex ->
-            subtitleSnapshotSettlement.reset()
-            // A track the media itself carries (a native track or a rendition)
-            // is restored by its exact identity. After an in-place switch the
-            // reloaded multivariant playlist still marks the original track
-            // DEFAULT, so only the explicit selection puts the viewer's back.
-            val committed = (_uiState.value.committedSubtitleIdentity as? SubtitleIdentity.Embedded)
-                ?.takeIf { it.isServerSelected && it.serverIndex == serverIndex }
-            subtitleRemountReselection.arm(
-                identity = when {
-                    serverIndex == -1 -> SubtitleIdentity.Off
-                    committed != null -> committed
-                    else -> SubtitleIdentity.ServerSidecar(serverIndex)
-                },
-                generation = transportMountSequence,
-            )
-        }
+        subtitleServerIndexToRestore
+            // Nothing to reselect for a burn-in: the remount carries it.
+            ?.takeIf { serverIndex ->
+                (_uiState.value.committedSubtitleIdentity as? SubtitleIdentity.ServerBurnIn)
+                    ?.serverIndex != serverIndex
+            }
+            ?.let { serverIndex ->
+                subtitleSnapshotSettlement.reset()
+                // A track the media itself carries (a native track or a rendition)
+                // is restored by its exact identity. After an in-place switch the
+                // reloaded multivariant playlist still marks the original track
+                // DEFAULT, so only the explicit selection puts the viewer's back.
+                val committed = (_uiState.value.committedSubtitleIdentity as? SubtitleIdentity.Embedded)
+                    ?.takeIf { it.isServerSelected && it.serverIndex == serverIndex }
+                subtitleRemountReselection.arm(
+                    identity = when {
+                        serverIndex == -1 -> SubtitleIdentity.Off
+                        committed != null -> committed
+                        else -> SubtitleIdentity.ServerSidecar(serverIndex)
+                    },
+                    generation = transportMountSequence,
+                )
+            }
         transportMountGate.expect(transportMountSequence)
         nextUpTransitionGate.expectMount(contentId, transportMountSequence)
         return transportMountSequence
@@ -2955,6 +2971,10 @@ class TvPlayerViewModel(
                         } else {
                             null
                         }
+                        // The row says how the track can be fetched; the plan
+                        // says how it plays. An ASS row on an HLS transcode
+                        // stays a sidecar row while the plan burns it in.
+                        val planSubtitleMode = result.playbackPlanV3?.subtitle?.mode
                         val committedIdentity = result.playbackPlan
                             ?.selectedTracks
                             ?.subtitleIndex
@@ -2962,6 +2982,7 @@ class TvPlayerViewModel(
                                 hydratedSubtitleUrls.firstOrNull { it.index == selected }
                             }
                             ?.let(::tvSubtitleIdentity)
+                            ?.let { identity -> planSubtitleMode?.let(identity::deliveredAs) ?: identity }
                             ?: SubtitleIdentity.Off
                         val predecessorUi = _uiState.value
                         val predecessorSubtitleContext = subtitlePlaybackContext(predecessorUi)
@@ -3512,6 +3533,7 @@ class TvPlayerViewModel(
                         val returnedSubtitleIdentity = returnedSubtitleIndex
                             ?.let { index -> effectiveSubtitleUrls.singleOrNull { it.index == index } }
                             ?.let(::tvSubtitleIdentity)
+                            ?.deliveredAs(decision.plan.subtitle.mode)
                             ?: SubtitleIdentity.Off
                         val returnedAudioIndex = decision.plan.selectedTracks.audio?.index
                             ?: decision.session.audioTrackIndex
@@ -3791,6 +3813,9 @@ class TvPlayerViewModel(
     }
 
     private fun selectedSubtitleTrackIndex(state: UiState): Int? {
+        // A burn-in selects no text track: the captions are in the video, and
+        // the server keeps burning that track in only if it is asked for.
+        (state.committedSubtitleIdentity as? SubtitleIdentity.ServerBurnIn)?.let { return it.serverIndex }
         // Only -1 (Off) when subtitles are GENUINELY off (no track selected).
         val selected = state.subtitleTracks.firstOrNull { it.isSelected } ?: return -1
         // A selected track that maps to a mounted server subtitle resolves to its
@@ -4758,6 +4783,7 @@ class TvPlayerViewModel(
         val returnedSubtitleIdentity = returnedSubtitleIndex
             ?.let { index -> effectiveSubtitleUrls.singleOrNull { it.index == index } }
             ?.let(::tvSubtitleIdentity)
+            ?.deliveredAs(decision.plan.subtitle.mode)
             ?: SubtitleIdentity.Off
         val returnedAudioIndex = decision.plan.selectedTracks.audio?.index
             ?: decision.session.audioTrackIndex
@@ -6082,7 +6108,7 @@ class TvPlayerViewModel(
         // "Auto - None" — back as a durable manual preference, and every later
         // launch restored that instead of re-running Auto.
         autoSelectedSubtitleIdentity = identity
-        if (identity == state.committedSubtitleIdentity && state.pendingSubtitleIdentity == null) {
+        if (identity.playsAs(state.committedSubtitleIdentity) && state.pendingSubtitleIdentity == null) {
             // Committed is what the adapter BELIEVES is on. At load it is seeded
             // straight from the plan (resetContent) before the player has
             // selected any text track, so "already committed" is not evidence
@@ -6100,7 +6126,10 @@ class TvPlayerViewModel(
                 if (!subtitleTransactions.restoreCommittedOff()) {
                     nextSubtitleMountPriority = TvSubtitleMountPriority.UserTransaction
                 }
-            } else if (!playerHasSelectedSubtitle(identity, state)) {
+            } else if (state.committedSubtitleIdentity !is SubtitleIdentity.ServerBurnIn &&
+                !playerHasSelectedSubtitle(identity, state)
+            ) {
+                // A burn-in has nothing to mount: the captions are in the video.
                 SubDiag.log("AUTO committed-but-unmounted -> restoreCommittedLocalMount $identity")
                 nextSubtitleMountPriority = priority
                 subtitleTransactions.restoreCommittedLocalMount()
@@ -6152,7 +6181,7 @@ class TvPlayerViewModel(
         // clear would disable this safety net for the rest of the session.
         if (autoSubtitleSelectionInFlight &&
             state.pendingSubtitleIdentity == null &&
-            state.committedSubtitleIdentity == autoSelectedSubtitleIdentity
+            autoSelectedSubtitleIdentity?.playsAs(state.committedSubtitleIdentity) == true
         ) {
             autoSubtitleSelectionInFlight = false
         }
@@ -6326,7 +6355,7 @@ class TvPlayerViewModel(
             owner = trackChoiceOwner,
             identity = identity,
         )
-        if (state.pendingSubtitleIdentity == null && state.committedSubtitleIdentity == identity) {
+        if (state.pendingSubtitleIdentity == null && identity.playsAs(state.committedSubtitleIdentity)) {
             stagedSubtitleWrite.set(null)
             saveSeriesSubtitle(write)
         } else {
@@ -6398,7 +6427,7 @@ class TvPlayerViewModel(
         identity: SubtitleIdentity,
         rows: List<org.siloserver.silo.model.playback.PlayerSubtitleInfo>,
     ): Boolean {
-        if (identity == write.identity) return true
+        if (write.identity.playsAs(identity)) return true
         val staged = write.choice ?: return false
         val described = org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(identity, rows) ?: return false
         return described.subtitleMode == staged.subtitleMode &&
@@ -6419,7 +6448,7 @@ class TvPlayerViewModel(
     /** Sends the staged picks [committed] made final; each goes out once. */
     private fun sendCommittedSeriesWrites(committed: org.siloserver.silo.model.playback.CommittedSubtitle) {
         stagedSubtitleWrite.get()
-            ?.takeIf { it.identity == committed.identity && stagedSubtitleWrite.compareAndSet(it, null) }
+            ?.takeIf { it.identity.playsAs(committed.identity) && stagedSubtitleWrite.compareAndSet(it, null) }
             ?.let(::saveSeriesSubtitle)
         if (committed.audioPreferenceSpecified) {
             val state = _uiState.value
@@ -6956,6 +6985,7 @@ class TvPlayerViewModel(
     fun onSubtitlesPaneShown() {
         // Opening re-reads sync state so a job that finished meanwhile shows.
         subtitleSync.reload()
+        refreshSubtitleProviderStatus()
         if (aiStatusRequested) return
         aiStatusRequested = true
         viewModelScope.launch {
@@ -6964,6 +6994,26 @@ class TvPlayerViewModel(
                 else -> SubtitleAiStatus(enabled = false, transcribeEnabled = false)
             }
             _aiTranslate.update { it.copy(statusLoaded = true, status = status) }
+        }
+    }
+
+    private var subtitleProviderStatusGeneration = 0L
+
+    /**
+     * Re-reads whether the server has a subtitle provider each time the
+     * Subtitles pane shows, so a provider an administrator added or removed
+     * shows or hides "Search online" without restarting playback.
+     */
+    private fun refreshSubtitleProviderStatus() {
+        // Reopening the panel can start a probe while an older one is still
+        // pending; only the newest answer is applied.
+        val generation = ++subtitleProviderStatusGeneration
+        viewModelScope.launch {
+            val result = withTimeoutOrNull(SUBTITLE_PROVIDER_STATUS_TIMEOUT_MS) { subtitlesRepository.providerStatus() }
+            if (generation != subtitleProviderStatusGeneration) return@launch
+            _subtitleSearch.update {
+                it.copy(providerAvailable = subtitleSearchAvailabilityAfter(result, it.providerAvailable))
+            }
         }
     }
 

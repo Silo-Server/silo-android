@@ -76,6 +76,13 @@ data class PlayerSubtitleInfo(
     /** Exact original-container track ID selected by a v3 embedded decision. */
     @SerialName("native_container_track_id") val nativeContainerTrackId: String? = null,
     /**
+     * The embedded row's track ID in the original file, set only while the
+     * player plays that file unmodified, so it names the text track Media3
+     * lists for this row even when the row itself is delivered as a sidecar.
+     * Unlike [nativeContainerTrackId] it does not make the row switchable.
+     */
+    @SerialName("source_container_track_id") val sourceContainerTrackId: String? = null,
+    /**
      * The HLS rendition a v3 transcode decision carries this selected row in.
      * Such a row has no URL: the stream itself delivers the track.
      */

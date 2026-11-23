@@ -41,20 +41,77 @@ class NetworkQualityFollowerTest {
 
     @Test
     fun `an Auto picked in the player takes the saved cap for the connection`() = runTest {
-        assertEquals(PlaybackQualityPair("auto", 40_000), store.inPlayerQualityPair("auto", cellular = false))
-        assertEquals(PlaybackQualityPair("auto", 2_000), store.inPlayerQualityPair("Auto", cellular = true))
-        // No limit sends no cap.
-        val uncapped = qualityStore(main = PlaybackQualityPair("1080p", null), cellular = cellular)
-        assertEquals(PlaybackQualityPair("auto", null), uncapped.inPlayerQualityPair("auto", cellular = false))
+        assertEquals(PlaybackQualityPair("auto", 40_000), store.inPlayerQualityPair("auto", tier = PlaybackNetworkTier.UNMETERED))
+        assertEquals(PlaybackQualityPair("auto", 2_000), store.inPlayerQualityPair("Auto", tier = PlaybackNetworkTier.METERED))
+        // No limit sends no cap on Wi-Fi, and 2 Mbps in Data Saver.
+        val uncapped = qualityStore(main = PlaybackQualityPair("1080p", null), cellular = PlaybackQualityPair("auto", null))
+        assertEquals(PlaybackQualityPair("auto", null), uncapped.inPlayerQualityPair("auto", tier = PlaybackNetworkTier.UNMETERED))
+        assertEquals(PlaybackQualityPair("auto", null), uncapped.inPlayerQualityPair("auto", tier = PlaybackNetworkTier.METERED))
+        assertEquals(PlaybackQualityPair("auto", LOW_DATA_CAP_KBPS), uncapped.inPlayerQualityPair("auto", tier = PlaybackNetworkTier.LOW_DATA))
         // Any other pick keeps the session's cap.
-        assertEquals(null, store.inPlayerQualityPair("1080p-medium", cellular = true))
-        assertEquals(null, store.inPlayerQualityPair(null, cellular = true))
+        assertEquals(null, store.inPlayerQualityPair("1080p-medium", tier = PlaybackNetworkTier.METERED))
+        assertEquals(null, store.inPlayerQualityPair(null, tier = PlaybackNetworkTier.METERED))
     }
 
     @Test
-    fun `the start pair follows the network`() = runTest {
-        assertEquals(cellular, store.qualityPair(cellular = snapshot("wifi", metered = true).usesCellularQuality))
-        assertEquals(main, store.qualityPair(cellular = snapshot("wifi", metered = false).usesCellularQuality))
+    fun `the start pair follows the network tier and Data Saver ceiling`() = runTest {
+        assertEquals(cellular, store.qualityPair(tier = snapshot("wifi", metered = true).networkTier))
+        assertEquals(main, store.qualityPair(tier = snapshot("wifi", metered = false).networkTier))
+
+        // Default Auto/10 Mbps on normal cellular tightens to Auto/2 Mbps under Data Saver.
+        val defaultStore = qualityStore(
+            main = PlaybackQualityPair("auto", null),
+            cellular = PlaybackQualityPair("auto", 10_000),
+        )
+        assertEquals(
+            PlaybackQualityPair("auto", 10_000),
+            defaultStore.qualityPair(tier = snapshot("cellular", metered = true, dataSaver = false).networkTier),
+        )
+        assertEquals(
+            PlaybackQualityPair("auto", LOW_DATA_CAP_KBPS),
+            defaultStore.qualityPair(tier = snapshot("cellular", metered = true, dataSaver = true).networkTier),
+        )
+        // Data Saver on unmetered Wi-Fi does not cap Wi-Fi.
+        assertEquals(
+            PlaybackQualityPair("auto", null),
+            defaultStore.qualityPair(tier = snapshot("wifi", metered = false, dataSaver = true).networkTier),
+        )
+        // A stricter cellular override (480p / 1.5 Mbps) is never raised by Data Saver.
+        val strictStore = qualityStore(
+            main = main,
+            cellular = PlaybackQualityPair("480p", 1_500),
+        )
+        assertEquals(
+            PlaybackQualityPair("480p", 1_500),
+            strictStore.qualityPair(tier = snapshot("cellular", metered = true, dataSaver = true).networkTier),
+        )
+    }
+
+    @Test
+    fun `toggling Data Saver on cellular moves playback between cellular and low-data cap`() = runTest {
+        val defaultCellular = PlaybackQualityPair("auto", 10_000)
+        val lowData = PlaybackQualityPair("auto", LOW_DATA_CAP_KBPS)
+        val defaultStore = qualityStore(main = PlaybackQualityPair("auto", null), cellular = defaultCellular)
+        val network = MutableStateFlow(snapshot("cellular", metered = true, dataSaver = false))
+        var playing = FollowedSession("s1", defaultCellular)
+        val replans = mutableListOf<PlaybackQualityPair>()
+        backgroundScope.launch {
+            NetworkQualityFollower(network, defaultStore).follow({ playing }) { _, pair ->
+                replans += pair
+                playing = FollowedSession("s1", pair)
+            }
+        }
+
+        settle()
+        assertEquals(emptyList(), replans)
+
+        network.value = snapshot("cellular", metered = true, dataSaver = true)
+        settle()
+        assertEquals(listOf(lowData), replans)
+
+        network.value = snapshot("cellular", metered = true, dataSaver = false)
+        settle()
+        assertEquals(listOf(lowData, defaultCellular), replans)
     }
 
     @Test
@@ -268,7 +325,12 @@ class NetworkQualityFollowerTest {
         runCurrent()
     }
 
-    private fun snapshot(transport: String, metered: Boolean = false, vpn: Boolean = false) =
+    private fun snapshot(
+        transport: String,
+        metered: Boolean = false,
+        vpn: Boolean = false,
+        dataSaver: Boolean = false,
+    ) =
         PlaybackNetworkSnapshot(
             connected = true,
             validated = true,
@@ -276,6 +338,7 @@ class NetworkQualityFollowerTest {
             transport = transport,
             cellular = transport == "cellular",
             vpn = vpn,
+            dataSaver = dataSaver,
         )
 
     /**

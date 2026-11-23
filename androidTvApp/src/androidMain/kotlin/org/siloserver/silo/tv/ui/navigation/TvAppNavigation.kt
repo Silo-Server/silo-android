@@ -1676,6 +1676,23 @@ fun TvAppNavigation(
                 onBoxSetMovie = { movieContentId, boxSetLibraryId ->
                     navController.navigateToTvItemDetail(movieContentId, libraryId = boxSetLibraryId.toIntOrNull())
                 },
+                onOpenCollection = { card, libraryType ->
+                    val collectionLibraryId = card.libraryIdInt
+                    if (card.isUserCollection) {
+                        navController.navigate(TvRoute.CollectionDetail(card.id, card.title).route) { launchSingleTop = true }
+                    } else if (collectionLibraryId != null) {
+                        // The library's type picks the page's sorts and
+                        // filters, as a Home collection card does.
+                        navController.navigate(
+                            TvRoute.LibraryCollectionDetail(
+                                collectionLibraryId, card.id, card.title, libraryType, "library_collection", null,
+                            ).route,
+                        ) { launchSingleTop = true }
+                    }
+                },
+                onCollectionItem = { itemContentId ->
+                    navController.navigateToTvItemDetail(itemContentId)
+                },
             )
         }
 

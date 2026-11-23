@@ -2,7 +2,12 @@ package org.siloserver.silo.network.apiv2
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import org.siloserver.silo.model.catalog.ItemCollections
+import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogBoxSet
@@ -102,7 +107,22 @@ data class CatalogSearchCapabilitiesV2(
     @SerialName("result_window_limit") val resultWindowLimit: Int? = null,
     @SerialName("session_ttl_seconds") val sessionTTLSeconds: Int? = null,
     @SerialName("max_sessions_per_account") val maxSessionsPerAccount: Int? = null,
+    /** `listCatalogItemCollections` exists: a title page can show the collections holding it. */
+    @SerialName("item_collections") val itemCollections: Boolean = false,
 )
+
+/**
+ * A `listCatalogItemCollections` body. Both members are required on the wire;
+ * a card this client can't open is left out, as on Home.
+ */
+internal fun decodeItemCollectionsV2(body: JsonObject): ItemCollections {
+    val cards = body["items"] as? JsonArray ?: throw IllegalArgumentException("Missing collection items.")
+    val preview = body["preview_items"] as? JsonArray ?: throw IllegalArgumentException("Missing preview items.")
+    return ItemCollections(
+        cards = decodeCollectionCardsV2(cards),
+        preview = SiloJson.decodeFromJsonElement<List<BrowseItem>>(preview).filter { it.contentId.isNotBlank() },
+    )
+}
 
 @Serializable
 internal data class CatalogPageWireV2(
