@@ -337,9 +337,11 @@ data class TvMarqueeEnrichment(
                 backdropUrl = detail.backdropUrl?.takeIf { it.isNotBlank() },
                 backdropThumbhash = detail.backdropThumbhash,
                 backdropIsEpisodeStill = detail.backdropIsEpisodeStill,
-                // A date-labeled game's date already leads the meta row.
+                // A date-labeled game's date already leads the meta row; a
+                // series card's row has no date, so it keeps "Aired …".
                 airDate = detail.airDate?.takeIf {
-                    airDateText(it) != null && EpisodeLabel.airDate(detail.episodeLabels, it) == null
+                    airDateText(it) != null &&
+                        (!detail.type.equals("episode", ignoreCase = true) || EpisodeLabel.airDate(detail.episodeLabels, it) == null)
                 },
             )
         }
