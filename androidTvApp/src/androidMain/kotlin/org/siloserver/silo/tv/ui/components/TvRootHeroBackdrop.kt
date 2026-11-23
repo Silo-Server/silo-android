@@ -14,7 +14,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -23,7 +25,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -35,6 +39,7 @@ import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -61,7 +66,6 @@ fun TvRootHeroBackdrop(
     emptyWashColor: Color? = null,
     animateTransition: Boolean = true,
 ) {
-    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
     val tintState = LocalAmbientBackdropTint.current
     val ambientAccent = tintState.accent
 
@@ -147,38 +151,18 @@ fun TvRootHeroBackdrop(
             )
         }
 
-        if (animateTransition) {
-            Crossfade(
-                targetState = content,
-                animationSpec = tween(
-                    if (snapInitialArtwork) 0 else TvMarqueeCrossfadeMs,
-                    easing = TvMarqueeEasing,
-                ),
-                label = "tvRootHeroBackdropArt",
-            ) { value ->
-                val art = when {
-                    value == null -> null
-                    // Protection turning on for the item still shown hides
-                    // its still at once instead of fading the sharp one out.
-                    content != null && value.id == content.id ->
-                        if (content.hidesStills && !value.hidesStills) content else value
-                    // A departing item follows the current preferences too.
-                    else -> value.underPrefs(spoilerPrefs)
-                }
-                if (art?.heroBackdropUrl != null) {
-                    CornerAnchoredArt(
-                        url = art.heroBackdropUrl,
-                        thumbhash = art.heroBackdropThumbhash,
-                    )
-                } else {
-                    Box(modifier = Modifier.fillMaxSize())
-                }
+        HeroArtCrossfade(
+            content = content,
+            animate = animateTransition,
+            snap = snapInitialArtwork,
+            label = "tvRootHeroBackdropArt",
+        ) { art ->
+            val url = art.heroBackdropUrl
+            if (url != null && art.coverAspect == null) {
+                CornerAnchoredArt(url = url, thumbhash = art.heroBackdropThumbhash)
+            } else {
+                Box(modifier = Modifier.fillMaxSize())
             }
-        } else if (content?.heroBackdropUrl != null) {
-            CornerAnchoredArt(
-                url = content.heroBackdropUrl,
-                thumbhash = content.heroBackdropThumbhash,
-            )
         }
 
         // Once over every art slot, so a crossfade blends the raw art as
@@ -189,6 +173,31 @@ fun TvRootHeroBackdrop(
             CornerFade(washStops = washStops)
         }
 
+        // Above the fade: a framed cover is drawn whole, and the fade would
+        // wash out its leading and bottom edges. Over an empty art slot the
+        // fade paints the page's own wash, so it leaves nothing behind here.
+        HeroArtCrossfade(
+            content = content,
+            animate = animateTransition,
+            snap = snapInitialArtwork,
+            label = "tvRootHeroBackdropCover",
+        ) { art ->
+            val url = art.heroBackdropUrl
+            val aspect = art.coverAspect
+            if (url != null && aspect != null) {
+                FramedCover(
+                    url = url,
+                    thumbhash = art.heroBackdropThumbhash,
+                    aspect = aspect,
+                    // The card's poster, so the glow stays put when the cover
+                    // upgrades to the detail poster; blurred, the two look the same.
+                    glowUrl = art.posterUrl ?: url,
+                )
+            } else {
+                Box(modifier = Modifier.fillMaxSize())
+            }
+        }
+
         // From Android 9 the wash is dithered in its shader; this white grain
         // would only lift an OLED's black.
         if ((hasTintOnlyWash || hasEmptyWash) && Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
@@ -197,6 +206,68 @@ fun TvRootHeroBackdrop(
                 modifier = Modifier.fillMaxSize(),
             )
         }
+    }
+}
+
+/**
+ * One layer of the hero's art, crossfading with the focused item. The corner
+ * art and the framed cover each get one, on either side of [CornerFade], with
+ * the same timing so they move together.
+ */
+@Composable
+private fun HeroArtCrossfade(
+    content: TvMarqueeContent?,
+    animate: Boolean,
+    snap: Boolean,
+    label: String,
+    layer: @Composable (TvMarqueeContent) -> Unit,
+) {
+    if (!animate) {
+        if (content != null) layer(content)
+        return
+    }
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+    Crossfade(
+        targetState = content,
+        animationSpec = tween(if (snap) 0 else TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
+        label = label,
+    ) { value ->
+        val art = when {
+            value == null -> null
+            // Protection turning on for the item still shown hides
+            // its still at once instead of fading the sharp one out.
+            content != null && value.id == content.id ->
+                if (content.hidesStills && !value.hidesStills) content else value
+            // A departing item follows the current preferences too.
+            else -> value.underPrefs(spoilerPrefs)
+        }
+        if (art != null) layer(art) else Box(modifier = Modifier.fillMaxSize())
+    }
+}
+
+/**
+ * A cover standing in for a missing backdrop, drawn whole and sharp at a size
+ * its artwork can carry (tvOS `coverImage`): top-right, between the top menu
+ * and the rows, over a soft glow of itself and a drop shadow.
+ */
+@Composable
+private fun FramedCover(url: String, thumbhash: String?, aspect: Float, glowUrl: String) {
+    val shape = RoundedCornerShape(CoverCornerRadius)
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
+        ThumbhashImage(
+            url = url,
+            thumbhash = thumbhash,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            // As for the backdrop, the feed owns the one shared crossfade.
+            crossfadeMillis = 0,
+            modifier = Modifier
+                .padding(top = CoverTopInset, end = CoverTrailingInset)
+                .size(width = TvHeroCoverHeight * aspect, height = TvHeroCoverHeight)
+                .coverGlow(glowUrl, aspect)
+                .shadow(CoverShadowElevation, shape)
+                .clip(shape),
+        )
     }
 }
 
@@ -486,6 +557,15 @@ fun TvRootHeroBackdrop(
 
 private const val ArtWidthFraction = 0.64f
 private const val ArtHeightFraction = 0.70f
+/**
+ * A framed cover's height and insets: tvOS's 380 / 170 / 150 pt on the
+ * 960 × 540 dp canvas, between the top menu and the row band.
+ */
+internal val TvHeroCoverHeight = 190.dp
+private val CoverTopInset = 85.dp
+private val CoverTrailingInset = 75.dp
+private val CoverCornerRadius = 7.dp
+private val CoverShadowElevation = 18.dp
 private const val TintOnlyDitherAlpha = 0.28f
 private const val EmptyWashDitherAlpha = 0.34f
 

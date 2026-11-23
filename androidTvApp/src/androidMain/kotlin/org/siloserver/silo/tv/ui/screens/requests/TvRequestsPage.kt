@@ -88,6 +88,7 @@ import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvFocusMarquee
 import org.siloserver.silo.tv.ui.components.TvHeroFactToken
 import org.siloserver.silo.tv.ui.components.TvMarqueeContent
+import org.siloserver.silo.tv.ui.components.TvPosterCoverAspect
 import org.siloserver.silo.tv.ui.components.TvRootHeroBackdrop
 import org.siloserver.silo.tv.ui.components.TvSectionHeader
 import org.siloserver.silo.tv.ui.components.LocalAmbientBackdropTint
@@ -619,6 +620,8 @@ internal data class TvRequestPreview(
                     posterUrl = posterUrl,
                     backdropUrl = backdropUrl,
                 ),
+                // Without a backdrop the hero frames the poster whole.
+                coverAspect = TvPosterCoverAspect.takeIf { backdropUrl == null && posterUrl != null },
             )
             return TvRequestPreview(content, progress, statusText)
         }
