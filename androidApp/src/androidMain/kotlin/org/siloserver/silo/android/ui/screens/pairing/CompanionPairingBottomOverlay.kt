@@ -699,20 +699,9 @@ private fun MatchConfirmation(
             textAlign = TextAlign.Center,
             modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = spoken },
         )
-        // TV apps released before user codes show only the match words.
-        // Remove this line together with the web /activate card's
-        // "Older TV apps show ..." line.
-        approval.serverMatchCode.trim().takeIf { it.isNotEmpty() }?.let { words ->
-            Text(
-                text = stringResource(CommonR.string.companion_confirmOlderTv, words.uppercase()),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-        }
-        // The same content model as "Sign in a TV", the web /activate card
-        // and the iPhone app: which server and account, what approving
-        // grants, and the warning.
+        // The same content model as "Sign in a TV or device", the web
+        // /activate card and the iPhone app: which server and account, what
+        // approving grants, and the warning.
         Text(
             text = companionSignInLine(approval),
             style = MaterialTheme.typography.bodyLarge,

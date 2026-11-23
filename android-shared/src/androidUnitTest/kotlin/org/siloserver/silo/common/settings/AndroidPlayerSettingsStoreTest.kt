@@ -1325,11 +1325,11 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
-    fun `cellular quality defaults to the 720p preset`() = runTest {
+    fun `cellular quality defaults to the Auto 10 Mbps preset`() = runTest {
         val store = newStore()
 
-        assertEquals("720p", store.cellularPreferredQualityFlow.first())
-        assertEquals(2_000, store.cellularMaxBitrateKbpsFlow.first())
+        assertEquals("auto", store.cellularPreferredQualityFlow.first())
+        assertEquals(10_000, store.cellularMaxBitrateKbpsFlow.first())
     }
 
     @Test
@@ -1389,8 +1389,8 @@ class AndroidPlayerSettingsStoreTest {
         // "Use profile setting" has no profile value to reach there, so the
         // contract default applies.
         store.resetDeviceSetting(PlaybackSettingsKeys.CellularPreferredQuality)
-        assertEquals("720p", store.cellularPreferredQualityFlow.first())
-        assertEquals(2_000, store.cellularMaxBitrateKbpsFlow.first())
+        assertEquals("auto", store.cellularPreferredQualityFlow.first())
+        assertEquals(10_000, store.cellularMaxBitrateKbpsFlow.first())
 
         revision = capabilitiesAt(20)
         store.refreshFromServer()
@@ -1421,16 +1421,16 @@ class AndroidPlayerSettingsStoreTest {
         older.setCellularQuality("1080p", 6_000)
         older.resetDeviceSetting(PlaybackSettingsKeys.CellularPreferredQuality)
         older.refreshFromServer()
-        assertEquals("720p", older.cellularPreferredQualityFlow.first())
-        assertEquals(2_000, older.cellularMaxBitrateKbpsFlow.first())
+        assertEquals("auto", older.cellularPreferredQualityFlow.first())
+        assertEquals(10_000, older.cellularMaxBitrateKbpsFlow.first())
 
         // Offline, the default applies until a server that stores the pair
         // answers with the profile's value.
         val offline = storeAt({ ApiResult.NetworkError(IllegalStateException("offline")) }, "offline")
         offline.setCellularQuality("1080p", 6_000)
         offline.resetDeviceSetting(PlaybackSettingsKeys.CellularPreferredQuality)
-        assertEquals("720p", offline.cellularPreferredQualityFlow.first())
-        assertEquals(2_000, offline.cellularMaxBitrateKbpsFlow.first())
+        assertEquals("auto", offline.cellularPreferredQualityFlow.first())
+        assertEquals(10_000, offline.cellularMaxBitrateKbpsFlow.first())
     }
 
     @Test

@@ -995,6 +995,19 @@ private fun isCanonicalContainerTrackId(id: String?): Boolean {
 }
 
 /**
+ * [row]'s track in the file an `original_http` stream plays unmodified, the
+ * `Format.id` Media3 gives that track, or null. Any other delivery is a stream
+ * the server made, whose tracks the file's IDs do not name. Listing a track
+ * this way says nothing about whether the player may switch to it; see
+ * [nativeSwitchTrackId].
+ */
+fun PlaybackPlanV3.sourceContainerTrackId(row: PlaybackSubtitleInventoryItemV3): String? {
+    if (delivery != PlaybackDelivery.ORIGINAL_HTTP || row.source != "embedded") return null
+    val trackId = row.containerTrackId?.takeIf(::isCanonicalContainerTrackId) ?: return null
+    return trackId.takeIf { id -> subtitle.inventory.count { it.containerTrackId == id } == 1 }
+}
+
+/**
  * The container track the player may switch [row] to on the `original_http`
  * stream it already plays, before the server answers, or null.
  *
@@ -1010,10 +1023,8 @@ private fun isCanonicalContainerTrackId(id: String?): Boolean {
  * Whether Media3 actually lists the track is the caller's check.
  */
 fun PlaybackPlanV3.nativeSwitchTrackId(row: PlaybackSubtitleInventoryItemV3): String? {
-    if (delivery != PlaybackDelivery.ORIGINAL_HTTP || subtitle.mode == PlaybackSubtitleModeV3.BURN_IN) return null
-    if (row.source != "embedded") return null
-    val trackId = row.containerTrackId?.takeIf(::isCanonicalContainerTrackId) ?: return null
-    if (subtitle.inventory.count { it.containerTrackId == trackId } != 1) return null
+    if (subtitle.mode == PlaybackSubtitleModeV3.BURN_IN) return null
+    val trackId = sourceContainerTrackId(row) ?: return null
     val selectable = when {
         row.nativeSelectable != null -> row.nativeSelectable
         row.streamIndex != null -> false

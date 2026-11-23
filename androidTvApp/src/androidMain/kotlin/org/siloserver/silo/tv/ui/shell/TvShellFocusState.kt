@@ -284,8 +284,12 @@ class TvShellFocusState {
      * inside a panel, so clear any stale entered flag — otherwise a geometric
      * d-pad escape out of an entered panel leaves the preview frozen under the
      * previously-entered tab while moving along the bar.
+     *
+     * [focusedPanel] is the panel owned by the focused bar button (null for
+     * Home, Calendar, Search, and the avatar).
      */
-    fun updateMenuFocused(focused: Boolean) {
+    fun updateMenuFocused(focused: Boolean, focusedPanel: TvTopMenuPanel? = null) {
+        val endsEntry = focused && (!isMenuFocused || focusedPanel != openPanel)
         if (isMenuFocused != focused) {
             DiagnosticsFocusLogger.transition("menu", if (focused) "focused" else "blurred")
         }
@@ -293,7 +297,13 @@ class TvShellFocusState {
         if (focused) {
             // The bar answered, so the outstanding handoff is settled.
             barHandoffAttempted = false
-            panelEntersFocus = false
+            // The bar reports a move between its own tabs a frame late, so
+            // clearing on every report undid a Down pressed right after the move:
+            // the menu opened but focus stayed on the tab. So a report for the
+            // entered panel's own tab keeps the entry. Focus coming back to the
+            // bar, or resting on any other button, still clears it, so an entry
+            // whose focus claim never landed can't freeze the preview.
+            if (endsEntry) panelEntersFocus = false
             if (profileMenuOpen && !profileMenuEntered) profileMenuOpen = false
         }
     }

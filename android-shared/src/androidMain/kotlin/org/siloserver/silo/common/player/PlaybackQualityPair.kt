@@ -26,6 +26,21 @@ import kotlinx.coroutines.flow.onEach
  */
 data class PlaybackQualityPair(val qualityPreference: String, val bandwidthCapKbps: Int?)
 
+/** Bitrate ceiling applied on top of the cellular pair when Android Data Saver is on. */
+const val LOW_DATA_CAP_KBPS = 2_000
+
+/**
+ * The network tier playback uses for quality selection:
+ * - [UNMETERED]: uses the main quality pair;
+ * - [METERED]: cellular, hotspot, or metered Wi-Fi without Data Saver — uses the cellular pair;
+ * - [LOW_DATA]: metered with Android Data Saver enabled — applies [LOW_DATA_CAP_KBPS] on top of the cellular pair.
+ */
+enum class PlaybackNetworkTier {
+    UNMETERED,
+    METERED,
+    LOW_DATA,
+}
+
 /**
  * Whether the phone plays at its cellular quality on this network: mobile
  * data (TRANSPORT_CELLULAR, also through a VPN that runs over it), or a
@@ -36,18 +51,35 @@ data class PlaybackQualityPair(val qualityPreference: String, val bandwidthCapKb
  *
  * This is the one metered rule: the speed test and the estimate a start
  * sends use it too ([org.siloserver.silo.common.player.probe.skipsBandwidthProbe]).
- * Data Saver needs no input of its own, since Android applies it only to
- * networks it marks metered.
+ * Android Data Saver tightens a metered network further to [PlaybackNetworkTier.LOW_DATA].
  */
 val PlaybackNetworkSnapshot.usesCellularQuality: Boolean
     get() = connected && (cellular || (!vpn && metered))
 
-/** The stored pair for a network: [cellular] picks the cellular pair over the main one. */
-suspend fun PlayerSettingsStore.qualityPair(cellular: Boolean): PlaybackQualityPair =
-    if (cellular) {
-        PlaybackQualityPair(cellularPreferredQualityFlow.first(), cellularMaxBitrateKbpsFlow.first())
-    } else {
-        PlaybackQualityPair(preferredQualityFlow.first(), maxBitrateKbpsFlow.first())
+/** The quality-selection tier for this network snapshot. */
+val PlaybackNetworkSnapshot.networkTier: PlaybackNetworkTier
+    get() = when {
+        !usesCellularQuality -> PlaybackNetworkTier.UNMETERED
+        dataSaver -> PlaybackNetworkTier.LOW_DATA
+        else -> PlaybackNetworkTier.METERED
+    }
+
+/** Applies the [LOW_DATA_CAP_KBPS] ceiling without raising a stricter saved cap. */
+internal fun PlaybackQualityPair.withLowDataCeiling(): PlaybackQualityPair {
+    val capped = bandwidthCapKbps?.takeIf { it > 0 }?.let { minOf(it, LOW_DATA_CAP_KBPS) } ?: LOW_DATA_CAP_KBPS
+    return copy(bandwidthCapKbps = capped)
+}
+
+/** The stored pair for a network tier. */
+suspend fun PlayerSettingsStore.qualityPair(tier: PlaybackNetworkTier): PlaybackQualityPair =
+    when (tier) {
+        PlaybackNetworkTier.UNMETERED ->
+            PlaybackQualityPair(preferredQualityFlow.first(), maxBitrateKbpsFlow.first())
+        PlaybackNetworkTier.METERED ->
+            PlaybackQualityPair(cellularPreferredQualityFlow.first(), cellularMaxBitrateKbpsFlow.first())
+        PlaybackNetworkTier.LOW_DATA ->
+            PlaybackQualityPair(cellularPreferredQualityFlow.first(), cellularMaxBitrateKbpsFlow.first())
+                .withLowDataCeiling()
     }
 
 /**
@@ -64,18 +96,17 @@ fun PlayerSettingsStore.networkPreferredQualityFlow(network: Flow<PlaybackNetwor
         .flatMapLatest { cellular -> if (cellular) cellularPreferredQualityFlow else preferredQualityFlow }
 
 /**
- * The pair an Auto picked in the player sends: "auto" with the saved bitrate
- * cap for the connection ([cellular] picks the cellular cap; null is No
- * limit), so going back to Auto never lifts that cap. Null for any other
- * pick, which keeps the session's cap.
+ * The pair an Auto picked in the player sends: "auto" with the effective bitrate
+ * cap for [tier] (null is No limit), so going back to Auto never lifts that cap.
+ * Null for any other pick, which keeps the session's cap.
  */
-suspend fun PlayerSettingsStore.inPlayerQualityPair(preference: String?, cellular: Boolean): PlaybackQualityPair? {
+suspend fun PlayerSettingsStore.inPlayerQualityPair(preference: String?, tier: PlaybackNetworkTier): PlaybackQualityPair? {
     if (videoQualityPreference(preference) != PLAYBACK_QUALITY_AUTO) return null
-    return autoQualityPair(cellular)
+    return autoQualityPair(tier)
 }
 
-private suspend fun PlayerSettingsStore.autoQualityPair(cellular: Boolean): PlaybackQualityPair =
-    PlaybackQualityPair(PLAYBACK_QUALITY_AUTO, qualityPair(cellular).bandwidthCapKbps)
+private suspend fun PlayerSettingsStore.autoQualityPair(tier: PlaybackNetworkTier): PlaybackQualityPair =
+    PlaybackQualityPair(PLAYBACK_QUALITY_AUTO, qualityPair(tier).bandwidthCapKbps)
 
 /**
  * A session the network follower moves: which one it is ([sessionId]), the
@@ -126,32 +157,36 @@ class NetworkQualityFollower(
         playing: () -> FollowedSession?,
         replan: suspend (FollowedSession, PlaybackQualityPair) -> Unit,
     ) {
-        val latestCellular = MutableStateFlow<Boolean?>(null)
+        val latestTier = MutableStateFlow<PlaybackNetworkTier?>(null)
         network
             .filter { it.connected }
-            .map { it.usesCellularQuality }
+            .map { it.networkTier }
             .distinctUntilChanged()
-            .onEach { cellular ->
+            .onEach { tier ->
                 // Without this line a report shows a reload but not what
                 // caused it, and a blip that never reloaded leaves no trace.
-                if (latestCellular.value != null) {
-                    val side = if (cellular) "metered" else "unmetered"
+                if (latestTier.value != null) {
+                    val side = when (tier) {
+                        PlaybackNetworkTier.UNMETERED -> "unmetered"
+                        PlaybackNetworkTier.METERED -> "metered"
+                        PlaybackNetworkTier.LOW_DATA -> "data saver"
+                    }
                     SiloLog.i(
                         DiagnosticsLogCategory.PLAYBACK,
                         TAG,
                         "connection now $side; quality follows if it holds for ${settleMs / 1_000} s",
                     )
                 }
-                latestCellular.value = cellular
+                latestTier.value = tier
             }
             .debounce(settleMs)
-            .collectLatest { cellular ->
+            .collectLatest { tier ->
                 for (wait in RETRY_DELAYS_MS) {
                     delay(wait)
-                    if (latestCellular.value != cellular) return@collectLatest
+                    if (latestTier.value != tier) return@collectLatest
                     val current = playing() ?: return@collectLatest
                     val wanted = try {
-                        if (current.autoPicked) settings.autoQualityPair(cellular) else settings.qualityPair(cellular)
+                        if (current.autoPicked) settings.autoQualityPair(tier) else settings.qualityPair(tier)
                     } catch (cancellation: CancellationException) {
                         throw cancellation
                     } catch (failure: Exception) {
@@ -169,10 +204,13 @@ class NetworkQualityFollower(
                     SiloLog.i(
                         DiagnosticsLogCategory.PLAYBACK,
                         TAG,
-                        if (cellular) {
-                            "connection stayed metered; asking playback to move to the cellular quality"
-                        } else {
-                            "connection stayed unmetered; asking playback to move to the main quality"
+                        when (tier) {
+                            PlaybackNetworkTier.UNMETERED ->
+                                "connection stayed unmetered; asking playback to move to the main quality"
+                            PlaybackNetworkTier.METERED ->
+                                "connection stayed metered; asking playback to move to the cellular quality"
+                            PlaybackNetworkTier.LOW_DATA ->
+                                "connection stayed in data saver; asking playback to move to the low-data ceiling"
                         },
                     )
                     replan(current, wanted)

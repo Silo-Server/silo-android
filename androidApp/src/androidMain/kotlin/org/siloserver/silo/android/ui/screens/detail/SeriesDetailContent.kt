@@ -62,6 +62,10 @@ import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrol
 fun SeriesDetailContent(
     detail: ItemDetail,
     similarItems: List<org.siloserver.silo.model.catalog.BrowseItem> = emptyList(),
+    /** The collections row; null shows none. */
+    collectionsRow: org.siloserver.silo.viewmodel.ItemCollectionsRow? = null,
+    onCollectionClick: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit = {},
+    onCollectionItemClick: (org.siloserver.silo.model.catalog.BrowseItem) -> Unit = {},
     seasons: List<Season>,
     selectedSeasonNumber: Int,
     episodes: List<EpisodeListItem>,
@@ -534,6 +538,17 @@ fun SeriesDetailContent(
                         onPersonClick = onPersonClick,
                     )
                 }
+            }
+        }
+
+        // The collections holding the series, below Cast & Crew (web).
+        if (collectionsRow != null) {
+            item(contentType = "detail-collections") {
+                ItemCollectionsRail(
+                    row = collectionsRow,
+                    onCollectionClick = onCollectionClick,
+                    onItemClick = onCollectionItemClick,
+                )
             }
         }
 

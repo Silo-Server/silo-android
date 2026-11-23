@@ -403,7 +403,7 @@ class AndroidPlayerSettingsStore(
             p.intFor(s, PlaybackSettingsKeys.MaxBitrateKbps, 0).takeIf { it > 0 }
         }
 
-    // Unlike the main cap, the cellular one defaults to a value (2000), so an
+    // Unlike the main cap, the cellular one defaults to a value (10000), so an
     // absent slot reads as that and only an explicit 0 is uncapped.
     override val cellularMaxBitrateKbpsFlow: Flow<Int?> =
         profileScopedFlow(CellularQuality.DEFAULT_MAX_BITRATE_KBPS) { p, s ->

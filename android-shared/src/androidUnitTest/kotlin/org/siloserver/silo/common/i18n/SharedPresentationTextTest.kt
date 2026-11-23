@@ -103,16 +103,19 @@ class SharedPresentationTextTest {
     @Test
     fun cellularPresets() {
         assertEquals(
-            listOf("Auto", "4K", "1080p High", "1080p", "1080p Low", "720p High", "720p", "480p"),
+            listOf("Auto, up to 10 Mbps", "Auto, no limit", "4K", "1080p High", "1080p", "1080p Low", "720p High", "720p", "480p"),
             QualityPresets.ALL.map { it.label }.en(),
         )
         assertEquals(
-            "720p",
+            "Auto, up to 10 Mbps",
             CellularQuality.label(CellularQuality.DEFAULT_RESOLUTION, CellularQuality.DEFAULT_MAX_BITRATE_KBPS).en(),
         )
         assertEquals("1080p, no limit", CellularQuality.label("1080p", null).en())
         assertEquals("720p, up to 8 Mbps", CellularQuality.label("720p", 8_000).en())
-        assertEquals("Used on mobile data and metered networks, such as a phone hotspot.", CellularQuality.FOOTER.en())
+        assertEquals(
+            "Used on mobile data and metered networks, such as a phone hotspot. Capped at 2 Mbps when Low Data Mode or Data Saver is on.",
+            CellularQuality.FOOTER.en(),
+        )
     }
 
     @Test

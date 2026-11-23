@@ -1182,6 +1182,14 @@ open class PlaybackSessionManager(
                     network.asRouteDiagnostics(),
             ),
         )
+        // The controller claimed a slow link on a reading of this plan. The
+        // meter has none once the network changed, and the server would learn
+        // that reading against the new connection, so the claim goes with the
+        // reading or not at all; the estimate still lowers.
+        val observedThroughput = playingPlanThroughputKbps()
+            .takeIf { bufferingQuality?.bandwidthEstimateSource == BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER }
+        val estimateSource = bufferingQuality?.bandwidthEstimateSource
+            ?.takeUnless { it == BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER && observedThroughput == null }
         // Address the server by the plan IT holds, not the one we are rendering.
         // After a rollback those differ, and using the rendered plan sends a
         // retired failedPlanId that the server rejects with 409.
@@ -1210,10 +1218,9 @@ open class PlaybackSessionManager(
                 active.bandwidthCapKbps
             },
             bandwidthEstimateKbps = bufferingQuality?.bandwidthEstimateKbps,
-            bandwidthEstimateSource = bufferingQuality?.bandwidthEstimateSource,
+            bandwidthEstimateSource = estimateSource,
             // A lowering also reports what the plan it leaves actually received.
-            observedThroughputKbps = playingPlanThroughputKbps()
-                .takeIf { bufferingQuality?.bandwidthEstimateSource == BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER },
+            observedThroughputKbps = observedThroughput,
             learnedLimit = bufferingQuality?.learnedLimit,
             selectedTracks = SelectedPlaybackTracksV3(
                 audio = selectedTrackIdentity(active, "audio", audioTrackIndex, active.plan.selectedTracks.audio),

@@ -112,9 +112,9 @@ object CellularQuality {
         SettingKeys.PLAYBACK_CELLULAR_MAX_BITRATE_KBPS,
     )
 
-    /** The contract defaults: the 720p preset. */
-    const val DEFAULT_RESOLUTION = "720p"
-    const val DEFAULT_MAX_BITRATE_KBPS = 2_000
+    /** The contract defaults: Auto, up to 10 Mbps. */
+    const val DEFAULT_RESOLUTION = QualityPresets.RESOLUTION_AUTO
+    const val DEFAULT_MAX_BITRATE_KBPS = 10_000
 
     val FOOTER: UiText = UiText.Key(SharedString.QualityCellularFooter)
 

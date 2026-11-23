@@ -54,11 +54,11 @@ class MarkerTimeline private constructor(private val regions: List<Pair<MarkerKi
     }
 
     /**
-     * Where Up Next appears: the start of the last credits range, extended
-     * back over credits ranges that run into it, so a scene between two
-     * credits ranges still plays.
+     * Where the closing credits begin: the start of the last credits range,
+     * extended back over credits ranges that run into it, so a scene between
+     * two credits ranges still counts as part of the episode.
      */
-    fun upNextCreditsStart(): Double? {
+    fun finalCreditsStart(): Double? {
         val credits = ranges(MarkerKind.Credits)
         var start = credits.lastOrNull()?.start ?: return null
         for (range in credits.asReversed()) {

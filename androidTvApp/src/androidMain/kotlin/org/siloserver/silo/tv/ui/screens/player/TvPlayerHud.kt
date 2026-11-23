@@ -1621,7 +1621,7 @@ private fun HudSubtitlesPane(
     // Image (PGS/DVB) and burned-in tracks ignore most of the appearance block —
     // say so instead of offering rows that silently do nothing.
     val applicability = tvSubtitleAppearanceApplicability(
-        presentation.rows.firstOrNull { row -> row.checked }?.identity,
+        presentation.committedIdentity,
     )
     val geometryEnabled = enabled && applicability.geometryApplies
     val stylingEnabled = enabled && applicability.stylingApplies
