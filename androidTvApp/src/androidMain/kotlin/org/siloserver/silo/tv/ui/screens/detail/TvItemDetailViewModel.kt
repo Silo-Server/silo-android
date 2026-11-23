@@ -62,6 +62,7 @@ import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.tv.ui.util.isTvHiddenMediaType
 import org.siloserver.silo.tv.ui.util.visibleOnTv
+import org.siloserver.silo.tv.ui.util.withTvShownCollections
 import org.siloserver.silo.viewmodel.applyLocalPlaybackProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -141,6 +142,12 @@ data class TvItemDetailUiState(
     val boxSet: org.siloserver.silo.model.catalog.CatalogBoxSet? = null,
     /** [boxSet]'s movies in release order, as row cards. */
     val boxSetItems: List<SectionItem> = emptyList(),
+    /** The collections row of a movie or series page; null for none. */
+    val collectionsRow: org.siloserver.silo.viewmodel.ItemCollectionsRow? = null,
+    /** A [org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview]'s titles, as row cards. */
+    val collectionPreviewItems: List<SectionItem> = emptyList(),
+    /** The type of each library a server collection in [collectionsRow] opens in. */
+    val collectionLibraryTypes: Map<Int, String> = emptyMap(),
     // --- Next-up episode (series / season detail only) ---
     // The episode the hero Play button targets: an in-progress episode if one
     // exists, else the first unwatched, else the first. Mirrors silo-apple's
@@ -573,6 +580,8 @@ class TvItemDetailViewModel(
     private var similarGeneration = 0L
     private var boxSetGeneration = 0L
     private var boxSetJob: Job? = null
+    private var collectionsGeneration = 0L
+    private var collectionsJob: Job? = null
 
     /**
      * The series page draws episode stills narrower than a season's or an
@@ -881,11 +890,16 @@ class TvItemDetailViewModel(
         // gave under an older access policy never lands after it.
         detailLoadJob?.cancel()
         quietDetailJob?.cancel()
-        // A new load shows no box set row until its own read answers.
+        // A new load shows no box set or collections row until its own read answers.
         boxSetGeneration++
         boxSetJob?.cancel()
+        collectionsGeneration++
+        collectionsJob?.cancel()
         _uiState.update {
-            it.copy(moreLikeThis = emptyList(), moreLikeThisLoading = false, boxSet = null, boxSetItems = emptyList())
+            it.copy(
+                moreLikeThis = emptyList(), moreLikeThisLoading = false, boxSet = null, boxSetItems = emptyList(),
+                collectionsRow = null, collectionPreviewItems = emptyList(), collectionLibraryTypes = emptyMap(),
+            )
         }
         // A page that already knows it is a series, from its card or the
         // durable cache, loads seasons and first episodes alongside the
@@ -945,6 +959,7 @@ class TvItemDetailViewModel(
                     }
                     loadMoreLikeThis(detail, similarOwner, similarRun)
                     loadBoxSet(detail)
+                    loadCollections(detail)
                 }
                 is ApiResult.Error -> _uiState.update {
                     it.copy(
@@ -1245,6 +1260,8 @@ class TvItemDetailViewModel(
         // Watched badges in the box set row follow the player and
         // a watched change too.
         loadBoxSet(current)
+        // A collection edited elsewhere shows on return.
+        loadCollections(current)
         refreshEpisodeRails(current, fresh = afterWatchedChange)
         // Back from the player: the reads above can answer before its stop
         // sends the final progress, so read the rails again, fresh, once the
@@ -3030,6 +3047,56 @@ class TvItemDetailViewModel(
                     boxSetItems = boxSet?.items.orEmpty().map { movie ->
                         movie.toSectionItem().copy(positionSeconds = movie.positionSeconds, durationSeconds = movie.durationSeconds)
                     },
+                )
+            }
+        }
+    }
+
+    /**
+     * Reads the collections row for a movie or series. A failed read keeps
+     * the row on screen, as [loadBoxSet] does.
+     */
+    private fun loadCollections(detail: ItemDetail) {
+        val run = ++collectionsGeneration
+        collectionsJob?.cancel()
+        // Whether this read still belongs to the page on screen.
+        fun isCurrent() = run == collectionsGeneration && _uiState.value.detail?.contentId == detail.contentId
+        collectionsJob = viewModelScope.launch {
+            val result = org.siloserver.silo.viewmodel.loadItemCollectionsRow(catalogRepository, detail, libraryId)
+            if (!isCurrent()) return@launch
+            if (result !is ApiResult.Success) return@launch
+            val loaded = result.data
+            // Server collections show only from libraries TV shows, as on
+            // Home, so an ebook library's collection stays off TV. The same
+            // list gives each card's library type for its page. The known
+            // list is enough here, as for the box set row.
+            val hasServerCollection = when (loaded) {
+                is org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview -> !loaded.collection.isUserCollection
+                is org.siloserver.silo.viewmodel.ItemCollectionsRow.AlsoIn -> loaded.cards.any { !it.isUserCollection }
+                null -> false
+            }
+            val shownLibraries = if (hasServerCollection) {
+                when (val libraries = personalDataRepository.knownUserLibraries()) {
+                    is ApiResult.Success -> libraries.data.visibleOnTv()
+                    // Unverified cards could be an ebook library's: keep the
+                    // row already shown, as any failed read does.
+                    is ApiResult.Error, is ApiResult.NetworkError -> return@launch
+                }
+            } else {
+                emptyList()
+            }
+            if (!isCurrent()) return@launch
+            // Book titles stay off TV, as in every other row.
+            val row = loaded
+                ?.withTvShownCollections(shownLibraries.mapTo(mutableSetOf()) { it.id })
+                ?.visibleOnTv()
+            val previewItems = (row as? org.siloserver.silo.viewmodel.ItemCollectionsRow.Preview)?.items.orEmpty()
+                .map { it.toSectionItem() }
+            _uiState.update {
+                it.copy(
+                    collectionsRow = row,
+                    collectionPreviewItems = previewItems,
+                    collectionLibraryTypes = shownLibraries.associate { library -> library.id to library.type },
                 )
             }
         }

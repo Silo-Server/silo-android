@@ -118,13 +118,8 @@ fun TvHomeScreen(
     // paused (the player, a detail page or another tab covers it) realtime
     // updates wait, so a large Home is not re-read beside the player's buffer.
     androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
-        viewModel.onShown()
-        // The effect runs as soon as it is added. On a new ViewModel that is
-        // while its own first load is still running, and a second full Home
-        // read would only supersede it; the first load runs a waiting update.
-        if (shouldRefreshOnResume() && !viewModel.uiState.value.isLoading) {
-            viewModel.refreshFromRealtime()
-        }
+        val refreshAllowed = shouldRefreshOnResume()
+        viewModel.onShown(refreshOnResume = refreshAllowed, deferPendingRefresh = !refreshAllowed)
         onPauseOrDispose { viewModel.onHidden() }
     }
     // A return from a detail page skips the resume refresh until the shell has

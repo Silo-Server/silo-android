@@ -1,6 +1,11 @@
 package org.siloserver.silo.tv.ui.components
 
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
+import android.graphics.ComposeShader
+import android.graphics.Matrix
+import android.graphics.PorterDuff
+import android.os.Build
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -24,19 +29,22 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.LinearGradientShader
+import androidx.compose.ui.graphics.Shader
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.section.SectionItem
+import kotlin.math.floor
 
 /**
  * Page-level Skyline backdrop for tvOS-style root screens. Faithful Android
@@ -58,7 +66,6 @@ fun TvRootHeroBackdrop(
     emptyWashColor: Color? = null,
     animateTransition: Boolean = true,
 ) {
-    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
     val tintState = LocalAmbientBackdropTint.current
     val ambientAccent = tintState.accent
 
@@ -112,80 +119,129 @@ fun TvRootHeroBackdrop(
         else -> 0.0f
     }
 
+    val background = MaterialTheme.colorScheme.background
+    // Read only while drawing, so the 500ms tint tween redraws the wash
+    // without recomposing the backdrop.
+    val washStops = {
+        smoothedWashStops(
+            tint = if (animateTransition) animatedTint.value else targetAccent,
+            background = background,
+            leadingAlpha = leadingWashAlpha,
+            midAlpha = midWashAlpha,
+            trailingAlpha = trailingWashAlpha,
+        )
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(background),
     ) {
         // Diagonal sampled-tint wash: richest in the top-right behind the art,
         // carried dimmed to the bottom-left (tvOS stops 1.0 / 0.5 / 0.18).
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val displayedTint = if (animateTransition) animatedTint.value else targetAccent
             drawRect(
-                brush = Brush.linearGradient(
-                    colorStops = smoothedWashStops(
-                        tint = displayedTint,
-                        leadingAlpha = leadingWashAlpha,
-                        midAlpha = midWashAlpha,
-                        trailingAlpha = trailingWashAlpha,
+                ShaderBrush(
+                    washShader(
+                        stops = washStops(),
+                        from = Offset(size.width, 0f),
+                        to = Offset(0f, size.height),
                     ),
-                    start = Offset(size.width, 0f),
-                    end = Offset(0f, size.height),
                 ),
             )
         }
 
-        // The grain breaks up 8-bit steps in the dark ramp. Behind art too:
-        // GPU gradient dithering is not guaranteed on older TV releases.
-        if (isVisible || hasTintOnlyWash || hasEmptyWash) {
+        HeroArtCrossfade(
+            content = content,
+            animate = animateTransition,
+            snap = snapInitialArtwork,
+            label = "tvRootHeroBackdropArt",
+        ) { art ->
+            val url = art.heroBackdropUrl
+            if (url != null && art.coverAspect == null) {
+                CornerAnchoredArt(url = url, thumbhash = art.heroBackdropThumbhash)
+            } else {
+                Box(modifier = Modifier.fillMaxSize())
+            }
+        }
+
+        // Once over every art slot, so a crossfade blends the raw art as
+        // before and an incoming slot whose image hasn't loaded doesn't
+        // paint wash over the outgoing one. Pages that never show art
+        // (Calendar) skip it.
+        if (content != null || hasDisplayedArtwork) {
+            CornerFade(washStops = washStops)
+        }
+
+        // Above the fade: a framed cover is drawn whole, and the fade would
+        // wash out its leading and bottom edges. Over an empty art slot the
+        // fade paints the page's own wash, so it leaves nothing behind here.
+        HeroArtCrossfade(
+            content = content,
+            animate = animateTransition,
+            snap = snapInitialArtwork,
+            label = "tvRootHeroBackdropCover",
+        ) { art ->
+            val url = art.heroBackdropUrl
+            val aspect = art.coverAspect
+            if (url != null && aspect != null) {
+                FramedCover(
+                    url = url,
+                    thumbhash = art.heroBackdropThumbhash,
+                    aspect = aspect,
+                    // The card's poster, so the glow stays put when the cover
+                    // upgrades to the detail poster; blurred, the two look the same.
+                    glowUrl = art.posterUrl ?: url,
+                )
+            } else {
+                Box(modifier = Modifier.fillMaxSize())
+            }
+        }
+
+        // From Android 9 the wash is dithered in its shader; this white grain
+        // would only lift an OLED's black.
+        if ((hasTintOnlyWash || hasEmptyWash) && Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
             DitheredWashOverlay(
                 alpha = if (hasEmptyWash) EmptyWashDitherAlpha else TintOnlyDitherAlpha,
                 modifier = Modifier.fillMaxSize(),
             )
         }
-
-        if (animateTransition) {
-            Crossfade(
-                targetState = content,
-                animationSpec = tween(
-                    if (snapInitialArtwork) 0 else TvMarqueeCrossfadeMs,
-                    easing = TvMarqueeEasing,
-                ),
-                label = "tvRootHeroBackdropArt",
-            ) { value ->
-                val art = when {
-                    value == null -> null
-                    // Protection turning on for the item still shown hides
-                    // its still at once instead of fading the sharp one out.
-                    content != null && value.id == content.id ->
-                        if (content.hidesStills && !value.hidesStills) content else value
-                    // A departing item follows the current preferences too.
-                    else -> value.underPrefs(spoilerPrefs)
-                }
-                if (art != null) HeroArt(art) else Box(modifier = Modifier.fillMaxSize())
-            }
-        } else if (content != null) {
-            HeroArt(content)
-        }
-
     }
 }
 
+/**
+ * One layer of the hero's art, crossfading with the focused item. The corner
+ * art and the framed cover each get one, on either side of [CornerFade], with
+ * the same timing so they move together.
+ */
 @Composable
-private fun HeroArt(content: TvMarqueeContent) {
-    val url = content.heroBackdropUrl
-    val aspect = content.coverAspect
-    when {
-        url == null -> Box(modifier = Modifier.fillMaxSize())
-        aspect != null -> FramedCover(
-            url = url,
-            thumbhash = content.heroBackdropThumbhash,
-            aspect = aspect,
-            // The card's poster, so the glow stays put when the cover
-            // upgrades to the detail poster; blurred, the two look the same.
-            glowUrl = content.posterUrl ?: url,
-        )
-        else -> CornerAnchoredArt(url = url, thumbhash = content.heroBackdropThumbhash)
+private fun HeroArtCrossfade(
+    content: TvMarqueeContent?,
+    animate: Boolean,
+    snap: Boolean,
+    label: String,
+    layer: @Composable (TvMarqueeContent) -> Unit,
+) {
+    if (!animate) {
+        if (content != null) layer(content)
+        return
+    }
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+    Crossfade(
+        targetState = content,
+        animationSpec = tween(if (snap) 0 else TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
+        label = label,
+    ) { value ->
+        val art = when {
+            value == null -> null
+            // Protection turning on for the item still shown hides
+            // its still at once instead of fading the sharp one out.
+            content != null && value.id == content.id ->
+                if (content.hidesStills && !value.hidesStills) content else value
+            // A departing item follows the current preferences too.
+            else -> value.underPrefs(spoilerPrefs)
+        }
+        if (art != null) layer(art) else Box(modifier = Modifier.fillMaxSize())
     }
 }
 
@@ -216,11 +272,8 @@ private fun FramedCover(url: String, thumbhash: String?, aspect: Float, glowUrl:
 }
 
 /**
- * Crisp art block pinned to the top-right corner, masked with a two-axis ramp:
- * opaque only at the top-right, fading to clear toward the leading edge
- * (horizontal ramp) and the bottom (vertical ramp). The two ramps multiply via
- * [BlendMode.DstIn] so the art dissolves into the sampled wash on its left and
- * below.
+ * Crisp art block pinned to the top-right corner, drawn whole. [CornerFade]
+ * fades it into the wash toward the leading edge and the bottom.
  */
 @Composable
 private fun CornerAnchoredArt(
@@ -236,39 +289,7 @@ private fun CornerAnchoredArt(
                 .fillMaxSize(),
             contentAlignment = Alignment.TopEnd,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(artWidth, artHeight)
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                    // drawWithCache: the two mask brushes are built once per
-                    // size, not on every frame of a crossfade.
-                    .drawWithCache {
-                        // Horizontal ramp: opaque at trailing (right) edge,
-                        // clear toward the leading (left) edge.
-                        val horizontalMask = Brush.horizontalGradient(
-                            colorStops = arrayOf(
-                                0.0f to Color.Transparent,
-                                0.68f to Color.Black,
-                                1.0f to Color.Black,
-                            ),
-                            endX = size.width,
-                        )
-                        // Vertical ramp: opaque at the top, clear toward bottom.
-                        val verticalMask = Brush.verticalGradient(
-                            colorStops = arrayOf(
-                                0.0f to Color.Black,
-                                0.58f to Color.Black,
-                                1.0f to Color.Transparent,
-                            ),
-                            endY = size.height,
-                        )
-                        onDrawWithContent {
-                            drawContent()
-                            drawRect(brush = horizontalMask, blendMode = BlendMode.DstIn)
-                            drawRect(brush = verticalMask, blendMode = BlendMode.DstIn)
-                        }
-                    },
-            ) {
+            Box(modifier = Modifier.size(artWidth, artHeight)) {
                 ThumbhashImage(
                     url = url,
                     thumbhash = thumbhash,
@@ -285,6 +306,235 @@ private fun CornerAnchoredArt(
         }
     }
 }
+
+/**
+ * Fades the corner art into the wash by painting the page's own wash over the
+ * art box through a corner-fade mask. Each pixel comes out as
+ * art × fade + wash × (1 − fade), worked out in one draw and rounded once.
+ *
+ * Masking the art in an offscreen layer instead (two DstIn ramps) rounded
+ * art × fade to 8 bits with no dithering, since the GPU dithers colour but
+ * never alpha. On a dark backdrop that drew contour lines across the whole
+ * fade, beside the title logo.
+ */
+@Composable
+private fun CornerFade(washStops: () -> Array<WashStop>) {
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopEnd,
+    ) {
+        val pageWidth = constraints.maxWidth.toFloat()
+        val pageHeight = constraints.maxHeight.toFloat()
+        Box(
+            modifier = Modifier
+                .size(maxWidth * ArtWidthFraction, maxHeight * ArtHeightFraction)
+                .drawWithCache {
+                    // This box sits in the page's top-right corner, so the
+                    // page's top-left is here.
+                    val pageOrigin = Offset(size.width - pageWidth, 0f)
+                    val mask: android.graphics.Shader
+                    val blend: PorterDuff.Mode
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        // How much of the art shows: a horizontal ramp times a
+                        // vertical one. Two-stop gradients are worked out
+                        // exactly on every GPU; the wash covers the rest.
+                        mask = ComposeShader(
+                            LinearGradientShader(
+                                from = Offset.Zero,
+                                to = Offset(size.width * ArtOpaqueFromX, 0f),
+                                colors = listOf(Color.Transparent, Color.Black),
+                            ),
+                            LinearGradientShader(
+                                from = Offset(0f, size.height * ArtFadesFromY),
+                                to = Offset(0f, size.height),
+                                colors = listOf(Color.Black, Color.Transparent),
+                            ),
+                            PorterDuff.Mode.MULTIPLY,
+                        )
+                        blend = PorterDuff.Mode.DST_OUT
+                    } else {
+                        // Below Android 9 a shader can't compose a composed
+                        // one, so the coverage comes from a bitmap.
+                        mask = smoothBitmapShader(CornerFadeMask).apply {
+                            // First and last samples land on the box's edges.
+                            setLocalMatrix(
+                                Matrix().apply {
+                                    setScale(
+                                        size.width / (CornerFadeMask.width - 1),
+                                        size.height / (CornerFadeMask.height - 1),
+                                    )
+                                    preTranslate(-0.5f, -0.5f)
+                                },
+                            )
+                        }
+                        blend = PorterDuff.Mode.DST_IN
+                    }
+                    onDrawBehind {
+                        // Read per draw so the tint tween animates it; the
+                        // ramp is the one the page wash just built.
+                        val wash = washShader(
+                            stops = washStops(),
+                            from = pageOrigin + Offset(pageWidth, 0f),
+                            to = pageOrigin + Offset(0f, pageHeight),
+                        )
+                        drawRect(ShaderBrush(ComposeShader(wash, mask, blend)))
+                    }
+                },
+        )
+    }
+}
+
+/**
+ * The wash's diagonal ramp from [from] to [to]. The wash spreads a dark tint
+ * across the whole screen in few 8-bit levels, so it bands unless something
+ * dithers it. Android 14 dithers gradients itself; Android 9 doesn't, and it
+ * also interpolates multi-stop gradients through an 8-bit colour table, which
+ * rounds them before any dither could help.
+ *
+ * So on Android 9 and later the ramp is worked out here ([washRamp]) and drawn
+ * from two 8-bit strips the GPU interpolates in floating point: whole levels,
+ * and the fraction of a level scaled up by 255. The fraction and
+ * [WashDitherNoise] are scaled back down in the shader and added before the
+ * result is rounded to 8 bits, so every level is dithered. 8-bit strips sample
+ * the same on every GPU and need no colour conversion; half-float textures
+ * don't (Android 9 reads them as linear light, and GLES 2 TVs may not filter
+ * them at all).
+ *
+ * Where the GPU dithers too (Android 14), the two add up to about one level of
+ * grain. The noise is anchored at [from], the page's top-right corner for both
+ * callers, so the page and the art's fade, which paint the same wash, get the
+ * same pixels. A flat wash (no tint yet, or none at all) gets no noise, which
+ * would lift an OLED's black.
+ */
+private fun washShader(
+    stops: Array<WashStop>,
+    from: Offset,
+    to: Offset,
+): Shader {
+    val flat = stops.all { it.sameColourAs(stops.first()) }
+    // The art's fade masks this shader, and composing composed shaders needs
+    // the Android 9 renderer.
+    if (flat || Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+        return LinearGradientShader(
+            from = from,
+            to = to,
+            colors = stops.map { it.color },
+            colorStops = stops.map { it.position },
+        )
+    }
+    // Texel i's centre lands at i / (size - 1) of the way from [from] to [to];
+    // the strips' one row runs across the ramp.
+    val along = (to - from) * (1f / (WashRampSize - 1))
+    val rampMatrix = Matrix().apply {
+        setValues(
+            floatArrayOf(
+                along.x, -(to.y - from.y), from.x - along.x * 0.5f,
+                along.y, to.x - from.x, from.y - along.y * 0.5f,
+                0f, 0f, 1f,
+            ),
+        )
+    }
+    val ramp = washRamp(stops)
+    val whole = smoothBitmapShader(ramp.whole).apply { setLocalMatrix(rampMatrix) }
+    val fraction = smoothBitmapShader(ramp.fraction).apply { setLocalMatrix(rampMatrix) }
+    val noise = ImageShader(WashDitherNoise, TileMode.Repeated, TileMode.Repeated).apply {
+        setLocalMatrix(Matrix().apply { setTranslate(from.x, from.y) })
+    }
+    val oneLevel = LinearGradientShader(
+        from = Offset.Zero,
+        to = Offset(1f, 0f),
+        colors = listOf(OneLevelGrey, OneLevelGrey),
+    )
+    val belowOneLevel = ComposeShader(
+        ComposeShader(fraction, oneLevel, PorterDuff.Mode.MULTIPLY),
+        ComposeShader(noise, oneLevel, PorterDuff.Mode.MULTIPLY),
+        PorterDuff.Mode.ADD,
+    )
+    return ComposeShader(whole, belowOneLevel, PorterDuff.Mode.ADD)
+}
+
+/** The wash's ramp, split for [washShader]: whole 8-bit levels and the fraction of a level × 255. */
+private class WashRamp(val stops: Array<WashStop>, val whole: ImageBitmap, val fraction: ImageBitmap)
+
+/**
+ * The wash's stops interpolated the way a gradient interpolates them (between
+ * gamma-encoded colours), in floating point, half a level low: the noise adds
+ * 0 to 1 level, so the dithered result averages to the wash's own tone.
+ */
+private fun washRamp(stops: Array<WashStop>): WashRamp {
+    // The page and the art's fade draw the same stops in the same frame.
+    cachedWashRamp?.let { if (it.stops.contentEquals(stops)) return it }
+    val whole = IntArray(WashRampSize)
+    val fraction = IntArray(WashRampSize)
+    var segment = 0
+    for (i in 0 until WashRampSize) {
+        val t = i / (WashRampSize - 1f)
+        while (segment < stops.size - 2 && t > stops[segment + 1].position) segment++
+        val start = stops[segment]
+        val end = stops[segment + 1]
+        val f = ((t - start.position) / (end.position - start.position)).coerceIn(0f, 1f)
+        fun level(startChannel: Float, endChannel: Float): Float =
+            ((startChannel + (endChannel - startChannel) * f) * 255f - 0.5f).coerceAtLeast(0f)
+        val r = level(start.red, end.red)
+        val g = level(start.green, end.green)
+        val b = level(start.blue, end.blue)
+        whole[i] = opaqueGrey(floor(r), floor(g), floor(b))
+        fraction[i] = opaqueGrey((r - floor(r)) * 255f, (g - floor(g)) * 255f, (b - floor(b)) * 255f)
+    }
+    return WashRamp(stops, opaqueStrip(whole), opaqueStrip(fraction)).also { cachedWashRamp = it }
+}
+
+// The last ramp built. Used on the main thread only.
+private var cachedWashRamp: WashRamp? = null
+
+// About one texel per pixel along a 1080p diagonal, so a GPU that filters
+// 8-bit textures coarsely can't widen a whole-level step past a pixel.
+private const val WashRampSize = 2048
+
+/** One 8-bit level, opaque: multiplies a strip's 0..1 down to 0..1 level. */
+private val OneLevelGrey = Color(red = 1f / 255f, green = 1f / 255f, blue = 1f / 255f)
+
+/**
+ * Noise from 0 up to just under one level, stored × 255 like the ramp's
+ * fraction (0..254, so it never adds a whole level). Interleaved gradient
+ * noise, so neighbouring pixels differ evenly instead of clumping.
+ */
+private val WashDitherNoise: ImageBitmap by lazy {
+    val dimension = 64
+    val pixels = IntArray(dimension * dimension) { index ->
+        val x = index % dimension
+        val y = index / dimension
+        val n = (fract(52.982918f * fract(0.06711056f * x + 0.00583715f * y)) * 255f).toInt().toFloat()
+        opaqueGrey(n, n, n)
+    }
+    Bitmap.createBitmap(pixels, dimension, dimension, Bitmap.Config.ARGB_8888).asImageBitmap()
+}
+
+private fun opaqueGrey(red: Float, green: Float, blue: Float): Int =
+    (0xFF shl 24) or (channel(red) shl 16) or (channel(green) shl 8) or channel(blue)
+
+private fun channel(value: Float): Int = (value + 0.5f).toInt().coerceIn(0, 255)
+
+private fun opaqueStrip(pixels: IntArray): ImageBitmap =
+    Bitmap.createBitmap(pixels, pixels.size, 1, Bitmap.Config.ARGB_8888).asImageBitmap()
+
+/**
+ * A clamped bitmap shader sampled bilinearly where Android lets us ask. From
+ * Android 12 a bitmap shader inside a ComposeShader doesn't take filtering
+ * from the paint and samples the nearest pixel; Android 13 added the setting
+ * that asks for bilinear. On 12 the wash strips, about one texel per pixel,
+ * stay within a pixel of the ramp anyway.
+ */
+private fun smoothBitmapShader(image: ImageBitmap): BitmapShader {
+    val clamp = android.graphics.Shader.TileMode.CLAMP
+    return BitmapShader(image.asAndroidBitmap(), clamp, clamp).apply {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            filterMode = BitmapShader.FILTER_MODE_LINEAR
+        }
+    }
+}
+
+private fun fract(value: Float): Float = value - floor(value)
 
 /**
  * Backward-compatible entry point for surfaces that still drive the backdrop
@@ -319,20 +569,76 @@ private val CoverShadowElevation = 18.dp
 private const val TintOnlyDitherAlpha = 0.28f
 private const val EmptyWashDitherAlpha = 0.34f
 
+/**
+ * One stop of the wash: an opaque gamma-encoded colour, in floating point. A
+ * Compose [Color] would round each channel to 8 bits, and the dark wash's
+ * stops sit only a few levels apart.
+ */
+private data class WashStop(val position: Float, val red: Float, val green: Float, val blue: Float) {
+    /** The stop rounded to 8 bits, for a plain gradient. */
+    val color: Color get() = Color(red, green, blue)
+
+    fun sameColourAs(other: WashStop): Boolean =
+        red == other.red && green == other.green && blue == other.blue
+}
+
+/**
+ * The wash's stops as opaque colours: the tint at each stop's strength over
+ * [background], blended in floating point. Opaque, so the art's fade can
+ * paint the same wash over the art.
+ */
 private fun smoothedWashStops(
     tint: Color,
+    background: Color,
     leadingAlpha: Float,
     midAlpha: Float,
     trailingAlpha: Float,
-): Array<Pair<Float, Color>> = arrayOf(
-    0.00f to tint.copy(alpha = leadingAlpha),
-    0.12f to tint.copy(alpha = lerpAlpha(leadingAlpha, midAlpha, 0.18f)),
-    0.26f to tint.copy(alpha = lerpAlpha(leadingAlpha, midAlpha, 0.48f)),
-    0.45f to tint.copy(alpha = midAlpha),
-    0.62f to tint.copy(alpha = lerpAlpha(midAlpha, trailingAlpha, 0.36f)),
-    0.80f to tint.copy(alpha = lerpAlpha(midAlpha, trailingAlpha, 0.68f)),
-    1.00f to tint.copy(alpha = trailingAlpha),
-)
+): Array<WashStop> = arrayOf(
+    0.00f to leadingAlpha,
+    0.12f to lerpAlpha(leadingAlpha, midAlpha, 0.18f),
+    0.26f to lerpAlpha(leadingAlpha, midAlpha, 0.48f),
+    0.45f to midAlpha,
+    0.62f to lerpAlpha(midAlpha, trailingAlpha, 0.36f),
+    0.80f to lerpAlpha(midAlpha, trailingAlpha, 0.68f),
+    1.00f to trailingAlpha,
+).map { (position, alpha) ->
+    WashStop(
+        position = position,
+        red = tint.red * alpha + background.red * (1f - alpha),
+        green = tint.green * alpha + background.green * (1f - alpha),
+        blue = tint.blue * alpha + background.blue * (1f - alpha),
+    )
+}.toTypedArray()
+
+/** The art turns fully opaque this far across its box from the leading edge. */
+private const val ArtOpaqueFromX = 0.68f
+
+/** The art starts fading out this far down its box. */
+private const val ArtFadesFromY = 0.58f
+
+/**
+ * For [CornerFade] below Android 9: how much of the wash covers the art at
+ * each point of its box, none at the top-right and all of it at the leading
+ * edge and the bottom. Drawn bilinearly scaled, which follows the two ramps'
+ * product closely between samples. Samples run edge to edge.
+ */
+private val CornerFadeMask: ImageBitmap by lazy {
+    val dimension = 256
+    val pixels = IntArray(dimension * dimension)
+    for (y in 0 until dimension) {
+        val v = y / (dimension - 1f)
+        val vertical = if (v <= ArtFadesFromY) 1f else (1f - v) / (1f - ArtFadesFromY)
+        for (x in 0 until dimension) {
+            val u = x / (dimension - 1f)
+            val horizontal = (u / ArtOpaqueFromX).coerceAtMost(1f)
+            val washCover = 1f - horizontal * vertical
+            pixels[y * dimension + x] = (washCover * 255f + 0.5f).toInt() shl 24
+        }
+    }
+    Bitmap.createBitmap(dimension, dimension, Bitmap.Config.ARGB_8888)
+        .apply { setPixels(pixels, 0, dimension, 0, 0, dimension, dimension) }
+        .asImageBitmap()
+}
 
 private fun lerpAlpha(start: Float, end: Float, fraction: Float): Float =
     start + (end - start) * fraction

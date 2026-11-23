@@ -136,7 +136,7 @@ interface PlayerSettingsStore {
     /**
      * The phone's cellular pair, sent instead of [preferredQualityFlow] and
      * [maxBitrateKbpsFlow] on mobile data or a metered network. Defaults to
-     * the 720p preset. Kept and applied locally against a server too old to
+     * Auto, up to 10 Mbps. Kept and applied locally against a server too old to
      * store it; see [CellularQuality].
      */
     val cellularPreferredQualityFlow: Flow<String>

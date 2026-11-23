@@ -20,6 +20,7 @@ import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.carriesHlsSubtitleRendition
 import org.siloserver.silo.model.playback.isUnplayableSubtitle
 import org.siloserver.silo.model.playback.nativeSwitchTrackId
+import org.siloserver.silo.model.playback.sourceContainerTrackId
 import org.siloserver.silo.model.playback.switchableHlsRendition
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
@@ -149,6 +150,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
                 } else {
                     nativeSwitchTrackId(item)
                 },
+                sourceContainerTrackId = sourceContainerTrackId(item),
                 hlsRendition = rendition,
                 serverTrackId = item.trackId,
                 serverDelivery = item.delivery.takeIf {

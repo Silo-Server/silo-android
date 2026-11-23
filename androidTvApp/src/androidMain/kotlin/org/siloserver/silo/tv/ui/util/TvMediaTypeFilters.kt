@@ -5,6 +5,7 @@ import org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType
 import org.siloserver.silo.model.navigation.isEbookLikeLibraryType
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.viewmodel.ItemCollectionsRow
 import kotlin.jvm.JvmName
 
 /**
@@ -52,4 +53,31 @@ fun tvCatalogMediaTypeFor(type: String): String? = when (type.lowercase()) {
     "series", "shows", "tv" -> "series"
     "audiobook", "audiobooks" -> "audiobook"
     else -> null
+}
+
+/**
+ * A title page's collections row as TV shows it: a preview without reading
+ * titles. A preview left with nothing shows its collection's card under
+ * "Also in", so the collection can still be opened.
+ */
+fun ItemCollectionsRow.visibleOnTv(): ItemCollectionsRow = when (this) {
+    is ItemCollectionsRow.AlsoIn -> this
+    is ItemCollectionsRow.Preview -> {
+        val shown = items.visibleOnTv()
+        if (shown.isEmpty()) ItemCollectionsRow.AlsoIn(listOf(collection)) else copy(items = shown)
+    }
+}
+
+/**
+ * The collections row with only the server collections whose library TV
+ * shows ([shownLibraryIds]; never an ebook library), as Home keeps them.
+ * Personal collections always stay. Null when none is left.
+ */
+fun ItemCollectionsRow.withTvShownCollections(shownLibraryIds: Set<Int>): ItemCollectionsRow? {
+    fun org.siloserver.silo.model.section.SectionCollectionCard.shown() =
+        isUserCollection || libraryIdInt in shownLibraryIds
+    return when (this) {
+        is ItemCollectionsRow.Preview -> takeIf { collection.shown() }
+        is ItemCollectionsRow.AlsoIn -> cards.filter { it.shown() }.takeIf { it.isNotEmpty() }?.let(ItemCollectionsRow::AlsoIn)
+    }
 }

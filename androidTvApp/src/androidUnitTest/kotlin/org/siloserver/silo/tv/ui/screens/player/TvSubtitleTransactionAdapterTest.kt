@@ -953,6 +953,108 @@ class TvSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `sidecar pick the server can only burn in commits as burn-in`() = runTest {
+        // On an HLS transcode the server burns an ASS track in, because that
+        // delivery declares no attached-font support. The replan has already
+        // switched the session's transcode, so refusing it left the old player
+        // on a session that no longer served its segments.
+        val harness = harness(backgroundScope)
+        val assMedia = media(trackId = "file:11:subtitle:4", label = "Full Subs (ASS)", language = "en", codec = "ssa")
+        val requested = SubtitleIdentity.ServerSidecar(4, assMedia)
+
+        harness.adapter.select(requested)
+        runCurrent()
+        harness.port.completeStage(
+            candidate(
+                id = "hls-burn-in",
+                selectedIndex = 4,
+                mode = PlaybackSubtitleModeV3.BURN_IN,
+                hasSidecar = false,
+                selectedSubtitleIdentity = requested,
+            ),
+        )
+        runCurrent()
+
+        val burnedIn = SubtitleIdentity.ServerBurnIn(4, assMedia)
+        assertEquals(emptyList(), harness.port.discarded)
+        assertEquals(listOf("hls-burn-in"), harness.port.committed)
+        assertNull(harness.adapter.snapshot.failureMessage)
+        assertEquals(1, harness.committedPlaybacks.size)
+        assertEquals(burnedIn, harness.adapter.snapshot.committedIdentity)
+
+        // A later replan that leaves the transcode hands the same track back
+        // as a sidecar; refusing it would strand the player the same way.
+        harness.adapter.updateOutputRouteGeneration(1L)
+        runCurrent()
+        harness.port.completeStage(
+            candidate(
+                id = "back-to-sidecar",
+                selectedIndex = 4,
+                outputRouteGeneration = 1L,
+                selectedSubtitleIdentity = requested,
+            ),
+        )
+        runCurrent()
+
+        assertEquals(emptyList(), harness.port.discarded)
+        assertEquals(listOf("hls-burn-in", "back-to-sidecar"), harness.port.committed)
+        assertNull(harness.adapter.snapshot.failureMessage)
+    }
+
+    @Test
+    fun `picking the row whose burn-in already plays sends no replan`() = runTest {
+        // The menu checks the sidecar row while its burn-in plays. Picking it
+        // again restarted the transcode for the same answer.
+        val harness = harness(backgroundScope)
+        val assMedia = media(trackId = "file:11:subtitle:4", label = "Full Subs (ASS)", language = "en", codec = "ssa")
+        val requested = SubtitleIdentity.ServerSidecar(4, assMedia)
+        harness.adapter.select(requested)
+        runCurrent()
+        harness.port.completeStage(
+            candidate(
+                id = "hls-burn-in",
+                selectedIndex = 4,
+                mode = PlaybackSubtitleModeV3.BURN_IN,
+                hasSidecar = false,
+                selectedSubtitleIdentity = requested,
+            ),
+        )
+        runCurrent()
+        assertEquals(SubtitleIdentity.ServerBurnIn(4, assMedia), harness.adapter.snapshot.committedIdentity)
+        val persistedBefore = harness.persistence.persisted.size
+
+        harness.adapter.select(requested)
+        runCurrent()
+
+        assertEquals(1, harness.port.requests.size)
+        assertNull(harness.adapter.snapshot.pendingIdentity)
+        // Still the viewer's explicit pick: saved like a commit.
+        assertEquals(persistedBefore + 1, harness.persistence.persisted.size)
+        assertEquals(SubtitleIdentity.ServerBurnIn(4, assMedia), harness.persistence.persisted.last().identity)
+    }
+
+    @Test
+    fun `a saved burn-in the new plan burns in again is already committed`() = runTest {
+        // Reopening: the saved burn-in restores to its sidecar row while the
+        // load already committed the plan's burn-in. Nothing is mounted for
+        // it, and a replan would restart the transcode for the same answer.
+        val harness = harness(backgroundScope)
+        val assMedia = media(trackId = "file:11:subtitle:4", label = "Full Subs (ASS)", language = "en", codec = "ssa")
+        val burnedIn = SubtitleIdentity.ServerBurnIn(4, assMedia)
+        harness.adapter.resetContent(context(), committedIdentity = burnedIn)
+
+        harness.adapter.restoreFreshPreference(SubtitleIdentity.ServerSidecar(4, assMedia))
+        runCurrent()
+        advanceTimeBy(10_000)
+        runCurrent()
+
+        assertEquals(emptyList(), harness.port.requests)
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertNull(harness.adapter.snapshot.failureMessage)
+        assertEquals(burnedIn, harness.adapter.snapshot.committedIdentity)
+    }
+
+    @Test
     fun `downloaded and embedded choices persist only after mounted resolver confirms`() = runTest {
         val harness = harness(backgroundScope)
         val downloaded = SubtitleIdentity.Downloaded(

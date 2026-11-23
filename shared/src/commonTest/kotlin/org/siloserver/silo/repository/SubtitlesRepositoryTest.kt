@@ -8,6 +8,7 @@ import org.siloserver.silo.model.subtitles.SubtitleAiJobsResponse
 import org.siloserver.silo.model.subtitles.SubtitleAiJobStatus
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
 import org.siloserver.silo.model.subtitles.SubtitleAiStatus
+import org.siloserver.silo.model.subtitles.SubtitleProviderStatus
 import org.siloserver.silo.model.subtitles.SubtitleDownloadRequest
 import org.siloserver.silo.model.subtitles.SubtitleDownloadResponse
 import org.siloserver.silo.model.subtitles.SubtitleSearchRequest
@@ -69,6 +70,8 @@ class SubtitlesRepositoryTest {
             ApiResult.Error(code = 500, error = "unset", message = "unset")
         var listResult: ApiResult<DownloadedSubtitlesResponse> =
             ApiResult.Success(DownloadedSubtitlesResponse())
+        var providerStatusResult: ApiResult<SubtitleProviderStatus> =
+            ApiResult.Success(SubtitleProviderStatus(state = "available", allowed = true, enabled = true))
         var aiStatusResult: ApiResult<SubtitleAiStatus> =
             ApiResult.Success(SubtitleAiStatus(enabled = true, transcribeEnabled = true))
         var aiQuotaResult: ApiResult<SubtitleAiQuota> =
@@ -91,6 +94,11 @@ class SubtitlesRepositoryTest {
             calls += "list:$mediaFileId"
             return listResult
         }
+        override suspend fun providerStatus(): ApiResult<SubtitleProviderStatus> {
+            calls += "providerStatus"
+            return providerStatusResult
+        }
+
         override suspend fun aiStatus(): ApiResult<SubtitleAiStatus> {
             calls += "aiStatus"
             return aiStatusResult

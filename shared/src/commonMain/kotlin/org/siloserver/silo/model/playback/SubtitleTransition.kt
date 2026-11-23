@@ -54,6 +54,33 @@ sealed interface SubtitleIdentity {
 fun SubtitleIdentity.isServerPick(committed: SubtitleIdentity): Boolean =
     this is SubtitleIdentity.Embedded && isServerSelected && this != committed
 
+/**
+ * The identity a staged plan in [mode] commits for this server track. The
+ * server may answer a sidecar pick by burning that track in (an ASS track on
+ * an HLS transcode, which declares no attached-font support); nothing is
+ * mounted for it, so it commits as burn-in of the same track. A later replan
+ * that leaves the transcode may hand it back as a sidecar, which commits as
+ * that sidecar again.
+ */
+fun SubtitleIdentity.deliveredAs(mode: PlaybackSubtitleModeV3): SubtitleIdentity = when {
+    this is SubtitleIdentity.ServerSidecar && mode == PlaybackSubtitleModeV3.BURN_IN ->
+        SubtitleIdentity.ServerBurnIn(serverIndex, media)
+    this is SubtitleIdentity.ServerBurnIn &&
+        (mode == PlaybackSubtitleModeV3.RENDER || mode == PlaybackSubtitleModeV3.CONVERT) ->
+        SubtitleIdentity.ServerSidecar(serverIndex, media)
+    else -> this
+}
+
+/**
+ * Whether this row or pick (the receiver) is what [committed] plays: the same
+ * identity, or the sidecar row whose pick the server burned in
+ * ([deliveredAs]). Compare a row or pick with the committed identity through
+ * this, not `==`.
+ */
+fun SubtitleIdentity.playsAs(committed: SubtitleIdentity): Boolean =
+    this == committed ||
+        this is SubtitleIdentity.ServerSidecar && deliveredAs(PlaybackSubtitleModeV3.BURN_IN) == committed
+
 data class SubtitleMediaIdentity(
     val trackId: String? = null,
     val label: String? = null,
