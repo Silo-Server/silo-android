@@ -1199,6 +1199,12 @@ fun TvPlayerScreen(
                     if (event.action == KeyEvent.ACTION_UP) pillBackDownTime = -1L
                     return@handler true
                 }
+                // A new press: the mark a pill left for the BackHandler is
+                // stale. Where the bridge consumed that press whole, the
+                // BackHandler never cleared it, and it would swallow this one.
+                if (event.action == KeyEvent.ACTION_DOWN && event.downTime != pillAnsweredBackPress[0]) {
+                    pillAnsweredBackPress[0] = -1L
+                }
             }
             // Stop leaves the player from every state, overlays and loading
             // included, so no Stop press can reach the Media3 session, whose
