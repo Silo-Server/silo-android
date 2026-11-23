@@ -207,6 +207,21 @@ class SiloCastController(
     )
     val launchFeedback: SharedFlow<SiloCastLaunchFeedback> = _launchFeedback.asSharedFlow()
 
+    private val _endedByTv = MutableSharedFlow<SiloCastText>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /**
+     * The TV ended the session for good, with a close that forgets it: its
+     * viewer took control back with the TV remote or pressed Disconnect
+     * Remote, or an older TV let go. Not a timeout the phone reconnects from,
+     * and not a close that keeps the TV (full, refused, an unused profile
+     * handed back), which leaves the remote up on the TV's error. Carries a
+     * short notice for the phone to show; the remote screen closes on it.
+     */
+    val endedByTv: SharedFlow<SiloCastText> = _endedByTv.asSharedFlow()
+
     @Volatile
     private var session: SiloCastConnection? = null
     private var readJob: Job? = null
@@ -216,6 +231,10 @@ class SiloCastController(
 
     @Volatile
     private var missedHeartbeats = 0
+
+    /** The error text of the last message the TV sent, if it was an error. */
+    @Volatile
+    private var lastMessageError: String? = null
 
     // The read loop's finally block decides between reconnect and teardown;
     // set before any deliberate close (ours or the TV's) so an intentional
@@ -514,6 +533,14 @@ class SiloCastController(
 
     private fun disconnectCount(): Int = synchronized(lastTargetLock) { disconnects }
 
+    /** Forgets the saved TV and turns away any save a connection attempt still has pending. */
+    private fun forgetLastTarget() {
+        synchronized(lastTargetLock) {
+            disconnects += 1
+            lastTargetStore.clear()
+        }
+    }
+
     /**
      * Saves [target] for foreground auto-resume, unless the user disconnected
      * since the connection attempt read [disconnectsAtStart]: a disconnect
@@ -597,10 +624,7 @@ class SiloCastController(
         // No longer current, its error handling leaves the state alone.
         val pendingLaunch = synchronized(launchJobLock) { launchJob.also { launchJob = null } }
         pendingLaunch?.cancel(CancellationException("Remote Control was turned off."))
-        synchronized(lastTargetLock) {
-            disconnects += 1
-            lastTargetStore.clear()
-        }
+        forgetLastTarget()
         cancelReconnect()
         cancelAutoResumeProbe()
         suppressReconnect = true
@@ -1293,6 +1317,15 @@ class SiloCastController(
     }
 
     private suspend fun handleMessage(message: SiloCastMessage) {
+        val errorBeforeMessage = lastMessageError
+        // Heartbeats can fall between an error and the goodbye it explains. A
+        // reply to a control (not ready, failed, rate limited) never explains
+        // one.
+        if (message !is SiloCastMessage.Ping && message !is SiloCastMessage.Pong) {
+            lastMessageError = (message as? SiloCastMessage.Error)?.error
+                ?.takeIf { it.code !in CONTROL_REPLY_ERRORS }
+                ?.message
+        }
         when (message) {
             is SiloCastMessage.Hello -> {
                 val version = SiloCastProtocol.negotiatedVersion(message.hello.supportedVersions)
@@ -1398,8 +1431,9 @@ class SiloCastController(
                 // The TV ended the session deliberately. An older TV only does
                 // that for a takeover or Disconnect, so the phone forgets it and
                 // never silently reattaches; a TV that keeps several controllers
-                // says why (see SiloCastClosePolicy). The remote keeps showing
-                // any error the TV sent just before.
+                // says why (see SiloCastClosePolicy). A close that forgets the
+                // TV closes the remote with a notice ([endedByTv]); otherwise
+                // the remote keeps showing any error the TV sent just before.
                 Log.i(TAG, "SiloCast close from TV reason=${message.reason ?: "none"}")
                 val roku = _state.value.connectedTarget?.takeIf { it.isRoku }
                 if (roku != null && message.reason == SiloCastCloseReason.TvDisconnected) {
@@ -1416,9 +1450,38 @@ class SiloCastController(
                     // block starts the reconnect.
                     SiloCastCloseResponse.Reconnect -> runCatching { session?.close() }
                     is SiloCastCloseResponse.LetGo -> {
+                        val ended = _state.value
+                        // Only a close that forgets the TV ends the session for
+                        // the user (the TV's viewer took control back or pressed
+                        // Disconnect, or an older TV let go). The others (full,
+                        // refused, an unused profile handed back) keep the
+                        // remote up on the TV's error, as silo-apple does. A
+                        // newer connection from this phone taking over, or a
+                        // silent auto-resume nobody has opened the remote on,
+                        // ends quietly.
+                        val unseenAutoResume = !remoteScreenVisible &&
+                            (sessionIsAutoResumed || ended.isAutoResuming)
+                        val endedForUser = response.forgetTarget &&
+                            message.reason != SiloCastCloseReason.Replaced &&
+                            !unseenAutoResume
                         suppressReconnect = true
-                        if (response.forgetTarget) lastTargetStore.clear()
+                        // Like the user's Disconnect, so a connect or launch
+                        // still saving this TV can't bring it back.
+                        if (response.forgetTarget) forgetLastTarget()
                         closeConnection()
+                        if (endedForUser) {
+                            // An older TV's refusal comes as an error just before
+                            // its goodbye and says more. A TV hands control back
+                            // with no error, so one before `tv_disconnected`
+                            // answered an earlier control.
+                            val refusal = errorBeforeMessage
+                                ?.takeIf { message.reason != SiloCastCloseReason.TvDisconnected }
+                            _endedByTv.tryEmit(
+                                refusal?.let(SiloCastText::Verbatim)
+                                    ?: ended.connectedTarget?.name?.let { SiloCastText.Res(CommonR.string.cast_remote_endedByTv, it) }
+                                    ?: SiloCastText.Res(CommonR.string.cast_remote_endedByTvUnnamed),
+                            )
+                        }
                     }
                 }
             }
@@ -1470,6 +1533,8 @@ class SiloCastController(
         pendingHandoff = null
         negotiatedVersion.cancel()
         tvFeatures = emptySet()
+        // An error from this stream says nothing about the next one's goodbye.
+        lastMessageError = null
     }
 
     private fun closeConnectionLocked() {

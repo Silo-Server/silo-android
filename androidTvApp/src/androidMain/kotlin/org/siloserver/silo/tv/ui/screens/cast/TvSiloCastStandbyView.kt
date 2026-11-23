@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.cast
 
+import androidx.activity.compose.BackHandler
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -37,7 +38,8 @@ import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 /**
  * Full-screen takeover while a phone controls the TV with nothing playing:
  * "Ready for <phone>", or, while a profile handoff prepares a title the phone
- * is about to play, "Starting <title>" with a spinner.
+ * is about to play, "Starting <title>" with a spinner. Back disconnects the
+ * phone, like the button, and returns the TV to the screen underneath.
  */
 @Composable
 fun TvSiloCastStandbyView(
@@ -47,6 +49,8 @@ fun TvSiloCastStandbyView(
     val preparing = state.preparing
     val disconnectFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { disconnectFocus.requestFocus() }
+    // Registered after the screens underneath, so it handles Back first.
+    BackHandler(onBack = onDisconnect)
 
     Box(
         modifier = Modifier

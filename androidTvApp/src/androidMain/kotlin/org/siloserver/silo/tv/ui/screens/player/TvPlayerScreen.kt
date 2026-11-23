@@ -616,6 +616,14 @@ fun TvPlayerScreen(
         }
     }
     val stopPlaybackAndExit = { exitPlayer(true, null) }
+    // The viewer chose to leave with the TV's own remote: a phone controlling
+    // the TV lets go first, so the screen they return to is not covered by
+    // the "Ready for <phone>" standby. A phone's Stop exits without this, and
+    // a Back during that exit's fade must not drop the phone either.
+    val leavePlayerOnTv = {
+        if (!exitRequested) siloCastReceiver.returnControlToTv()
+        stopPlaybackAndExit()
+    }
     val latestOnPlayOnDeckItem by rememberUpdatedState(onPlayOnDeckItem)
     val latestOnStaleCastLaunch by rememberUpdatedState(onStaleCastLaunch)
     // The phone's launch went stale just before this player registered. The
@@ -1128,7 +1136,7 @@ fun TvPlayerScreen(
             showQuickSubtitlePicker -> showQuickSubtitlePicker = false
             // On the Up-Next overlay, Back exits the player (matches tvOS, where
             // the Up-Next "Back" button dismisses the whole player).
-            state.showNextUp -> stopPlaybackAndExit()
+            state.showNextUp -> leavePlayerOnTv()
             state.hudOpen -> viewModel.closeHUD()
             showPartyPanel -> showPartyPanel = false
             // While PLAYING, Back steps controls -> hidden before exiting.
@@ -1140,7 +1148,7 @@ fun TvPlayerScreen(
             // player (Leave, and for the host Stop and End). Never an exit.
             watchParty != null -> showPartyPanel = true
             else -> {
-                stopPlaybackAndExit()
+                leavePlayerOnTv()
             }
         }
     }
@@ -1170,7 +1178,7 @@ fun TvPlayerScreen(
             // would desync the room.
             if (event.keyCode == KeyEvent.KEYCODE_MEDIA_STOP) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    if (watchParty != null) showPartyPanel = true else stopPlaybackAndExit()
+                    if (watchParty != null) showPartyPanel = true else leavePlayerOnTv()
                 }
                 return@handler true
             }
@@ -2522,7 +2530,7 @@ fun TvPlayerScreen(
                             null
                         },
                         onClose = {
-                            if (watchParty != null) showPartyPanel = true else stopPlaybackAndExit()
+                            if (watchParty != null) showPartyPanel = true else leavePlayerOnTv()
                         },
                     )
                     }
@@ -2804,10 +2812,10 @@ fun TvPlayerScreen(
             onStopShuffling = {
                 // Stop shuffling leaves the player, back to where the shuffle started.
                 viewModel.stopShuffling()
-                stopPlaybackAndExit()
+                leavePlayerOnTv()
             },
             onToggleAutoPlayNext = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
-            onExitPlayback = { stopPlaybackAndExit() },
+            onExitPlayback = { leavePlayerOnTv() },
             onNextUpVideoBoundsChanged = { nextUpVideoBounds = it },
             onIntroPromptSelect = { handleIntroPromptSelect() },
             onDeckItems = state.onDeckItems,
