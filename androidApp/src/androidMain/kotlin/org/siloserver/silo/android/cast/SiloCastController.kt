@@ -533,6 +533,14 @@ class SiloCastController(
 
     private fun disconnectCount(): Int = synchronized(lastTargetLock) { disconnects }
 
+    /** Forgets the saved TV and turns away any save a connection attempt still has pending. */
+    private fun forgetLastTarget() {
+        synchronized(lastTargetLock) {
+            disconnects += 1
+            lastTargetStore.clear()
+        }
+    }
+
     /**
      * Saves [target] for foreground auto-resume, unless the user disconnected
      * since the connection attempt read [disconnectsAtStart]: a disconnect
@@ -616,10 +624,7 @@ class SiloCastController(
         // No longer current, its error handling leaves the state alone.
         val pendingLaunch = synchronized(launchJobLock) { launchJob.also { launchJob = null } }
         pendingLaunch?.cancel(CancellationException("Remote Control was turned off."))
-        synchronized(lastTargetLock) {
-            disconnects += 1
-            lastTargetStore.clear()
-        }
+        forgetLastTarget()
         cancelReconnect()
         cancelAutoResumeProbe()
         suppressReconnect = true
@@ -1313,9 +1318,13 @@ class SiloCastController(
 
     private suspend fun handleMessage(message: SiloCastMessage) {
         val errorBeforeMessage = lastMessageError
-        // Heartbeats can fall between an error and the goodbye it explains.
+        // Heartbeats can fall between an error and the goodbye it explains. A
+        // reply to a control (not ready, failed, rate limited) never explains
+        // one.
         if (message !is SiloCastMessage.Ping && message !is SiloCastMessage.Pong) {
-            lastMessageError = (message as? SiloCastMessage.Error)?.error?.message
+            lastMessageError = (message as? SiloCastMessage.Error)?.error
+                ?.takeIf { it.code !in CONTROL_REPLY_ERRORS }
+                ?.message
         }
         when (message) {
             is SiloCastMessage.Hello -> {
@@ -1456,7 +1465,9 @@ class SiloCastController(
                             message.reason != SiloCastCloseReason.Replaced &&
                             !unseenAutoResume
                         suppressReconnect = true
-                        if (response.forgetTarget) lastTargetStore.clear()
+                        // Like the user's Disconnect, so a connect or launch
+                        // still saving this TV can't bring it back.
+                        if (response.forgetTarget) forgetLastTarget()
                         closeConnection()
                         if (endedForUser) {
                             // An older TV's refusal comes as an error just before
