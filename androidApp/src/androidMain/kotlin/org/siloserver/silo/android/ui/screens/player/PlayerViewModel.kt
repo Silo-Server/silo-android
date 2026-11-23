@@ -6216,9 +6216,14 @@ class PlayerViewModel(
             // If the before-end/end point already fired while we were still
             // resolving, the card couldn't arm — commit it now with the
             // strongest video-ended flag observed.
+            // Next Up turned off while it was resolving: arm no card or countdown.
             if (!autoAdvanceHandled) {
                 pendingApproachingEndVideoEnded?.let { videoEnded ->
-                    commitApproachingEnd(info, videoEnded)
+                    if (shufflePlayback == null && !nextUpEnabled.value) {
+                        pendingApproachingEndVideoEnded = null
+                    } else {
+                        commitApproachingEnd(info, videoEnded)
+                    }
                 }
             }
         }

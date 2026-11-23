@@ -5397,9 +5397,14 @@ class TvPlayerViewModel(
             // If the credits/end point already fired while we were still
             // resolving, the overlay couldn't arm — complete it now (re-arm the
             // countdown) with the strongest video-ended flag we observed.
+            // Next Up turned off while it was resolving: arm no countdown.
             if (!autoAdvanceHandled) {
                 pendingApproachingEndVideoEnded?.let { videoEnded ->
-                    commitApproachingEnd(nextState, videoEnded)
+                    if (shufflePlayback == null && !nextUpEnabled.value) {
+                        pendingApproachingEndVideoEnded = null
+                    } else {
+                        commitApproachingEnd(nextState, videoEnded)
+                    }
                 }
             }
         }
