@@ -96,8 +96,20 @@ class RoomMembershipPort(
     override suspend fun reconcile(command: MembershipPort.Command): MembershipPort.Completion =
         completion(command, runtime.reconcile(command.id, command.authority))
 
+    override suspend fun retry(command: MembershipPort.Command): MembershipPort.Completion =
+        completion(command, runtime.retry(command.id, command.authority))
+
+    override suspend fun restore(command: MembershipPort.Command): MembershipPort.Completion =
+        completion(command, runtime.restore(command.id, command.authority))
+
     private suspend fun completion(command: MembershipPort.Command, result: MembershipOutbox.Result): MembershipPort.Completion {
         val current = projection(command.authority, command.itemId, command.kind)
+        val durable = current?.disposition?.takeIf {
+            current.commandId == command.id && it in listOf(MembershipPort.Disposition.ACKNOWLEDGED, MembershipPort.Disposition.RECONCILED)
+        }
+        // The row is gone because this exact command was already confirmed, e.g. its acknowledgement
+        // committed as the caller was cancelled. Report that rather than a lost claim.
+        if (result.resolution == MembershipOutbox.Resolution.NOT_CLAIMED && durable != null) return MembershipPort.Completion(durable, true)
         return MembershipPort.Completion(MembershipPort.Disposition.valueOf(result.resolution.name),
             result.resolution in listOf(MembershipOutbox.Resolution.ACKNOWLEDGED, MembershipOutbox.Resolution.RECONCILED) &&
                 current?.commandId == command.id && current.disposition in listOf(
@@ -112,6 +124,8 @@ class RoomMembershipPort(
         val disposition = when (command?.state) {
             MembershipOutbox.RECONCILE -> MembershipPort.Disposition.NEEDS_RECONCILIATION
             MembershipOutbox.PAUSED -> MembershipPort.Disposition.PAUSED
+            // A resend in flight; its earlier paused disposition no longer applies.
+            MembershipOutbox.SENDING -> null
             else -> projection.disposition?.let(MembershipPort.Disposition::valueOf)
         }
         if (authority != runtime.captureAuthority()) return null

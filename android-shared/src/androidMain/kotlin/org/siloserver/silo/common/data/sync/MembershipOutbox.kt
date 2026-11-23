@@ -11,7 +11,7 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.apiv2.MembershipV2Api
 
 /**
- * Storage foundation only. Both inline and worker sends must use [send] after activation.
+ * Storage foundation only. Both inline and worker sends must use [send] or [retry] after activation.
  * [authority] is a persisted login identity, NOT a server/profile pair or process counter.
  * The caller must verify its association with [scope] before constructing an Authority.
  * No credentials are persisted in Room. A process owns one instance and calls [recover]
@@ -52,12 +52,16 @@ class MembershipOutbox(
         ))
     }
 
-    suspend fun send(id: Long, authority: Authority): Result {
+    suspend fun send(id: Long, authority: Authority): Result =
+        sendClaimed(id, authority) { claim -> dao.claimMembership(id, authority.key, claim, processOwner) }
+
+    private suspend fun sendClaimed(id: Long, authority: Authority, claimRow: suspend (String) -> Int): Result {
         if (authority.scope != tokens.snapshotCurrentScope()) return Result(Resolution.NOT_CLAIMED)
         val claim = UUID.randomUUID().toString()
         var resolved = false
+        var refused = false
         try {
-            if (dao.claimMembership(id, authority.key, claim, processOwner) != 1) return Result(Resolution.NOT_CLAIMED)
+            if (claimRow(claim) != 1) return Result(Resolution.NOT_CLAIMED)
             val command = requireNotNull(dao.getById(id))
             require(command.serverId == authority.scope.serverId && command.profileId == authority.scope.profileId.orEmpty())
             val present = command.payloadJson.toBooleanStrict()
@@ -73,7 +77,7 @@ class MembershipOutbox(
                 if (resolved) return Result(Resolution.ACKNOWLEDGED,
                     dao.getLatestByCoalesceKey(command.coalesceKey) == null && authority.scope == tokens.snapshotCurrentScope())
             }
-            return Result(Resolution.NEEDS_RECONCILIATION)
+            refused = response is ApiResult.Error && refuses(response.code)
         } finally {
             // Claim commit can precede cancellation of its suspended return. Always attempt
             // exact-token cleanup, even when admission never returned to this coroutine.
@@ -82,9 +86,44 @@ class MembershipOutbox(
                 dao.transitionMembership(id, claim, authority.key, SENDING, RECONCILE)
             }
         }
+        // Resending can't fix a refused write (an item that is gone or hidden). Read once instead:
+        // a removal of an item that is gone already matches; otherwise the command pauses.
+        return if (refused) reconcile(id, authority) else Result(Resolution.NEEDS_RECONCILIATION)
     }
 
-    /** Explicit read-only recovery; a mismatch pauses for a new user command, never resends. */
+    /**
+     * Recovers an unconfirmed command. A read that already shows the desired state resolves it;
+     * otherwise the command is resent, but only while it is still the item's latest choice.
+     * PUT and DELETE are idempotent, so resending a write that did land is harmless.
+     */
+    suspend fun retry(id: Long, authority: Authority): Result {
+        // Cancelled between record and send: nothing was sent yet, so send it through the usual claim.
+        if (dao.getById(id)?.state == READY) return send(id, authority)
+        val observed = reconcile(id, authority)
+        if (observed.resolution != Resolution.PAUSED) return observed
+        val command = dao.getById(id) ?: return Result(Resolution.NOT_CLAIMED)
+        val previous = command.membershipClaim ?: return Result(Resolution.NOT_CLAIMED)
+        if (dao.getLatestByCoalesceKey(command.coalesceKey)?.id != id) {
+            // A newer choice for the same item replaces this one.
+            dao.resolveMembership(id, previous, authority.key, PAUSED)
+            return Result(Resolution.NOT_CLAIMED)
+        }
+        return sendClaimed(id, authority) { claim -> dao.reclaimMembership(id, authority.key, previous, claim, processOwner) }
+    }
+
+    /**
+     * The one automatic retry a command restored from an earlier run gets. Only a recent unconfirmed
+     * command is resent; a paused one (the viewer was told it wasn't saved, or the server refused it)
+     * or an older one is only read, so a stale choice never overwrites a newer change made elsewhere.
+     * [nowMs] is wall-clock time, compared with the command's [DirtyOperationEntity.createdAtMs].
+     */
+    suspend fun restore(id: Long, authority: Authority, nowMs: Long = System.currentTimeMillis()): Result {
+        val command = dao.getById(id) ?: return Result(Resolution.NOT_CLAIMED)
+        val recent = nowMs - command.createdAtMs in 0..RESTORE_RESEND_WINDOW_MS
+        return if (command.state == RECONCILE && recent) retry(id, authority) else reconcile(id, authority)
+    }
+
+    /** Read-only check; a mismatch pauses the command until [retry] or a new user command. */
     suspend fun reconcile(id: Long, authority: Authority): Result {
         val command = dao.getById(id) ?: return Result(Resolution.NOT_CLAIMED)
         if (command.membershipAuthority != authority.key || command.serverId != authority.scope.serverId ||
@@ -112,5 +151,14 @@ class MembershipOutbox(
         const val SENDING = "membership_sending"
         const val RECONCILE = "membership_reconcile"
         const val PAUSED = "membership_paused"
+
+        /** How long after a choice a restored command may still be resent without the viewer asking. */
+        const val RESTORE_RESEND_WINDOW_MS = 10 * 60_000L
+
+        /**
+         * Responses a resend can't change. 401 is refreshed by the API; 403 can clear once the
+         * profile is verified again; 408 and 429 are transient.
+         */
+        private fun refuses(code: Int) = code in setOf(400, 404, 410, 422)
     }
 }
