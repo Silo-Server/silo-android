@@ -26,6 +26,7 @@ import org.siloserver.silo.model.download.OfflineManifestSubtitle
 import org.siloserver.silo.model.download.OfflineSubtitleFile
 import org.siloserver.silo.model.download.OfflineTrackInfo
 import org.siloserver.silo.model.download.decodeOfflineManifestArtwork
+import org.siloserver.silo.model.download.decodeOfflineManifestEndCreditsStart
 import org.siloserver.silo.model.download.decodeOfflineManifestTracks
 import org.siloserver.silo.model.download.isOfflineArtworkFetchUrl
 import org.siloserver.silo.model.download.isOfflineSubtitleFetchUrl
@@ -86,7 +87,8 @@ internal class OfflineTrackAssetFetcher(
             }
         }
         val artwork = fetchArtwork(downloadId, serverId, accountId, profileId, fileId, decodeOfflineManifestArtwork(body), configure)
-        return OfflineAssets(tracks = manifest.toOfflineTrackInfo(saved), artwork = artwork)
+        val tracks = manifest.toOfflineTrackInfo(saved, decodeOfflineManifestEndCreditsStart(body))
+        return OfflineAssets(tracks = tracks, artwork = artwork)
     }
 
     /**

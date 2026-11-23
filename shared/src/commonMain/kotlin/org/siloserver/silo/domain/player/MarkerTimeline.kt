@@ -68,6 +68,24 @@ class MarkerTimeline private constructor(private val regions: List<Pair<MarkerKi
         return start
     }
 
+    /**
+     * Where the end credits start in a file of [durationSeconds]: the last
+     * credits occurrence that starts in the file's tail window and before its
+     * end, or null. Reaching it finishes the item, as the server judges a
+     * streamed stop (`CreditsLimits.EndCreditsStart`), so credits placed
+     * earlier in the file never finish it early. The tail window is the last
+     * 450 s or 40% of an episode, and the last 900 s or 25% of anything else.
+     * Unlike [finalCreditsStart], it doesn't merge touching ranges: it follows
+     * the server's watched rule.
+     */
+    fun endCreditsStart(durationSeconds: Double, isEpisode: Boolean): Double? {
+        if (!durationSeconds.isFinite() || durationSeconds <= 0.0) return null
+        val tail = if (isEpisode) minOf(450.0, durationSeconds * 0.4) else minOf(900.0, durationSeconds * 0.25)
+        val windowStart = durationSeconds - tail
+        // Ranges are ordered by start, so the last match starts latest.
+        return ranges(MarkerKind.Credits).lastOrNull { it.start >= windowStart && it.start < durationSeconds }?.start
+    }
+
     companion object {
         val EMPTY = MarkerTimeline(emptyList())
 

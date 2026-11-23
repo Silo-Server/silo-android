@@ -196,6 +196,7 @@ class RoomUserItemStateRepository(
         durationSeconds: Double?,
         eventTimeMs: Long?,
         runStartedAtMs: Long?,
+        reachedEndCredits: Boolean,
     ): Boolean {
         val current = snapshotProvider() ?: return false
         if (current.serverId != scope.serverId ||
@@ -217,6 +218,7 @@ class RoomUserItemStateRepository(
             // A temporary sign-in has no durable account to replay under later.
             queueForServer = scope.credentialGenerationId == null,
             runStartedAtMs = runStartedAtMs,
+            reachedEndCredits = reachedEndCredits,
         )
     }
 
@@ -231,6 +233,7 @@ class RoomUserItemStateRepository(
         eventTimeMs: Long,
         queueForServer: Boolean,
         runStartedAtMs: Long?,
+        reachedEndCredits: Boolean = false,
     ): Boolean {
         // Reject values that would enqueue invalid JSON and poison the drain
         // (a NaN/Infinity/negative would parse-fail after claim and retry forever).
@@ -281,6 +284,12 @@ class RoomUserItemStateRepository(
             // the outbox and goes to POST /sync/progress with this event time. The
             // server applies its watched threshold and newest-write-wins. Samples
             // from one playback run collapse to the latest; each run keeps its own.
+            // That write doesn't say which file played, so the server can't apply
+            // its end-credits rule: a sample in the credits goes up as the full
+            // duration, which the server stores as watched, as it does a streamed
+            // stop there. Below the credits the real position goes up, so the
+            // server's own threshold applies.
+            val sentPosition = if (reachedEndCredits && safeDuration != null) safeDuration else positionSeconds
             outboxDao.enqueueCoalescingRestoringItemOrder(
                 DirtyOperationEntity(
                     opKind = OutboxOperation.SET_POSITION,
@@ -293,7 +302,7 @@ class RoomUserItemStateRepository(
                         (runStartedAtMs?.let { "|$it" } ?: ""),
                     idempotencyKey = idGenerator(),
                     opVersion = 2,
-                    payloadJson = OutboxOperation.encodePositionPayload(positionSeconds, safeDuration),
+                    payloadJson = OutboxOperation.encodePositionPayload(sentPosition, safeDuration),
                     createdAtMs = eventTimeMs,
                     nextAttemptAtMs = queuedAtMs,
                 ),
