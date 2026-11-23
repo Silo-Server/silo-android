@@ -236,12 +236,14 @@ open class ProfileRepository(
     private suspend fun identityScopeStillHolds(
         expected: AuthScopeSnapshot?,
         generationBeforeTransition: Long,
+        /** 1 inside the transition, whose own bump has happened; 0 before entering it. */
+        transitionsSinceCheck: Long = 1,
     ): Boolean {
         if (expected == null) return true
         if (expected.identityGeneration != generationBeforeTransition) return false
         val current = tokenManager.snapshotCurrentScope() ?: return false
         return current.serverId == expected.serverId &&
-            current.identityGeneration == generationBeforeTransition + 1 &&
+            current.identityGeneration == generationBeforeTransition + transitionsSinceCheck &&
             current.credentialEpoch == expected.credentialEpoch
     }
 
@@ -339,6 +341,17 @@ open class ProfileRepository(
     suspend fun clearProfile(expectedScope: AuthScopeSnapshot? = null): ProfileCommitResult {
         var result = ProfileCommitResult.Committed
         val generationBeforeTransition = identityTransitions.generation.value
+        // Checked before entering the transition too, as [clearStaleProfile]
+        // does, so a clear the scope no longer allows doesn't fire identity
+        // gates on the identity that replaced it.
+        if (expectedScope != null &&
+            (
+                tokenManager.hasTemporaryScope() ||
+                    !identityScopeStillHolds(expectedScope, generationBeforeTransition, transitionsSinceCheck = 0)
+                )
+        ) {
+            return ProfileCommitResult.ScopeChanged
+        }
         identityTransitions.changing(IdentityTransitionKind.PROFILE_SWITCH) {
             if (expectedScope != null &&
                 (tokenManager.hasTemporaryScope() || !identityScopeStillHolds(expectedScope, generationBeforeTransition))

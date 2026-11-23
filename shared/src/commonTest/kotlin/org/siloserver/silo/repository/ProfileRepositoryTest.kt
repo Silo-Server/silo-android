@@ -170,8 +170,11 @@ class ProfileRepositoryTest {
         val reopened = tokens.snapshotCurrentScope()
         profileRepo.selectProfile("profile-b")
 
+        val generationBeforeRejectedClear = barrier.generation.value
         assertEquals(ProfileCommitResult.ScopeChanged, profileRepo.clearProfile(expectedScope = reopened))
         assertEquals("profile-b", tokens.getProfileId())
+        // A rejected clear is not an identity change: no transition, so no gates.
+        assertEquals(generationBeforeRejectedClear, barrier.generation.value)
 
         assertEquals(ProfileCommitResult.Committed, profileRepo.clearProfile(expectedScope = tokens.snapshotCurrentScope()))
         assertEquals(null, tokens.getProfileId())

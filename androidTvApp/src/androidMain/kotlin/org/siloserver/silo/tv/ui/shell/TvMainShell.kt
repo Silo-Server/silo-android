@@ -53,6 +53,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshots.SnapshotStateMap
@@ -808,8 +809,12 @@ fun TvMainShell(
     // A cancelled Switch Profile reopens on the page it was opened from.
     LaunchedEffect(restoreRoute) {
         val route = restoreRoute ?: return@LaunchedEffect
-        onRestoreRouteConsumed()
         navigateToRoute(route)
+        // Reported once the page has composed and can take Back itself; until
+        // then the caller holds Back, which would otherwise close Silo from
+        // the Home frame Main starts on.
+        repeat(2) { withFrameNanos { } }
+        onRestoreRouteConsumed()
     }
     // Hands Switch Profile this page. A route with arguments can't be rebuilt
     // from its pattern; reopening Main lands on Home for those.

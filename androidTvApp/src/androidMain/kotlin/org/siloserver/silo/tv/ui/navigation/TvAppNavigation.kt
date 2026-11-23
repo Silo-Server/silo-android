@@ -603,9 +603,13 @@ fun TvAppNavigation(
     // Bumped whenever the way back stops being wanted, which also stops a
     // switch or a Back still in flight from publishing or finishing one.
     var switchReturnRevision by remember { mutableIntStateOf(0) }
+    // A cancelled switch is entering Main and restoring its page. Main starts
+    // on Home, where Back closes Silo, so Back waits until the page is showing.
+    var reenteringMain by remember { mutableStateOf(false) }
     fun dropSwitchReturn() {
         switchReturnRevision++
         switchState = null
+        reenteringMain = false
     }
     // A picker found after Silo left the foreground needs a profile choice,
     // and its PIN, again.
@@ -681,6 +685,8 @@ fun TvAppNavigation(
             if (switchState == reopening) switchState = null
             if (!reopened) return@launch
             enterChosenProfile(restoreShellRoute = back.shellRoute)
+            // Main clears it once the page it restores is showing.
+            if (back.shellRoute != null) reenteringMain = true
             // The switch cleared these too, and Main's overlay key can still
             // name this profile from before the clear, so it won't reload them.
             launch {
@@ -1089,12 +1095,17 @@ fun TvAppNavigation(
     LaunchedEffect(currentEntry?.destination?.route) {
         DiagnosticsLifecycleLogger.route(currentEntry?.destination?.route)
     }
+    // Main left before it reported its page: nothing will clear the hold.
+    LaunchedEffect(currentEntry?.id) {
+        if (currentEntry?.destination?.route != TvRoute.Main.route) reenteringMain = false
+    }
     // Leaving Main drops its Back handlers a few frames before the picker
     // registers its own; a Back in between would reach the system and close
     // Silo. Registered once, before any screen's, so it only takes Back when
-    // no screen does.
-    BackHandler(enabled = switchState != null && switchState?.pickerEntryId == currentEntry?.id) {
-        onSwitchPickerBack()
+    // no screen does. It also holds Back while a cancelled switch re-enters
+    // Main, until Main reports the restored page is showing.
+    BackHandler(enabled = reenteringMain || (switchState != null && switchState?.pickerEntryId == currentEntry?.id)) {
+        if (!reenteringMain) onSwitchPickerBack()
     }
     val overlaySessionKey by produceState<String?>(
         initialValue = null,
@@ -1533,7 +1544,10 @@ fun TvAppNavigation(
                 mainEntry.savedStateHandle.get<Boolean>(RETURN_TO_MANAGE_SERVERS_KEY) == true
             TvMainShell(
                 restoreRoute = mainEntry.savedStateHandle.get<String>(RESTORE_SHELL_ROUTE_KEY),
-                onRestoreRouteConsumed = { mainEntry.savedStateHandle.remove<String>(RESTORE_SHELL_ROUTE_KEY) },
+                onRestoreRouteConsumed = {
+                    mainEntry.savedStateHandle.remove<String>(RESTORE_SHELL_ROUTE_KEY)
+                    reenteringMain = false
+                },
                 returnToManageServers = returnToManageServers,
                 onManageServersReturnFocusConsumed = {
                     mainEntry.savedStateHandle.remove<Boolean>(RETURN_TO_MANAGE_SERVERS_KEY)
@@ -1665,7 +1679,13 @@ fun TvAppNavigation(
                             ) {
                                 val ready = way
                                 switchState = ready?.let { TvProfileSwitchState.Ready(it) }
-                                if (ready != null && state.backPressed) cancelProfileSwitch(ready)
+                                // Only while the picker is still showing: a screen
+                                // opened over it since takes Back for itself.
+                                if (ready != null && state.backPressed &&
+                                    navController.currentBackStackEntry?.id == ready.pickerEntryId
+                                ) {
+                                    cancelProfileSwitch(ready)
+                                }
                             }
                         }
                     }
