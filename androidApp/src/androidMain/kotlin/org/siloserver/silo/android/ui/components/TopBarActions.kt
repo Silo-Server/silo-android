@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,10 +12,23 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SettingsRemote
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Text
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableFloatState
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -30,6 +45,8 @@ import dev.chrisbanes.haze.hazeEffect
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.profile.Profile
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 
 /**
  * Shared vocabulary for the phone tab headers, mirroring iOS
@@ -56,6 +73,75 @@ val TopBarEdgeMargin = 16.dp
  * pixels on every navigation.
  */
 val TopBarRowTopInset = 0.dp
+
+/*
+ * Vertical grid shared by the phone tabs (Home, Libraries, For You,
+ * Downloads), measured down from the bottom of the status bar:
+ *
+ *   header row   0..48   title or wordmark, actions centred in it
+ *   pill row    56..96   Libraries' subtabs, For You's Watchlist/Favorites
+ *   content     120..    first row (Home reserves the pill band empty)
+ *
+ * Every tab's first row starts at [TabContentTop], so rows do not jump
+ * vertically when switching tabs.
+ */
+
+/** Height of the row that holds the page title and the trailing actions. */
+val TabHeaderRowHeight = 48.dp
+
+/** Gap between the header row and the pill row. */
+val TabHeaderPillGap = 8.dp
+
+/** Height of the pill row under the header. */
+val TabPillRowHeight = 40.dp
+
+/** Gap between the pill row and the first content row. */
+val TabContentGap = 24.dp
+
+/** Scroll distance over which a tab header's glass fades in. */
+val TopBarGlassFadeDistance = 80.dp
+
+/**
+ * Where a tab's scrolling content reports how far it sits under the shared
+ * [MainAppTopBar], from 0 (at rest) to 1 (glass fully on). Only For You and
+ * Downloads provide it; elsewhere the reporters below do nothing.
+ */
+val LocalTabHeaderScrim = staticCompositionLocalOf<MutableFloatState?> { null }
+
+/** Reports [state]'s scroll position to [LocalTabHeaderScrim]. */
+@Composable
+fun ReportTabHeaderScrim(state: LazyListState) {
+    ReportTabHeaderScrim(state) { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
+}
+
+/** Reports [state]'s scroll position to [LocalTabHeaderScrim]. */
+@Composable
+fun ReportTabHeaderScrim(state: LazyGridState) {
+    ReportTabHeaderScrim(state) { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
+}
+
+/**
+ * Derived from the list's own position, like Libraries' chrome, so the glass
+ * is right after a restored scroll position (returning to the tab) as well as
+ * while scrolling. Clears the glass when the list leaves composition.
+ */
+@Composable
+private fun ReportTabHeaderScrim(key: Any, position: () -> Pair<Int, Int>) {
+    val sink = LocalTabHeaderScrim.current ?: return
+    val fadePx = with(LocalDensity.current) { TopBarGlassFadeDistance.toPx() }
+    LaunchedEffect(key, sink, fadePx) {
+        snapshotFlow {
+            val (index, offset) = position()
+            if (index > 0) 1f else (offset / fadePx).coerceIn(0f, 1f)
+        }.collect { sink.floatValue = it }
+    }
+    DisposableEffect(key, sink) {
+        onDispose { sink.floatValue = 0f }
+    }
+}
+
+/** Top of the first content row, below the status bar. */
+val TabContentTop = TabHeaderRowHeight + TabHeaderPillGap + TabPillRowHeight + TabContentGap
 
 /**
  * A plain 40dp hit target: the glyph only, no disc, no border, no shadow.
@@ -98,8 +184,8 @@ fun TopBarProfileMenu(
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    onSignOutClick: (removeServer: Boolean) -> Unit,
 ) {
     var menuExpanded by rememberSaveable { mutableStateOf(false) }
     Box {
@@ -120,7 +206,7 @@ fun TopBarProfileMenu(
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.Person,
-                        contentDescription = "Account and menu",
+                        contentDescription = stringResource(CommonR.string.topBar_accountMenu),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -133,7 +219,7 @@ fun TopBarProfileMenu(
             onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
-            onSwitchServerClick = onSwitchServerClick,
+            onChangeAccountClick = onChangeAccountClick,
             onSignOutClick = onSignOutClick,
             activeProfile = activeProfile,
         )
@@ -141,32 +227,105 @@ fun TopBarProfileMenu(
 }
 
 /**
- * iOS `TabTopBarActions`: search then the profile avatar menu. [leadingActions]
- * lets a tab prepend its own button (Home's remote-control button).
+ * State and actions for the header's remote-control button, which every tab
+ * header shows beside search.
+ */
+@Immutable
+class TopBarRemoteControl(
+    /** True while this phone is controlling a TV. */
+    val isActive: Boolean,
+    /** "Connected to Living Room" while it is; heads the menu so it says which TV Play goes to. */
+    val status: String?,
+    /** Opens the remote, or the TV picker when nothing is connected. */
+    val onOpen: () -> Unit,
+    val onChooseTv: () -> Unit,
+    val onDisconnect: () -> Unit,
+)
+
+/**
+ * Mirrors Apple's SiloControlModeButton: chrome-free at rest, a filled disc
+ * while controlling a TV. In that state it opens a menu instead of jumping
+ * straight to the remote.
+ */
+@Composable
+private fun TopBarRemoteControlButton(remoteControl: TopBarRemoteControl) {
+    Box {
+        var menuExpanded by remember { mutableStateOf(false) }
+        TopBarIconButton(
+            onClick = {
+                if (remoteControl.isActive) menuExpanded = true else remoteControl.onOpen()
+            },
+            isActive = remoteControl.isActive,
+            modifier = Modifier.semantics { remoteControl.status?.let { stateDescription = it } },
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.SettingsRemote,
+                contentDescription = stringResource(CommonR.string.topBar_remote_title),
+            )
+        }
+        SiloDropdownMenu(
+            expanded = menuExpanded,
+            onDismissRequest = { menuExpanded = false },
+        ) {
+            remoteControl.status?.let { SiloMenuHeader(title = it) }
+            SiloDropdownMenuItem(
+                text = { Text(stringResource(CommonR.string.topBar_remote_title)) },
+                onClick = {
+                    menuExpanded = false
+                    remoteControl.onOpen()
+                },
+            )
+            SiloDropdownMenuItem(
+                text = { Text(stringResource(CommonR.string.topBar_remote_chooseTv)) },
+                onClick = {
+                    menuExpanded = false
+                    remoteControl.onChooseTv()
+                },
+            )
+            HorizontalDivider()
+            SiloDropdownMenuItem(
+                text = {
+                    Text(
+                        stringResource(CommonR.string.topBar_remote_turnOff),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                },
+                onClick = {
+                    menuExpanded = false
+                    remoteControl.onDisconnect()
+                },
+            )
+        }
+    }
+}
+
+/**
+ * iOS `TabTopBarActions`: remote control, search, then the profile avatar
+ * menu. [remoteControl] is required so no tab shows search without the remote.
  */
 @Composable
 fun TabTopBarActions(
     activeProfile: Profile?,
+    remoteControl: TopBarRemoteControl,
     onSearchClick: () -> Unit,
     onRequestsClick: (() -> Unit)?,
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    onSignOutClick: (removeServer: Boolean) -> Unit,
     modifier: Modifier = Modifier,
-    leadingActions: @Composable () -> Unit = {},
 ) {
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(TopBarActionSpacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        leadingActions()
+        TopBarRemoteControlButton(remoteControl)
         TopBarIconButton(onClick = onSearchClick) {
             Icon(
                 imageVector = Icons.Outlined.Search,
-                contentDescription = "Search",
+                contentDescription = stringResource(CommonR.string.topBar_search),
             )
         }
         TopBarProfileMenu(
@@ -175,7 +334,7 @@ fun TabTopBarActions(
             onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
-            onSwitchServerClick = onSwitchServerClick,
+            onChangeAccountClick = onChangeAccountClick,
             onSignOutClick = onSignOutClick,
         )
     }

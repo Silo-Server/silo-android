@@ -14,12 +14,18 @@ internal class FakeRemotePlaybackApi : DeviceLoginApi {
     var approvedProfileId = "profile-1"
     var pollStatus = "approved"
 
-    override suspend fun remotePlaybackCapabilityAt(serverUrl: String) = ApiResult.Success(
-        DeviceLoginCapabilityResponse(
-            remotePlaybackHandoff = true,
-            protocolVersions = listOf(SiloCastProtocol.version),
-        ),
-    )
+    /** Every address a handoff request went to, in order. */
+    val serverUrls = mutableListOf<String>()
+
+    override suspend fun remotePlaybackCapabilityAt(serverUrl: String): ApiResult<DeviceLoginCapabilityResponse> {
+        serverUrls += serverUrl
+        return ApiResult.Success(
+            DeviceLoginCapabilityResponse(
+                remotePlaybackHandoff = true,
+                protocolVersions = listOf(SiloCastProtocol.version),
+            ),
+        )
+    }
 
     override suspend fun startRemotePlaybackAt(
         serverUrl: String,

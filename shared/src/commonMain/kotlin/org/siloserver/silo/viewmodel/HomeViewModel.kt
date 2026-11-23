@@ -8,6 +8,7 @@ import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.section.showsWholeList
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
@@ -31,6 +32,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.TimeSource
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 
 data class HomeUiState(
     val membershipReadWitnesses: Set<org.siloserver.silo.repository.MembershipActions.Intent> = emptySet(),
@@ -49,7 +53,7 @@ data class HomeUiState(
      * finished list; only a partial publish sets it false.
      */
     val sectionsFullyResolved: Boolean = true,
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 /**
@@ -350,7 +354,7 @@ class HomeViewModel(
         if (generation != fetchGeneration || !currentCoroutineContext().isActive) return generation
         if (owner == null) {
             displayedOwner = null
-            _uiState.update { it.copy(sections = emptyList(), membershipReadWitnesses = emptySet(), isLoading = false, isRefreshing = false, error = "Sign in to load Home.") }
+            _uiState.update { it.copy(sections = emptyList(), membershipReadWitnesses = emptySet(), isLoading = false, isRefreshing = false, error = UiText.Key(SharedString.HomeSignedOut)) }
             return generation
         }
         if (!mayPublish(owner, generation)) return generation
@@ -472,7 +476,7 @@ class HomeViewModel(
                         isLoading = false,
                         // Keep cached/prior sections on a failed refresh; only block
                         // with an error when there's nothing to show.
-                        error = if (hadSections) null else result.message.ifBlank { "Failed to load home sections" },
+                        error = if (hadSections) null else result.errorText(SharedString.HomeLoadFailed),
                     )
                 }
                 report(HomeLoadOutcome.API_ERROR)
@@ -485,7 +489,7 @@ class HomeViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = if (hadSections) null else "Network error. Check your connection.",
+                        error = if (hadSections) null else UiText.Key(SharedString.NetworkError),
                     )
                 }
                 report(HomeLoadOutcome.NETWORK_ERROR)
@@ -609,11 +613,18 @@ class HomeViewModel(
 /** Rows built from playback state. Next Up appears as its own row and merged into Continue Watching. */
 private fun ResolvedSection.isProgressRow() = sectionType in setOf("continue_watching", "in_progress", "next_up", "up_next")
 
-/** Drops [isRemoved] cards from the progress rows; a row left empty goes too. */
-private fun List<ResolvedSection>.removingFromProgressRows(isRemoved: (SectionItem) -> Boolean): List<ResolvedSection> =
+/**
+ * Drops [isRemoved] cards from the progress rows; a row left empty goes too.
+ * A row that held its whole list still does, so its count follows its cards
+ * and it gains no "Explore all" card. A row cut at its limit keeps its count:
+ * one card fewer does not make it whole.
+ */
+internal fun List<ResolvedSection>.removingFromProgressRows(isRemoved: (SectionItem) -> Boolean): List<ResolvedSection> =
     map { section ->
-        if (section.isProgressRow()) section.copy(items = section.items.filterNot(isRemoved)) else section
-    }.filter { it.items.isNotEmpty() }
+        if (!section.isProgressRow()) return@map section
+        val kept = section.items.filterNot(isRemoved)
+        section.copy(items = kept, totalCount = if (section.showsWholeList) kept.size else section.totalCount)
+    }.filter { it.hasCards }
 
 private fun List<ResolvedSection>.duplicateSectionKeyCount(): Int =
     size - distinctBy(ResolvedSection::id).size
@@ -631,7 +642,7 @@ private fun List<ResolvedSection>.mapItem(
 
 /** Watched and unwatched both reset resume progress, as the server does. */
 private fun SectionItem.withPlayed(played: Boolean): SectionItem =
-    copy(userState = (userState ?: MediaItemUserState()).copy(played = played), positionSeconds = 0.0)
+    copy(userState = (userState ?: MediaItemUserState()).withPlayed(played), positionSeconds = 0.0)
 
 private fun SectionItem.withFavorite(favorite: Boolean): SectionItem =
     copy(userState = (userState ?: MediaItemUserState()).copy(isFavorite = favorite))

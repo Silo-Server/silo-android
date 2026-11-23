@@ -1,5 +1,6 @@
 package org.siloserver.silo.viewmodel
 
+import org.siloserver.silo.common.i18n.english
 import androidx.lifecycle.ViewModelStore
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -22,7 +23,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.siloserver.silo.model.feature.RequestsFeatureStore
-import org.siloserver.silo.model.request.RequestActionCopy
+import org.siloserver.silo.model.request.RequestActionMessage
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestAvailability
 import org.siloserver.silo.model.request.RequestMediaDetail
@@ -134,7 +135,7 @@ class RequestDetailFollowTest {
         val before = viewModel.uiState.value
         assertTrue(before.canFollow)
         assertFalse(before.isFollowing)
-        assertEquals("Notify me when available", before.followActionTitle)
+        assertEquals("Notify me when available", before.followActionTitle.english())
 
         viewModel.toggleFollow()
         assertTrue(viewModel.uiState.value.isFollowPending)
@@ -144,8 +145,8 @@ class RequestDetailFollowTest {
         assertFalse(after.isFollowPending)
         assertTrue(after.isFollowing)
         assertTrue(after.canFollow)
-        assertEquals("Stop notifying me", after.followActionTitle)
-        assertEquals(RequestActionCopy.Followed, after.shownFollowNotice)
+        assertEquals("Stop notifying me", after.followActionTitle.english())
+        assertEquals(RequestActionMessage.Followed, after.shownFollowNotice)
         assertNull(after.actionErrorMessage)
         assertTrue("PUT /api/v2/requests/follows/series/1399" in server.calls)
         // Other surfaces showing the title agree.
@@ -168,8 +169,8 @@ class RequestDetailFollowTest {
         val after = viewModel.uiState.value
         assertFalse(after.isFollowing)
         assertTrue(after.canFollow)
-        assertEquals("Notify me when available", after.followActionTitle)
-        assertEquals(RequestActionCopy.Unfollowed, after.shownFollowNotice)
+        assertEquals("Notify me when available", after.followActionTitle.english())
+        assertEquals(RequestActionMessage.Unfollowed, after.shownFollowNotice)
         assertTrue("DELETE /api/v2/requests/follows/series/1399" in server.calls)
     }
 
@@ -188,7 +189,7 @@ class RequestDetailFollowTest {
         assertFalse(after.isFollowPending)
         assertFalse(after.isFollowing)
         assertTrue(after.canFollow)
-        assertEquals("An unexpected error occurred.", after.actionErrorMessage)
+        assertEquals("An unexpected error occurred.", after.actionErrorMessage?.text?.english())
         assertNull(after.shownFollowNotice)
     }
 
@@ -211,7 +212,7 @@ class RequestDetailFollowTest {
         assertEquals(statusReads + 1, server.calls.count { it.endsWith("/requests/status") })
         assertFalse(store.followSupported.value)
         val after = viewModel.uiState.value
-        assertEquals("Requests are turned off", after.actionErrorMessage)
+        assertEquals("Requests are turned off", after.actionErrorMessage?.text?.english())
         assertFalse(after.canFollow)
         assertFalse(after.isFollowing)
     }
@@ -235,7 +236,7 @@ class RequestDetailFollowTest {
         advanceUntilIdle()
 
         assertTrue(viewModel.uiState.value.isFollowing)
-        assertEquals("Stop notifying me", viewModel.uiState.value.followActionTitle)
+        assertEquals("Stop notifying me", viewModel.uiState.value.followActionTitle.english())
         assertEquals(true, repository.cache.detail(RequestDetailCache.Key(RequestMediaType.Series, 1399))?.request?.following)
     }
 

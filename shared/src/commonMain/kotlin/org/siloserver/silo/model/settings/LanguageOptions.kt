@@ -1,9 +1,8 @@
 package org.siloserver.silo.model.settings
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
-
-/** Platform CLDR/ICU display name for a valid BCP 47 tag. */
-internal expect fun localizedLanguageName(tag: String): String
 
 /** Alias-aware identity that retains explicit script and region subtags. */
 internal expect fun canonicalLanguageIdentity(tag: String): String
@@ -13,8 +12,9 @@ internal expect fun canonicalLanguageIdentity(tag: String): String
  *
  * `language_tag` stays open: the generated list is a stable floor, the server
  * may add deployment-observed tags, and an exact current value is always kept
- * selectable. Labels come from the platform locale rather than a hand-written
- * English table that can drift between phone, TV, web, and Apple clients.
+ * selectable. Labels are the platform's language names in the interface
+ * language ([UiText.LanguageName]) rather than a hand-written English table
+ * that can drift between phone, TV, web, and Apple clients.
  */
 object LanguageOptions {
     /** Wire value meaning "no preference"; the server stores this as null. */
@@ -33,7 +33,7 @@ object LanguageOptions {
         key: String,
         currentValue: String? = null,
         runtimeValues: List<String> = emptyList(),
-    ): List<Pair<String, String>> {
+    ): List<Pair<String, UiText>> {
         val values = mutableListOf<String>()
         val indexByLanguage = mutableMapOf<String, Int>()
 
@@ -54,7 +54,7 @@ object LanguageOptions {
         runtimeValues.forEach { add(it, false) }
         currentValue?.let { add(it, true) }
 
-        return values.map { it to localizedLanguageName(it) }
+        return values.map { it to UiText.LanguageName(it) }
     }
 
     /** Full picker list led by the contract's context-specific unset copy. */
@@ -62,17 +62,13 @@ object LanguageOptions {
         key: String,
         currentValue: String? = null,
         runtimeValues: List<String> = emptyList(),
-    ): List<Pair<String, String>> =
+    ): List<Pair<String, UiText>> =
         listOf(UNSET to unsetLabel(key)) + namedOptions(key, currentValue, runtimeValues)
 
-    fun label(wire: String?, key: String): String {
+    fun label(wire: String?, key: String): UiText {
         if (wire.isNullOrBlank()) return unsetLabel(key)
-        return if (isPreservableTag(wire)) localizedLanguageName(wire) else unsetLabel(key)
+        return if (isPreservableTag(wire)) UiText.LanguageName(wire) else unsetLabel(key)
     }
-
-    /** Resolve a selected display label against the exact options rendered. */
-    fun wireValue(label: String?, options: List<Pair<String, String>>): String =
-        options.firstOrNull { it.second == label }?.first ?: UNSET
 
     /**
      * Translates values written by older builds that persisted English labels.
@@ -85,8 +81,16 @@ object LanguageOptions {
         else -> legacyEnglishLabels[stored] ?: UNSET
     }
 
-    private fun unsetLabel(key: String): String =
-        SettingPresentationMetadata.DEFINITIONS[key]?.unsetLabel ?: "Unset"
+    /** The setting's own words for no language (the manifest's `unset_label`). */
+    private fun unsetLabel(key: String): UiText = UiText.Key(
+        when (key) {
+            SettingKeys.PLAYBACK_AUDIO_LANGUAGE -> SharedString.AudioLanguageUnset
+            SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE -> SharedString.SubtitleLanguageUnset
+            SettingKeys.CATALOG_METADATA_LANGUAGE -> SharedString.MetadataLanguageUnset
+            SettingKeys.UI_APP_LANGUAGE -> SharedString.AppLanguageUnset
+            else -> SharedString.LanguageUnset
+        },
+    )
 
     private fun isPreservableTag(value: String): Boolean =
         value.isNotBlank() &&

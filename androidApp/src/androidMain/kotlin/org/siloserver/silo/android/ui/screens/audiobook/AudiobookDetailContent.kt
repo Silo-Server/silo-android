@@ -1,82 +1,102 @@
 package org.siloserver.silo.android.ui.screens.audiobook
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import org.siloserver.silo.android.ui.screens.detail.CircleActionButton
+import androidx.compose.ui.unit.sp
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.screens.detail.AdaptiveDetailHero
+import org.siloserver.silo.android.ui.screens.detail.DetailFactsList
+import org.siloserver.silo.android.ui.screens.detail.DetailPageSurface
+import org.siloserver.silo.android.ui.screens.detail.DownloadCircleButton
+import org.siloserver.silo.android.ui.screens.detail.HeaderSettledDp
+import org.siloserver.silo.android.ui.screens.detail.HeroActionStack
+import org.siloserver.silo.android.ui.screens.detail.HeroToggleLabels
+import org.siloserver.silo.android.ui.screens.detail.LocalDetailActionsReady
+import org.siloserver.silo.android.ui.screens.detail.LocalDetailScrollState
+import org.siloserver.silo.android.ui.screens.detail.SafePadding
+import org.siloserver.silo.android.ui.screens.detail.SectionHeader
+import org.siloserver.silo.android.ui.screens.detail.CastCrewSection
+import org.siloserver.silo.android.ui.theme.SiloBackground
+import org.siloserver.silo.android.ui.theme.SiloOnSurface
+import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.audiobook.buildAudiobookTimeline
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.audiobook.AudiobookText
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.common.i18n.localizedResources
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.audiobook.AudiobookNarration
+import org.siloserver.silo.model.catalog.CastMember
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.VersionChapter
-import org.siloserver.silo.model.ebook.MediaRelatedContent
 import org.siloserver.silo.model.ebook.MediaRelatedItem
-import org.siloserver.silo.model.ebook.MediaSeriesGroup
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.ui.platform.LocalDensity
-import org.siloserver.silo.android.ui.screens.detail.HeaderSettledDp
-import org.siloserver.silo.android.ui.screens.detail.LocalDetailScrollState
-import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
+import android.content.res.Resources
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.ui.text.TextStyle
+import org.siloserver.silo.model.ebook.MediaPerson
 
 /**
- * Phone audiobook detail. Cover + author + narrator above, then the
- * chapter list. Tapping the play button or any chapter opens the
- * dedicated audiobook player.
- *
- * Differs from MovieDetailContent in shape: square cover (not 2:3
- * poster), chapter list as the primary affordance (not "play" pill).
+ * Phone audiobook detail, drawn on the same hero, action row, section headers
+ * and Details list as movies and series, after Apple's
+ * `AudiobookDetailContent`. Book-specific pieces are the cover-forward hero
+ * (a book without a backdrop washes the page with its cover), the listening
+ * Play pill, chapters and parts, the authors and narrators rail, and the
+ * series, author and similar cover rails.
  */
-private const val AudiobookCoverSizeDp = 220
-
 @Composable
 fun AudiobookDetailContent(
     detail: ItemDetail,
@@ -97,58 +117,93 @@ fun AudiobookDetailContent(
     onChapterClick: (VersionChapter) -> Unit,
     onFavoriteClick: () -> Unit,
     onWatchlistClick: () -> Unit,
+    onToggleFinished: () -> Unit = {},
+    onPersonClick: (String) -> Unit = {},
+    /** Opens another book: a series entry, another narration, or a related title. */
+    onItemClick: (String) -> Unit = {},
     onDownloadClick: (() -> Unit)? = null,
+    translation: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    val resources = localizedResources()
     val meta = detail.audiobook
-    val authorText = meta?.authorNames
-    val narratorText = meta?.narratorNames
     val playableVersion = selectedFileId
         ?.let { fileId -> detail.versions.firstOrNull { it.fileId == fileId } }
         ?: detail.versions.firstOrNull()
     // Whole-book timeline stitched from the item's audiobook-part files — the
-    // same math the player VM uses. Drives the Parts section and the stitched
-    // whole-book chapter list. Null when there are no audio parts.
+    // same math the player VM uses. Null when there are no audio parts.
     val timeline = remember(detail) {
         buildAudiobookTimeline(
             versions = detail.versions,
             serverTotalSeconds = meta?.totalDurationSeconds?.toDouble(),
         )
     }
-    val durationSeconds = timeline?.totalSeconds
-        ?: meta?.totalDurationSeconds?.toDouble()
-        ?: playableVersion?.duration
-    // Resume/finished gating mirrors Apple's AudiobookDetailContent: Resume only
-    // when >30s in and not effectively finished; a finished book routes to "Play
-    // Again" (restart) instead of resuming near the end.
+    val totalSeconds = AudiobookText.totalDurationSeconds(detail, timeline?.totalSeconds ?: playableVersion?.duration)
     val positionSeconds = (detail.userData?.positionSeconds ?: 0.0).coerceAtLeast(0.0)
-    val totalForGating = durationSeconds ?: 0.0
     val isFinished = detail.userData?.played == true ||
-        (totalForGating > 0.0 && positionSeconds > 0.0 && positionSeconds >= totalForGating - 5.0)
+        (totalSeconds > 0.0 && positionSeconds > 0.0 && positionSeconds >= totalSeconds - 5.0)
+    // Resume only past 30s and before the end; a finished book plays again.
     val resumeSeconds = positionSeconds.takeIf { it > 30.0 && !isFinished }
-    // Multi-part books get the stitched whole-book chapters (each jumps to its
-    // global start); single-part / no-timeline books keep the single file's own
-    // chapters unchanged.
-    val chapters: List<VersionChapter> = if (timeline != null && !timeline.isSingle) {
-        timeline.chapters.map { ch ->
-            VersionChapter(
-                index = ch.index,
-                title = ch.title.orEmpty(),
-                startSeconds = ch.startSeconds,
-                endSeconds = ch.endSeconds ?: ch.startSeconds,
-            )
-        }
-    } else {
-        playableVersion?.chapters.orEmpty()
+    // Multi-part books get the stitched whole-book chapters (each starts at its
+    // global offset); a single file keeps its own chapters.
+    val chapters: List<VersionChapter> = remember(detail, timeline, playableVersion) {
+        if (timeline != null && !timeline.isSingle) {
+            timeline.chapters.map { ch ->
+                VersionChapter(
+                    index = ch.index,
+                    title = ch.title.orEmpty(),
+                    startSeconds = ch.startSeconds,
+                    endSeconds = ch.endSeconds ?: ch.startSeconds,
+                )
+            }
+        } else {
+            playableVersion?.chapters.orEmpty()
+        }.sortedBy { it.startSeconds }
     }
-    val displayableNarrations = meta?.otherNarrations.orEmpty()
-        .filter { it.title.isNotBlank() }
-    val relatedLines = meta?.related?.displayLines().orEmpty()
-    // Match the iOS detail surface: chapters are visible immediately, while
-    // the header still lets readers collapse very long chapter lists.
-    var chaptersExpanded by remember { mutableStateOf(true) }
-    // Clear the status bar / camera cutout so the cover isn't tucked under it.
-    val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val parts = timeline?.tracks.orEmpty().takeIf { timeline?.isSingle == false }.orEmpty()
+    val otherNarrations = meta?.otherNarrations.orEmpty().filter { it.title.isNotBlank() }
+    val credits = remember(detail, resources) { creditMembers(resources, detail) }
+
+    val hasBackdrop = !detail.backdropUrl.isNullOrBlank()
+    // Without a backdrop the cover washes the page.
+    val surfaceUrl = if (hasBackdrop) detail.backdropUrl else detail.posterUrl
+    val surfaceThumbhash = if (hasBackdrop) detail.backdropThumbhash else detail.posterThumbhash
+    val dominantColor by rememberDominantColor(
+        imageUrl = surfaceUrl,
+        fallback = SiloBackground,
+        thumbhash = surfaceThumbhash,
+    )
+
+    val actionsReady = LocalDetailActionsReady.current
+    val primaryLabel = when {
+        playableVersion == null && actionsReady ->
+            stringResource(CommonR.string.audiobook_detail_unavailable)
+        resumeSeconds != null -> {
+            val left = AudiobookText.runtime(resources, (totalSeconds - resumeSeconds).coerceAtLeast(0.0))
+            if (left.isEmpty()) {
+                stringResource(CommonR.string.detail_resume)
+            } else {
+                stringResource(CommonR.string.detail_resumeTimeLeft, left)
+            }
+        }
+        isFinished -> stringResource(CommonR.string.detail_playAgain)
+        else -> stringResource(CommonR.string.common_play)
+    }
+    val resumeFraction = resumeSeconds
+        ?.takeIf { totalSeconds > 0 }
+        ?.let { (it / totalSeconds).coerceIn(0.0, 1.0).toFloat() }
+
+    val factsLine = listOfNotNull(
+        detail.year?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) },
+        AudiobookText.runtime(resources, totalSeconds).takeIf { it.isNotEmpty() },
+    )
+    // Series position, the book's equivalent of an episode code, or else the
+    // lead genre; both together usually wrap the hero line.
+    val sourceTokens = listOfNotNull(
+        AudiobookText.seriesLine(resources, detail)
+            ?: detail.genres.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() },
+    )
+
     val feedState = rememberLazyListState()
     // Feed the pinned header (see DetailScrollState).
     val detailScroll = LocalDetailScrollState.current
@@ -164,485 +219,501 @@ fun AudiobookDetailContent(
             }.collect { detailScroll.update(it) }
         }
     }
+
+    DetailPageSurface(
+        backdropUrl = surfaceUrl,
+        backdropThumbhash = surfaceThumbhash,
+        tint = dominantColor,
+    ) {
     DeferImagePresentationWhileScrolling(feedState) {
     LazyColumn(
         state = feedState,
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
-            bottom = 16.dp,
-            top = 16.dp + topInset,
-        ),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(36.dp),
     ) {
         item(contentType = "audiobook-hero") {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+            AdaptiveDetailHero(
+                detail = detail,
+                eyebrow = stringResource(CommonR.string.detail_type_audiobook),
+                sourceTokens = sourceTokens,
+                factsLine = factsLine,
+                dominantColor = dominantColor,
+                directorText = AudiobookText.creditLine(resources, detail),
+                overviewText = detail.overview,
+                translation = translation,
+                displayTitle = AudiobookText.title(detail),
+                coverAspectRatio = if (hasBackdrop) null else 1f,
             ) {
-                ThumbhashImage(
-                    url = detail.posterUrl,
-                    thumbhash = detail.posterThumbhash,
-                    contentDescription = detail.title,
-                    modifier = Modifier
-                        .size(AudiobookCoverSizeDp.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                    defaultArtwork = DefaultArtworkKind.Audiobook,
-                )
-                Text(
-                    text = detail.title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                authorText?.takeIf { it.isNotBlank() }?.let { author ->
-                    Text(
-                        text = author,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                narratorText?.takeIf { it.isNotBlank() }?.let { narrator ->
-                    Text(
-                        text = "Narrated by $narrator",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                durationSeconds?.let { dur ->
-                    Text(
-                        text = formatDuration(dur),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        }
-
-        // Big play pill — mirrors the movie/series hero action.
-        item(contentType = "audiobook-actions") {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                if (playableVersion != null) {
-                    // Primary label mirrors Apple: Resume (>30s, unfinished) →
-                    // "Resume · h:mm:ss"; finished → "Play Again"; else "Play".
-                    val primaryLabel = when {
-                        resumeSeconds != null -> "Resume · ${formatClock(resumeSeconds)}"
-                        isFinished -> "Play Again"
-                        else -> "Play"
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Button(
-                            onClick = {
-                                // Finished with no resume → restart; otherwise resume
-                                // from the stored whole-book position (VM picks the part).
-                                if (isFinished && resumeSeconds == null) onPlayFromStartClick()
-                                else onPlayClick()
-                            },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text(primaryLabel)
-                        }
-                        OutlinedButton(
-                            onClick = { onPlayFromStartClick() },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text("Start Over")
-                        }
-                    }
-                } else {
-                    Button(
-                        onClick = { onPlayClick() },
-                        enabled = false,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Unavailable")
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CircleActionButton(
-                        icon = Icons.Filled.FavoriteBorder,
-                        activeIcon = Icons.Filled.Favorite,
-                        isActive = isFavorite,
-                        contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
-                        onClick = onFavoriteClick,
-                        activeTint = Color(0xFFEF5350),
-                        label = "Favorite",
-                    )
-                    CircleActionButton(
-                        icon = Icons.Filled.BookmarkBorder,
-                        activeIcon = Icons.Filled.Bookmark,
-                        isActive = isInWatchlist,
-                        contentDescription = if (isInWatchlist) "Remove from watchlist" else "Add to watchlist",
-                        onClick = onWatchlistClick,
-                        label = "Watchlist",
-                    )
-                }
-                OutlinedButton(
-                    onClick = { onDownloadClick?.invoke() },
-                    enabled = onDownloadClick != null && !isDownloaded,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(
-                        imageVector = if (isDownloaded) Icons.Filled.Check else Icons.Filled.Download,
-                        contentDescription = null,
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
+                HeroActionStack(
+                    primaryLabel = primaryLabel,
+                    onPlay = {
                         when {
-                            isDownloaded -> "Downloaded"
-                            downloadProgress != null -> "Cancel Download"
-                            onDownloadClick != null -> "Download"
-                            else -> "Download Unavailable"
-                        },
-                    )
-                }
-                downloadProgress?.let { progress ->
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        }
-
-        detail.overview?.takeIf { it.isNotBlank() }?.let { overview ->
-            item(contentType = "audiobook-overview") {
-                Text(
-                    text = overview,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
-        meta?.publisher?.takeIf { it.isNotBlank() }?.let { publisher ->
-            item(contentType = "audiobook-publisher") {
-                AudiobookInfoLine(label = "Publisher", value = publisher)
-            }
-        }
-
-        meta?.series?.takeIf { it.hasDisplayableContent() }?.let { series ->
-            item(contentType = "audiobook-series") {
-                AudiobookSeriesSection(series = series)
-            }
-        }
-
-        if (displayableNarrations.isNotEmpty()) {
-            item(contentType = "audiobook-narrations-header") {
-                Text(
-                    text = "Other Narrations",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            items(displayableNarrations, contentType = { "audiobook-narration" }) { narration ->
-                OtherNarrationRow(narration = narration)
-            }
-        }
-
-        if (relatedLines.isNotEmpty()) {
-            item(contentType = "audiobook-related") {
-                AudiobookRelatedSection(lines = relatedLines)
-            }
-        }
-
-        // Parts — shown only for multi-part books (>1 audiobook_part version).
-        // Tapping a part plays from its whole-book start offset (Apple parity).
-        val parts = timeline?.tracks.orEmpty()
-        if (timeline != null && !timeline.isSingle && parts.isNotEmpty()) {
-            item(contentType = "audiobook-parts-header") {
-                Text(
-                    text = "Parts (${parts.size})",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            items(parts, contentType = { "audiobook-part" }) { track ->
-                val version = detail.versions.firstOrNull { it.fileId == track.fileId }
-                PartRow(
-                    title = partTitle(version, track.index),
-                    runtimeSeconds = track.durationSeconds,
-                    onClick = { onPlayFromPositionClick(track.startOffsetSeconds) },
+                            playableVersion == null -> Unit
+                            // The player picks the resume point: the server's, or
+                            // this device's newer one for a downloaded book.
+                            resumeSeconds != null -> onPlayClick()
+                            isFinished -> onPlayFromStartClick()
+                            else -> onPlayClick()
+                        }
+                    },
+                    primaryProgress = resumeFraction,
+                    // Audiobooks always play in the phone's own player.
+                    playsOnConnectedTv = false,
+                    isFavorite = isFavorite,
+                    isInWatchlist = isInWatchlist,
+                    // The toggle shows and flips the saved flag; a position near
+                    // the end only turns Play into Play Again.
+                    isWatched = detail.userData?.played == true,
+                    onToggleFavorite = onFavoriteClick,
+                    onToggleWatchlist = onWatchlistClick,
+                    onToggleWatched = onToggleFinished,
+                    watchlistLabels = HeroToggleLabels(
+                        caption = stringResource(CommonR.string.detail_audiobook_wantToListen),
+                        turnOn = stringResource(CommonR.string.detail_audiobook_wantToListenAdd),
+                        turnOff = stringResource(CommonR.string.detail_audiobook_wantToListenRemove),
+                    ),
+                    watchedLabels = HeroToggleLabels(
+                        caption = stringResource(CommonR.string.detail_audiobook_finished),
+                        turnOn = stringResource(CommonR.string.detail_audiobook_markFinished),
+                        turnOff = stringResource(CommonR.string.detail_audiobook_markNotFinished),
+                    ),
+                    // Apple offers Download only for a book stored as one file.
+                    downloadSlot = if (onDownloadClick != null && parts.size <= 1) {
+                        {
+                            DownloadCircleButton(
+                                isDownloaded = isDownloaded,
+                                progress = downloadProgress,
+                                onClick = onDownloadClick,
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                    overflow = { dismiss ->
+                        SiloDropdownMenuItem(
+                            text = { Text(stringResource(CommonR.string.detail_startOver)) },
+                            leadingIcon = { Icon(Icons.Filled.Replay, contentDescription = null) },
+                            onClick = {
+                                dismiss()
+                                onPlayFromStartClick()
+                            },
+                        )
+                        otherNarrations.forEach { narration ->
+                            SiloDropdownMenuItem(
+                                text = { Text(narrationLabel(narration)) },
+                                leadingIcon = { Icon(Icons.Filled.RecordVoiceOver, contentDescription = null) },
+                                onClick = {
+                                    dismiss()
+                                    onItemClick(narration.contentId)
+                                },
+                            )
+                        }
+                    },
                 )
             }
         }
 
         if (chapters.isNotEmpty()) {
-            item(contentType = "audiobook-chapters-header") {
+            item(contentType = "audiobook-chapters") {
+                ChaptersSection(chapters = chapters, onChapterClick = onChapterClick)
+            }
+        }
+
+        if (parts.size > 1) {
+            item(contentType = "audiobook-parts") {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    SectionHeader(
+                        title = stringResource(CommonR.string.detail_audiobook_parts),
+                        trailingText = LocaleFormat.integer(parts.size),
+                    )
+                    Column(modifier = Modifier.padding(horizontal = SafePadding)) {
+                        parts.forEachIndexed { index, track ->
+                            val version = detail.versions.firstOrNull { it.fileId == track.fileId }
+                            TimelineRow(
+                                icon = { Icon(Icons.Filled.GraphicEq, contentDescription = null, modifier = Modifier.size(13.dp)) },
+                                title = partTitle(version, index),
+                                trailing = AudiobookText.runtime(resources, track.durationSeconds),
+                                showsDivider = index > 0,
+                                onClick = { onPlayFromPositionClick(track.startOffsetSeconds) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (credits.isNotEmpty()) {
+            item(contentType = "audiobook-credits") {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    SectionHeader(title = creditsTitle(detail))
+                    CastCrewSection(cast = credits, onPersonClick = onPersonClick)
+                }
+            }
+        }
+
+        meta?.series?.takeIf { it.entries.isNotEmpty() }?.let { series ->
+            item(contentType = "audiobook-series") {
+                CoverRail(
+                    title = series.name.takeIf { it.isNotBlank() }
+                        ?: stringResource(CommonR.string.detail_audiobook_series),
+                    items = series.entries,
+                    onSelect = onItemClick,
+                )
+            }
+        }
+
+        if (otherNarrations.isNotEmpty()) {
+            item(contentType = "audiobook-narrations") {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    SectionHeader(title = stringResource(CommonR.string.audiobook_detail_otherNarrations))
+                    Column(modifier = Modifier.padding(horizontal = SafePadding)) {
+                        otherNarrations.forEachIndexed { index, narration ->
+                            NarrationRow(
+                                narration = narration,
+                                showsDivider = index > 0,
+                                onClick = { onItemClick(narration.contentId) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        meta?.related?.alsoByAuthor?.takeIf { it.isNotEmpty() }?.let { alsoByAuthor ->
+            item(contentType = "audiobook-more-by-author") {
+                CoverRail(title = moreByAuthorTitle(detail), items = alsoByAuthor, onSelect = onItemClick)
+            }
+        }
+
+        // A card seed's facts are partial; the fetched detail lists them all.
+        if (actionsReady) {
+            item(contentType = "audiobook-facts") {
+                Column {
+                    DetailFactsList(detail = detail, facts = AudiobookText.facts(resources, detail, totalSeconds, parts.size))
+                }
+            }
+        }
+
+        meta?.related?.similar?.takeIf { it.isNotEmpty() }?.let { similar ->
+            item(contentType = "audiobook-similar") {
+                CoverRail(
+                    title = stringResource(CommonR.string.detail_moreLikeThis),
+                    items = similar,
+                    onSelect = onItemClick,
+                )
+            }
+        }
+
+        item(contentType = "audiobook-spacer") {
+            Spacer(modifier = Modifier.height(40.dp))
+        }
+    }
+    }
+    }
+}
+
+private const val ChapterCollapseLimit = 8
+
+/** Chapters with a play glyph and start time, the first eight until "Show all". */
+@Composable
+private fun ChaptersSection(
+    chapters: List<VersionChapter>,
+    onChapterClick: (VersionChapter) -> Unit,
+) {
+    var showAll by rememberSaveable { mutableStateOf(false) }
+    val visible = if (showAll) chapters else chapters.take(ChapterCollapseLimit)
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        SectionHeader(
+            title = stringResource(CommonR.string.detail_audiobook_chapters),
+            trailingText = LocaleFormat.integer(chapters.size),
+        )
+        Column(
+            modifier = Modifier
+                .padding(horizontal = SafePadding)
+                .animateContentSize(),
+        ) {
+            visible.forEachIndexed { index, chapter ->
+                TimelineRow(
+                    icon = { Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                    title = chapter.title.takeIf { it.isNotBlank() }
+                        ?: stringResource(CommonR.string.detail_audiobook_chapter, LocaleFormat.integer(chapter.index + 1)),
+                    trailing = AudiobookText.clock(chapter.startSeconds),
+                    showsDivider = index > 0,
+                    onClick = { onChapterClick(chapter) },
+                )
+            }
+            if (chapters.size > ChapterCollapseLimit) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { chaptersExpanded = !chaptersExpanded },
+                        .clickable(role = Role.Button) { showAll = !showAll }
+                        .padding(top = 12.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = "Chapters (${chapters.size})",
-                        style = MaterialTheme.typography.titleMedium,
+                        text = if (showAll) {
+                            stringResource(CommonR.string.detail_audiobook_chaptersShowLess)
+                        } else {
+                            pluralStringResource(
+                                CommonR.plurals.detail_audiobook_chaptersShowAll,
+                                chapters.size,
+                                chapters.size,
+                                LocaleFormat.integer(chapters.size),
+                            )
+                        },
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f),
+                        color = SiloOnSurface.copy(alpha = 0.6f),
                     )
                     Icon(
-                        imageVector = if (chaptersExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (chaptersExpanded) "Collapse chapters" else "Expand chapters",
+                        imageVector = if (showAll) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = SiloOnSurface.copy(alpha = 0.6f),
+                        modifier = Modifier.size(16.dp),
                     )
-                }
-            }
-            if (chaptersExpanded) {
-                items(chapters, contentType = { "audiobook-chapter" }) { chapter ->
-                    ChapterRow(chapter = chapter, onClick = { onChapterClick(chapter) })
                 }
             }
         }
     }
+}
+
+/** Apple `timelineRow`: a small glyph in a faint circle, the title, a quiet time or length. */
+@Composable
+private fun TimelineRow(
+    icon: @Composable () -> Unit,
+    title: String,
+    trailing: String,
+    showsDivider: Boolean,
+    onClick: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (showsDivider) RowDivider()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp),
+        ) {
+            GlyphCircle(icon)
+            Text(
+                text = title,
+                fontSize = 15.sp,
+                color = SiloOnSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = trailing,
+                fontSize = 13.sp,
+                style = TextStyle(fontFeatureSettings = TabularNumbers),
+                color = SiloOnSurface.copy(alpha = 0.6f),
+            )
+        }
     }
 }
 
 @Composable
-private fun AudiobookInfoLine(label: String, value: String) {
+private fun NarrationRow(narration: AudiobookNarration, showsDivider: Boolean, onClick: () -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        if (showsDivider) RowDivider()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp),
+        ) {
+            GlyphCircle { Icon(Icons.Filled.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(14.dp)) }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = narrationLabel(narration),
+                    fontSize = 15.sp,
+                    color = SiloOnSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                narration.year?.let { year ->
+                    Text(
+                        text = LocaleFormat.integer(year, currentNumberLocale()),
+                        fontSize = 13.sp,
+                        color = SiloOnSurface.copy(alpha = 0.6f),
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = SiloOnSurface.copy(alpha = 0.4f),
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun GlyphCircle(icon: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(26.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.10f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        CompositionLocalProvider(
+            LocalContentColor provides SiloOnSurface,
+        ) { icon() }
+    }
+}
+
+@Composable
+private fun RowDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(0.5.dp)
+            .background(Color.White.copy(alpha = 0.08f)),
+    )
+}
+
+/** Apple `PhonePosterRail` with square covers: title, then "Book N" or the year. */
+@Composable
+private fun CoverRail(title: String, items: List<MediaRelatedItem>, onSelect: (String) -> Unit) {
+    val rowState = rememberLazyListState()
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        SectionHeader(title = title)
+        DeferImagePresentationWhileScrolling(rowState) {
+            LazyRow(
+                state = rowState,
+                contentPadding = PaddingValues(horizontal = SafePadding),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                items(items, key = { it.contentId }, contentType = { "audiobook-cover" }) { item ->
+                    CoverCard(item = item, onClick = { onSelect(item.contentId) })
+                }
+            }
+        }
+    }
+}
+
+private val CoverCardWidth = 132.dp
+
+@Composable
+private fun CoverCard(item: MediaRelatedItem, onClick: () -> Unit) {
+    val subtitle = item.seriesIndex
+        ?.let { index ->
+            val number = if (index % 1.0 == 0.0) {
+                LocaleFormat.integer(index.toInt(), currentNumberLocale())
+            } else {
+                LocaleFormat.decimal(index, maxFractionDigits = 1)
+            }
+            stringResource(CommonR.string.audiobook_series_bookNumber, number)
+        }
+        ?: item.year?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) }
+    Column(
+        modifier = Modifier
+            .width(CoverCardWidth)
+            .clickable(onClick = onClick),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        ThumbhashImage(
+            url = item.posterUrl,
+            thumbhash = null,
+            contentDescription = item.title,
+            defaultArtwork = DefaultArtworkKind.Audiobook,
+            modifier = Modifier
+                .size(CoverCardWidth)
+                .clip(RoundedCornerShape(10.dp)),
         )
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = value,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            text = item.title,
+            fontSize = 15.sp,
+            lineHeight = 19.sp,
+            fontWeight = FontWeight.Medium,
+            color = SiloOnSurface,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-    }
-}
-
-@Composable
-private fun AudiobookSeriesSection(series: MediaSeriesGroup) {
-    val title = series.name.takeIf { it.isNotBlank() }
-    val entryLines = series.entries
-        .mapNotNull { entry ->
-            listOfNotNull(
-                entry.seriesIndex?.let { "Book ${formatSeriesIndex(it)}" },
-                entry.title.takeIf { it.isNotBlank() },
-            ).joinToString(" · ").takeIf { it.isNotBlank() }
-        }
-        .take(3)
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = "Series",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        title?.let {
+        subtitle?.let {
             Text(
                 text = it,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        entryLines.forEach { entryLine ->
-            Text(
-                text = entryLine,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp,
+                color = SiloOnSurface.copy(alpha = 0.6f),
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
         }
     }
 }
 
-@Composable
-private fun OtherNarrationRow(narration: AudiobookNarration) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-    ) {
-        Text(
-            text = narration.title,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        val subtitle = listOfNotNull(
-            narration.year?.toString(),
-            narration.narrators
-                .filter { it.isNotBlank() }
-                .takeIf { it.isNotEmpty() }
-                ?.joinToString(", "),
-        ).joinToString(" · ")
-        if (subtitle.isNotBlank()) {
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+/**
+ * Authors then narrators as cast-rail entries, the role in the caption. A
+ * person who wrote and reads the book appears once, as "Author & Narrator".
+ */
+private fun creditMembers(resources: Resources, detail: ItemDetail): List<CastMember> {
+    data class Credit(val person: MediaPerson, var author: Boolean, var narrator: Boolean)
+    val people = LinkedHashMap<String, Credit>()
+    val credited = detail.audiobook?.authors.orEmpty().map { it to true } +
+        detail.audiobook?.narrators.orEmpty().map { it to false }
+    credited.forEach { (person, isAuthor) ->
+        if (person.name.isBlank()) return@forEach
+        val credit = people.getOrPut(person.personId ?: person.name) { Credit(person, false, false) }
+        if (isAuthor) credit.author = true else credit.narrator = true
+    }
+    return people.values.mapIndexed { order, credit ->
+        val role = when {
+            credit.author && credit.narrator -> CommonR.string.detail_audiobook_roleAuthorAndNarrator
+            credit.author -> CommonR.string.detail_audiobook_roleAuthor
+            else -> CommonR.string.detail_audiobook_roleNarrator
         }
-    }
-}
-
-@Composable
-private fun AudiobookRelatedSection(lines: List<String>) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = "Related",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        lines.forEach { line ->
-            Text(
-                text = line,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-private fun MediaRelatedContent.displayLines(): List<String> = listOfNotNull(
-    alsoByAuthor.joinToRelatedTitles()
-        .takeIf { it.isNotBlank() }
-        ?.let { "Also by author: $it" },
-    similar.joinToRelatedTitles()
-        .takeIf { it.isNotBlank() }
-        ?.let { "Similar: $it" },
-)
-
-private fun List<MediaRelatedItem>.joinToRelatedTitles(): String =
-    mapNotNull { it.title.takeIf { title -> title.isNotBlank() } }
-        .take(3)
-        .joinToString(", ")
-
-private fun MediaSeriesGroup.hasDisplayableContent(): Boolean =
-    name.isNotBlank() || entries.any { it.title.isNotBlank() || it.seriesIndex != null }
-
-private fun formatSeriesIndex(value: Double): String =
-    if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()
-
-@Composable
-private fun ChapterRow(chapter: VersionChapter, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "${chapter.index + 1}.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(36.dp),
-        )
-        Text(
-            text = chapter.title,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = formatDuration(chapter.endSeconds - chapter.startSeconds),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        CastMember(
+            name = credit.person.name,
+            character = resources.getString(role),
+            order = order,
+            personId = credit.person.personId,
+            photoUrl = credit.person.photoUrl,
+            photoThumbhash = credit.person.photoThumbhash,
         )
     }
 }
 
 @Composable
-private fun PartRow(title: String, runtimeSeconds: Double, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = Icons.Filled.PlayArrow,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = formatDuration(runtimeSeconds),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+private fun creditsTitle(detail: ItemDetail): String {
+    val hasAuthors = detail.audiobook?.authors.orEmpty().any { it.name.isNotBlank() }
+    val hasNarrators = detail.audiobook?.narrators.orEmpty().any { it.name.isNotBlank() }
+    return stringResource(
+        when {
+            hasAuthors && !hasNarrators -> CommonR.string.detail_audiobook_authors
+            !hasAuthors && hasNarrators -> CommonR.string.detail_audiobook_narrators
+            else -> CommonR.string.detail_audiobook_authorsAndNarrators
+        },
+    )
+}
+
+@Composable
+private fun moreByAuthorTitle(detail: ItemDetail): String {
+    val authors = detail.audiobook?.authors.orEmpty()
+    val name = authors.singleOrNull()?.name
+    return if (name != null && name.isNotBlank() && !name.contains(",")) {
+        stringResourceWithNames(CommonR.string.detail_audiobook_moreByNamedAuthor, name)
+    } else {
+        stringResource(CommonR.string.detail_audiobook_moreByTheseAuthors)
     }
 }
 
-/** Part row label: the file name when present, else "Part {index}" — mirrors
- *  Apple `partTitle`, using the version's `presentationPartIndex` (falling back
- *  to the 0-based [position], displayed 1-based). */
+private fun narrationLabel(narration: AudiobookNarration): String =
+    narration.narrators.filter { it.isNotBlank() }.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: narration.title
+
+/** Part row label: the file name when present, else "Part {index}", as Apple's `partTitle`. */
+@Composable
 private fun partTitle(version: FileVersion?, position: Int): String {
     version?.fileName?.takeIf { it.isNotBlank() }?.let { return it }
     val rawIndex = version?.presentationPartIndex ?: position
     val displayIndex = if (rawIndex <= 0) rawIndex + 1 else rawIndex
-    return "Part $displayIndex"
-}
-
-private fun formatDuration(seconds: Double): String {
-    val total = seconds.toLong().coerceAtLeast(0)
-    val h = total / 3600
-    val m = (total % 3600) / 60
-    val s = total % 60
-    return when {
-        h > 0 -> "${h}h ${m}m"
-        m > 0 -> "${m}m ${s}s"
-        else -> "${s}s"
-    }
-}
-
-/** Clock-style position label (h:mm:ss / m:ss) for the Resume button. */
-private fun formatClock(seconds: Double): String {
-    val total = seconds.toLong().coerceAtLeast(0)
-    val h = total / 3600
-    val m = (total % 3600) / 60
-    val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return stringResource(CommonR.string.audiobook_detail_partNumber, displayIndex)
 }

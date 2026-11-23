@@ -363,10 +363,10 @@ jobs:
             echo "Phones and tablets: \`silo-android-${VERSION}-${BUILD}.apk\`."
             echo "Android TV: \`silo-android-tv-${VERSION}-${BUILD}.apk\`."
             echo
-            echo "The store Downloader codes 1141108 (phones) and 2249835 (Android TV) install the latest store release, not this tester build. The beta codes 2988950 (phones) and 6033910 (Android TV) install the newest tester build from the [latest tester build](https://github.com/${GH_REPO}/releases/tag/${BETA_LATEST}) release."
+            echo "To install with Downloader by AFTVnews, use code 2988950 for phones and tablets or 6033910 for Android TV. Both install the newest tester build from the [latest tester build](https://github.com/${GH_REPO}/releases/tag/${BETA_LATEST}) release."
           } > notes.md
-          # A prerelease never becomes Latest, so the Downloader codes and the
-          # releases/latest links keep pointing at the store release.
+          # A prerelease never becomes Latest, so the store Downloader codes and
+          # the releases/latest links keep pointing at the store release.
           gh release create "${TAG}" --verify-tag --prerelease \
             --title "Silo Android ${VERSION} (${BUILD})" --notes-file notes.md apks/*.apk
 

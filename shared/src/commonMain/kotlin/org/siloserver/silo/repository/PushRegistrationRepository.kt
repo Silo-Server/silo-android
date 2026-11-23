@@ -11,4 +11,6 @@ class PushRegistrationRepository(private val api: PushRegistrationApi) {
         api.register(request, key, generation, owner)
     suspend fun unregisterDevice(deviceId: String, key: String, generation: Long, owner: AuthScopeSnapshot) =
         api.delete(deviceId, key, generation, owner)
+    suspend fun retireDevice(serverUrl: String, deviceId: String, key: String, generation: Long) =
+        api.retire(serverUrl, deviceId, key, generation)
 }

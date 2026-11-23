@@ -5,7 +5,10 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.collect
@@ -28,6 +31,16 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
     val generation get() = identity.generation
     private val mutableLegacyNotice = MutableStateFlow(false)
     val legacyNotice = mutableLegacyNotice.asStateFlow()
+    private val mutableUnconfirmedAttempts = MutableSharedFlow<Intent>(extraBufferCapacity = 16)
+
+    /**
+     * The viewer's own attempts ([perform], [checkStatus]) that finished without
+     * confirmation, including one whose caller was cancelled. Commands restored by
+     * [restorePending] never appear here, so a notice raised from this flow answers
+     * something the viewer just did. NOT_CLAIMED is left out: another sender owns the
+     * command and its result arrives through [restorePending].
+     */
+    val unconfirmedAttempts: SharedFlow<Intent> = mutableUnconfirmedAttempts.asSharedFlow()
 
     init {
         identity.installGate { mutableActions.value = emptyMap(); mutableLegacyNotice.value = false }
@@ -73,12 +86,14 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
             update(intent) { it.copy(completion = completion, busy = false) }
         } catch (cancelled: CancellationException) {
             update(intent) { it.copy(busy = false, completion = MembershipPort.Completion(MembershipPort.Disposition.NEEDS_RECONCILIATION, false)) }
+            reportIfUnconfirmed(intent)
             throw cancelled
         } catch (_: Throwable) {
             update(intent) { it.copy(busy = false, completion = MembershipPort.Completion(MembershipPort.Disposition.NEEDS_RECONCILIATION, false)) }
         } finally {
             update(intent) { it.copy(busy = false) }
         }
+        reportIfUnconfirmed(intent)
     }
 
     /** Explicit recovery never submits a mutation, including a not-yet-sent command. */
@@ -95,6 +110,15 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
             update(intent) { it.copy(completion = MembershipPort.Completion(MembershipPort.Disposition.NEEDS_RECONCILIATION, false)) }
         } finally { update(intent) { it.copy(busy = false) } }
         restorePending()
+        reportIfUnconfirmed(intent)
+    }
+
+    private fun reportIfUnconfirmed(intent: Intent) {
+        val action = mutableActions.value[intent.key]
+        if (current(intent) && action != null && !action.busy && !action.confirmed &&
+            action.completion?.disposition != MembershipPort.Disposition.NOT_CLAIMED) {
+            mutableUnconfirmedAttempts.tryEmit(intent)
+        }
     }
 
     suspend fun read(itemId: String, kind: MembershipPort.Kind): ApiResult<Boolean> {

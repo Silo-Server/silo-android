@@ -2,8 +2,12 @@ package org.siloserver.silo.common.downloads
 
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadStatus
+import androidx.work.WorkInfo
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class DownloadWorkerProgressTest {
     private val record = DownloadRecord(
@@ -38,5 +42,42 @@ class DownloadWorkerProgressTest {
 
         assertEquals(4_000, downloading.bytesSent)
         assertEquals(10_000, downloading.fileSize)
+    }
+
+    @Test
+    fun `a refused foreground promotion does not end the transfer`() = runTest {
+        // Android 12+ refuses the foreground service start for a worker that
+        // WorkManager restarts while the app is still in the background.
+        // Returning (instead of throwing into doWork's failure branch) is the contract.
+        promoteToForeground {
+            throw IllegalStateException("Not allowed to start service Intent { act=ACTION_NOTIFY }")
+        }
+    }
+
+    @Test
+    fun `a stop during foreground promotion still stops the worker`() = runTest {
+        assertFailsWith<CancellationException> {
+            promoteToForeground { throw CancellationException("worker stopped") }
+        }
+    }
+
+    @Test
+    fun `only a system stop keeps the partial for the next attempt`() {
+        for ((reason, keeps) in listOf(
+            // User cancel (notification action, remove) or identity purge,
+            // reported this way on every API level.
+            WorkInfo.STOP_REASON_CANCELLED_BY_APP to false,
+            // A cancellation that was not a WorkManager stop.
+            WorkInfo.STOP_REASON_NOT_STOPPED to false,
+            // A JobScheduler stop before Android 12 carries no reason; it is
+            // retried, and a later removal deletes the slot.
+            WorkInfo.STOP_REASON_UNKNOWN to true,
+            // Background work time limit, lost network, quota: retried by WorkManager.
+            WorkInfo.STOP_REASON_TIMEOUT to true,
+            WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY to true,
+            WorkInfo.STOP_REASON_QUOTA to true,
+        )) {
+            assertEquals(keeps, downloadStopKeepsPartial(reason), "stopReason=$reason")
+        }
     }
 }

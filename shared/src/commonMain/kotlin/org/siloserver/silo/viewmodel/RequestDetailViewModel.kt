@@ -17,7 +17,8 @@ import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestActionHold
-import org.siloserver.silo.model.request.RequestActionCopy
+import org.siloserver.silo.model.request.RequestActionMessage
+import org.siloserver.silo.model.request.RequestAttention
 import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.RequestFollowEvent
 import org.siloserver.silo.model.request.RequestMediaDetail
@@ -29,11 +30,15 @@ import org.siloserver.silo.model.request.RequestProgress
 import org.siloserver.silo.model.request.RequestReason
 import org.siloserver.silo.model.request.RequestState
 import org.siloserver.silo.model.request.RequestUnconfirmedToken
+import org.siloserver.silo.model.request.requestReasonText
+import org.siloserver.silo.model.request.requestStatusWithDetail
 import org.siloserver.silo.model.request.applyingFollow
 import org.siloserver.silo.model.request.applyingFollowUpdate
 import org.siloserver.silo.model.request.toRequestState
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.repository.RequestDetailCache
 import org.siloserver.silo.repository.RequestsRepository
 
@@ -64,7 +69,7 @@ data class RequestDetailUiState(
     /** The signed-in user's own record for this title: stage timestamps, targets, and the id to cancel. */
     val record: MediaRequest? = null,
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val isSubmitting: Boolean = false,
     /** A create was sent but its outcome is unknown; the action stays held until a read shows a request, or the hold lapses. */
     val isSubmissionUnconfirmed: Boolean = false,
@@ -72,13 +77,13 @@ data class RequestDetailUiState(
     /** A cancel was sent without a usable answer; Cancel stays hidden until the request changes, or the hold lapses. */
     val isCancelUnconfirmed: Boolean = false,
     /** Inline message near the action for a failed create or cancel. */
-    val actionErrorMessage: String? = null,
+    val actionErrorMessage: RequestActionMessage? = null,
     /** The server takes follows (`follow_supported`). */
     val followSupported: Boolean = false,
     /** A follow or unfollow is in flight; the action keeps its place and label. */
     val isFollowPending: Boolean = false,
     /** Confirms the last follow or unfollow, in the slot the action error uses. */
-    val followNotice: String? = null,
+    val followNotice: RequestActionMessage? = null,
     /** Bumped when the server accepts a new request, for the success haptic. */
     val submittedCount: Int = 0,
 ) {
@@ -157,11 +162,11 @@ data class RequestDetailUiState(
         get() = detail?.request?.following == true
 
     /** The follow action's label (the web's wording). */
-    val followActionTitle: String
-        get() = if (isFollowing) "Stop notifying me" else "Notify me when available"
+    val followActionTitle: UiText
+        get() = UiText.Key(if (isFollowing) SharedString.RequestFollowStop else SharedString.RequestFollowStart)
 
     /** The follow confirmation, while the follow action is on the page and no error replaces it. */
-    val shownFollowNotice: String?
+    val shownFollowNotice: RequestActionMessage?
         get() = followNotice?.takeIf { canFollow && actionErrorMessage == null }
 
     /** Recommendations this client can route (movies and series). */
@@ -171,23 +176,24 @@ data class RequestDetailUiState(
         }
 
     /** Where the title stands, in the slot a library title uses for its eyebrow. */
-    val eyebrow: String?
+    val eyebrow: UiText?
         get() {
-            val display = progress?.display ?: return "Not in your library"
-            return if (display == RequestDisplayState.InLibrary) null else "Requested"
+            val display = progress?.display ?: return UiText.Key(SharedString.RequestEyebrowNotInLibrary)
+            return if (display == RequestDisplayState.InLibrary) null else UiText.Key(SharedString.RequestEyebrowRequested)
         }
 
     /** The primary action's label. */
-    val primaryActionTitle: String
+    val primaryActionTitle: UiText
         get() = when (val action = primaryAction) {
-            RequestPrimaryAction.Loading -> ""
-            RequestPrimaryAction.Request -> if (endedRequest == null) "Request" else "Request Again"
-            RequestPrimaryAction.Submitting -> "Requesting…"
-            is RequestPrimaryAction.OpenInLibrary -> "Open in Library"
+            RequestPrimaryAction.Loading -> UiText.Raw("")
+            RequestPrimaryAction.Request ->
+                UiText.Key(if (endedRequest == null) SharedString.RequestActionRequest else SharedString.RequestActionRequestAgain)
+            RequestPrimaryAction.Submitting -> UiText.Key(SharedString.RequestActionRequesting)
+            is RequestPrimaryAction.OpenInLibrary -> UiText.Key(SharedString.RequestActionOpenInLibrary)
             is RequestPrimaryAction.Status -> progress
                 ?.takeIf { action.state == it.display && action.state != RequestDisplayState.Pending }
-                ?.longLabel
-                ?: action.state.detailTitle
+                ?.longText
+                ?: action.state.statusTitle()
         }
 
     /** The hint under a plain Request button. */
@@ -213,6 +219,20 @@ data class RequestDetailUiState(
             if (current != null && current != record.id) return null
             return record
         }
+
+    /** The status button's label, which has room to say more than a caption. */
+    private fun RequestDisplayState.statusTitle(): UiText = when (this) {
+        RequestDisplayState.Pending -> UiText.Key(SharedString.RequestTitlePending)
+        RequestDisplayState.OnTheWay -> UiText.Key(SharedString.RequestTitleOnTheWay)
+        RequestDisplayState.InLibrary -> UiText.Key(SharedString.RequestTitleInLibrary)
+        is RequestDisplayState.NeedsAttention -> {
+            val title = UiText.Key(
+                if (attention == RequestAttention.Declined) SharedString.RequestTitleDeclined else SharedString.RequestTitleFailed,
+            )
+            requestReasonText(reason)?.let { requestStatusWithDetail(title, it) } ?: title
+        }
+        is RequestDisplayState.Unavailable -> requestReasonText(reason) ?: UiText.Key(SharedString.RequestTitleUnavailable)
+    }
 
     private val activeRecordState: RequestDisplayState?
         get() {
@@ -342,7 +362,7 @@ class RequestDetailViewModel(
             is ApiResult.Error, is ApiResult.NetworkError -> _uiState.update {
                 it.copy(
                     isLoading = false,
-                    error = fresh.errorMessage("Failed to load request details").takeIf { _ -> it.detail == null },
+                    error = fresh.errorText(SharedString.RequestDetailLoadFailed).takeIf { _ -> it.detail == null },
                 )
             }
         }
@@ -383,12 +403,12 @@ class RequestDetailViewModel(
                     // request, or the hold lapses.
                     holdSubmission()
                     _uiState.update {
-                        it.copy(isSubmitting = false, isSubmissionUnconfirmed = true, actionErrorMessage = RequestActionCopy.UnconfirmedSubmit)
+                        it.copy(isSubmitting = false, isSubmissionUnconfirmed = true, actionErrorMessage = RequestActionMessage.UnconfirmedSubmit)
                     }
                     fetch(ownMaxAge = Duration.ZERO)
                 }
                 else -> _uiState.update {
-                    it.copy(isSubmitting = false, actionErrorMessage = RequestActionCopy.failure(result, "Failed to submit request"))
+                    it.copy(isSubmitting = false, actionErrorMessage = RequestActionMessage.failure(result, SharedString.RequestSubmitFailed))
                 }
             }
         }
@@ -412,12 +432,12 @@ class RequestDetailViewModel(
                     // Never resend: hold Cancel until the request changes, or the hold lapses.
                     holdCancel(record)
                     _uiState.update {
-                        it.copy(isCancelling = false, isCancelUnconfirmed = true, actionErrorMessage = RequestActionCopy.UnconfirmedCancel)
+                        it.copy(isCancelling = false, isCancelUnconfirmed = true, actionErrorMessage = RequestActionMessage.UnconfirmedCancel)
                     }
                     fetch(ownMaxAge = Duration.ZERO)
                 }
                 else -> _uiState.update {
-                    it.copy(isCancelling = false, actionErrorMessage = RequestActionCopy.failure(result, "Couldn't cancel the request"))
+                    it.copy(isCancelling = false, actionErrorMessage = RequestActionMessage.failure(result, SharedString.RequestCancelFailed))
                 }
             }
         }
@@ -442,17 +462,17 @@ class RequestDetailViewModel(
                     current.copy(
                         isFollowPending = false,
                         detail = current.detail?.let { it.copy(request = it.request.applyingFollow(event)) },
-                        followNotice = if (follow) RequestActionCopy.Followed else RequestActionCopy.Unfollowed,
+                        followNotice = if (follow) RequestActionMessage.Followed else RequestActionMessage.Unfollowed,
                     )
                 }
                 return@launch
             }
             _uiState.update {
-                it.copy(isFollowPending = false, actionErrorMessage = RequestActionCopy.failure(result, "Failed to update notification"))
+                it.copy(isFollowPending = false, actionErrorMessage = RequestActionMessage.failure(result, SharedString.RequestFollowFailed))
             }
             when {
                 // The feature went off: hide the action rather than let it fail again.
-                RequestActionCopy.isCapabilityOff(result) -> featureStore?.refresh()
+                RequestActionMessage.isCapabilityOff(result) -> featureStore?.refresh()
                 // The request ended (or was never there): show what the title is now.
                 result is ApiResult.Error && result.error == "conflict" -> fetch(ownMaxAge = Duration.ZERO)
             }
@@ -489,12 +509,12 @@ class RequestDetailViewModel(
 
     private fun RequestDetailUiState.releasingCancelHold(): RequestDetailUiState = copy(
         isCancelUnconfirmed = false,
-        actionErrorMessage = actionErrorMessage.takeUnless { it == RequestActionCopy.UnconfirmedCancel },
+        actionErrorMessage = actionErrorMessage.takeUnless { it == RequestActionMessage.UnconfirmedCancel },
     )
 
     private fun RequestDetailUiState.releasingSubmissionHold(): RequestDetailUiState = copy(
         isSubmissionUnconfirmed = false,
-        actionErrorMessage = actionErrorMessage.takeUnless { it == RequestActionCopy.UnconfirmedSubmit },
+        actionErrorMessage = actionErrorMessage.takeUnless { it == RequestActionMessage.UnconfirmedSubmit },
     )
 
     private fun RequestMediaDetail.toCreateMediaRequest(): CreateMediaRequest = CreateMediaRequest(

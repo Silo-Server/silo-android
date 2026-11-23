@@ -6,6 +6,7 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.videoQualityPreference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 
@@ -31,6 +33,11 @@ data class PlaybackQualityPair(val qualityPreference: String, val bandwidthCapKb
  * as a phone hotspot or Wi-Fi the user marked metered. A VPN's own metered
  * flag is ignored: Android marks most VPNs metered by default, which would
  * put a home Wi-Fi behind Tailscale on the cellular pair.
+ *
+ * This is the one metered rule: the speed test and the estimate a start
+ * sends use it too ([org.siloserver.silo.common.player.probe.skipsBandwidthProbe]).
+ * Data Saver needs no input of its own, since Android applies it only to
+ * networks it marks metered.
  */
 val PlaybackNetworkSnapshot.usesCellularQuality: Boolean
     get() = connected && (cellular || (!vpn && metered))
@@ -42,6 +49,19 @@ suspend fun PlayerSettingsStore.qualityPair(cellular: Boolean): PlaybackQualityP
     } else {
         PlaybackQualityPair(preferredQualityFlow.first(), maxBitrateKbpsFlow.first())
     }
+
+/**
+ * The stored resolution preference a start on the current network sends, as
+ * [qualityPair] picks it, updated when [network] moves between unmetered and
+ * cellular or metered. A detail page ranks its versions with it, so the file
+ * it shows is the one the player starts.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+fun PlayerSettingsStore.networkPreferredQualityFlow(network: Flow<PlaybackNetworkSnapshot>): Flow<String> =
+    network
+        .map { it.usesCellularQuality }
+        .distinctUntilChanged()
+        .flatMapLatest { cellular -> if (cellular) cellularPreferredQualityFlow else preferredQualityFlow }
 
 /**
  * The pair an Auto picked in the player sends: "auto" with the saved bitrate
@@ -73,8 +93,10 @@ data class FollowedSession(
  * Moves phone playback to the quality pair of the network it is on when that
  * changes between unmetered and cellular or metered mid-playback.
  *
- * A change applies only once it has held for [settleMs], so a brief Wi-Fi
- * drop does not cost two replans; moments without a connection are skipped
+ * A change applies only once it has held for [settleMs]. Each move is a full
+ * reload, and a phone on steady Wi-Fi can sit on mobile data for several
+ * seconds while Android checks or roams its Wi-Fi; leaving Wi-Fi for mobile
+ * data holds far longer than that. Moments without a connection are skipped
  * rather than read as "not cellular".
  */
 class NetworkQualityFollower(
@@ -109,7 +131,19 @@ class NetworkQualityFollower(
             .filter { it.connected }
             .map { it.usesCellularQuality }
             .distinctUntilChanged()
-            .onEach { latestCellular.value = it }
+            .onEach { cellular ->
+                // Without this line a report shows a reload but not what
+                // caused it, and a blip that never reloaded leaves no trace.
+                if (latestCellular.value != null) {
+                    val side = if (cellular) "metered" else "unmetered"
+                    SiloLog.i(
+                        DiagnosticsLogCategory.PLAYBACK,
+                        TAG,
+                        "connection now $side; quality follows if it holds for ${settleMs / 1_000} s",
+                    )
+                }
+                latestCellular.value = cellular
+            }
             .debounce(settleMs)
             .collectLatest { cellular ->
                 for (wait in RETRY_DELAYS_MS) {
@@ -130,6 +164,17 @@ class NetworkQualityFollower(
                         continue
                     }
                     if (wanted == current.pair) return@collectLatest
+                    // Logged before [replan], which may still decline the move
+                    // (another change in flight), so it names a request.
+                    SiloLog.i(
+                        DiagnosticsLogCategory.PLAYBACK,
+                        TAG,
+                        if (cellular) {
+                            "connection stayed metered; asking playback to move to the cellular quality"
+                        } else {
+                            "connection stayed unmetered; asking playback to move to the main quality"
+                        },
+                    )
                     replan(current, wanted)
                 }
             }
@@ -137,7 +182,7 @@ class NetworkQualityFollower(
 
     companion object {
         private const val TAG = "NetworkQualityFollower"
-        const val DEFAULT_SETTLE_MS = 5_000L
+        const val DEFAULT_SETTLE_MS = 30_000L
 
         /** The wait before each try at a move: at once, then three retries over 50 seconds. */
         val RETRY_DELAYS_MS = listOf(0L, 5_000L, 15_000L, 30_000L)

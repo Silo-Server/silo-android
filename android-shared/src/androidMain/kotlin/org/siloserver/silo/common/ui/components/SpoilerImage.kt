@@ -40,6 +40,8 @@ fun SpoilerImage(
     onError: (() -> Unit)? = null,
     colorFilter: ColorFilter? = null,
     defaultArtwork: DefaultArtworkKind? = null,
+    /** See [ThumbhashImage]. */
+    holdPreviousImage: Boolean = false,
 ) {
     if (!hidden) {
         ThumbhashImage(
@@ -54,6 +56,7 @@ fun SpoilerImage(
             onError = onError,
             colorFilter = colorFilter,
             defaultArtwork = defaultArtwork,
+            holdPreviousImage = holdPreviousImage,
         )
         return
     }

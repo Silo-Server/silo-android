@@ -132,14 +132,15 @@ class TvLoginViewModelRaceTest {
                 serverId: String?, serverUrl: String?, accessToken: String, refreshToken: String,
                 expiresIn: Long, profileId: String?, profileToken: String?,
                 expectedIdentity: AccountSessionExpectation?,
-            ) {
+                account: org.siloserver.silo.network.AccountSignIn?,
+            ): String? {
                 if (pauseInstall) {
                     pauseInstall = false
                     installing.complete(Unit)
                     releaseInstall.await()
                 }
-                actualTokens.replaceAccountSession(serverId, serverUrl, accessToken, refreshToken,
-                    expiresIn, profileId, profileToken, expectedIdentity)
+                return actualTokens.replaceAccountSession(serverId, serverUrl, accessToken, refreshToken,
+                    expiresIn, profileId, profileToken, expectedIdentity, account)
             }
         }
         val deviceApi = ControlledDeviceLoginApi()

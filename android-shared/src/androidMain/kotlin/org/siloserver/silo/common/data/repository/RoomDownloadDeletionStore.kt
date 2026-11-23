@@ -20,12 +20,13 @@ class RoomDownloadDeletionStore(
 
     private val dao = db.downloadDeletionDao()
 
-    override suspend fun enqueue(serverId: String, profileId: String, recordId: String, mediaFileId: Int?) {
+    override suspend fun enqueue(serverId: String, accountId: String, profileId: String, recordId: String, mediaFileId: Int?) {
         val authority = authorities?.snapshotDurableLoginAuthority()
         val device = devices?.current()?.id
         if (authorities != null) require(authority != null && authority.scope.serverId == serverId &&
+            authority.scope.accountId.orEmpty() == accountId &&
             authority.scope.profileId == profileId && !device.isNullOrBlank()) { "The download owner changed" }
-        val row = DownloadDeletionEntity(serverId, profileId, recordId, mediaFileId, now(),
+        val row = DownloadDeletionEntity(serverId, accountId, profileId, recordId, mediaFileId, now(),
             authority?.loginId, authority?.scope?.serverUrl, device)
         if (authority == null) dao.upsert(row)
         else check(identityTransitions?.withCurrentGeneration(authority.scope.identityGeneration) {
@@ -35,12 +36,12 @@ class RoomDownloadDeletionStore(
 
     override suspend fun allPendingRecordIds(): Set<String> = dao.allRecordIds().toSet()
 
-    override suspend fun pendingForScope(serverId: String, profileId: String): List<PendingDownloadDeletion> =
-        dao.forScope(serverId, profileId).map {
-            PendingDownloadDeletion(it.serverId, it.profileId, it.recordId, it.mediaFileId, it.loginId, it.origin, it.deviceId)
+    override suspend fun pendingForScope(serverId: String, accountId: String, profileId: String): List<PendingDownloadDeletion> =
+        dao.forScope(serverId, accountId, profileId).map {
+            PendingDownloadDeletion(it.serverId, it.accountId, it.profileId, it.recordId, it.mediaFileId, it.loginId, it.origin, it.deviceId)
         }
 
-    override suspend fun remove(serverId: String, profileId: String, recordId: String) {
-        dao.delete(serverId, profileId, recordId)
+    override suspend fun remove(serverId: String, accountId: String, profileId: String, recordId: String) {
+        dao.delete(serverId, accountId, profileId, recordId)
     }
 }

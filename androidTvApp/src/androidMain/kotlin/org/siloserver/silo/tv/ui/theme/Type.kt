@@ -4,6 +4,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Typography
 import org.siloserver.silo.tv.R
@@ -22,6 +24,11 @@ val InterFamily = FontFamily(
 // Retain the legacy name for existing hero consumers.
 val OutfitFamily: FontFamily = InterFamily
 
+// Content direction: each paragraph takes its direction from its own text, so
+// Arabic or Hebrew metadata reads right to left in the left-to-right TV layout.
+// Unspecified would force the layout direction onto every paragraph. Left
+// alignment: Start would follow that direction and push right-to-left text to
+// the far end of its box, away from the icon or label beside it.
 val SiloTvTypography = Typography(
     displayLarge = TextStyle(
         fontFamily = InterFamily,
@@ -29,6 +36,8 @@ val SiloTvTypography = Typography(
         fontSize = 44.sp,
         lineHeight = 48.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     displayMedium = TextStyle(
         fontFamily = InterFamily,
@@ -36,6 +45,8 @@ val SiloTvTypography = Typography(
         fontSize = 36.sp,
         lineHeight = 40.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     displaySmall = TextStyle(
         fontFamily = InterFamily,
@@ -43,6 +54,8 @@ val SiloTvTypography = Typography(
         fontSize = 28.sp,
         lineHeight = 32.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     headlineLarge = TextStyle(
         fontFamily = InterFamily,
@@ -50,6 +63,8 @@ val SiloTvTypography = Typography(
         fontSize = 28.sp,
         lineHeight = 34.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     headlineMedium = TextStyle(
         fontFamily = InterFamily,
@@ -57,6 +72,8 @@ val SiloTvTypography = Typography(
         fontSize = 24.sp,
         lineHeight = 30.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     headlineSmall = TextStyle(
         fontFamily = InterFamily,
@@ -64,6 +81,8 @@ val SiloTvTypography = Typography(
         fontSize = 22.sp,
         lineHeight = 28.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     titleLarge = TextStyle(
         fontFamily = InterFamily,
@@ -71,6 +90,8 @@ val SiloTvTypography = Typography(
         fontSize = 22.sp,
         lineHeight = 28.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     titleMedium = TextStyle(
         fontFamily = InterFamily,
@@ -78,6 +99,8 @@ val SiloTvTypography = Typography(
         fontSize = 20.sp,
         lineHeight = 26.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     titleSmall = TextStyle(
         fontFamily = InterFamily,
@@ -85,6 +108,8 @@ val SiloTvTypography = Typography(
         fontSize = 18.sp,
         lineHeight = 24.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     bodyLarge = TextStyle(
         fontFamily = InterFamily,
@@ -92,6 +117,8 @@ val SiloTvTypography = Typography(
         fontSize = 20.sp,
         lineHeight = 28.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     bodyMedium = TextStyle(
         fontFamily = InterFamily,
@@ -99,6 +126,8 @@ val SiloTvTypography = Typography(
         fontSize = 18.sp,
         lineHeight = 24.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     bodySmall = TextStyle(
         fontFamily = InterFamily,
@@ -106,6 +135,8 @@ val SiloTvTypography = Typography(
         fontSize = 16.sp,
         lineHeight = 22.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     labelLarge = TextStyle(
         fontFamily = InterFamily,
@@ -113,6 +144,8 @@ val SiloTvTypography = Typography(
         fontSize = 18.sp,
         lineHeight = 22.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     labelMedium = TextStyle(
         fontFamily = InterFamily,
@@ -120,6 +153,8 @@ val SiloTvTypography = Typography(
         fontSize = 16.sp,
         lineHeight = 20.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
     labelSmall = TextStyle(
         fontFamily = InterFamily,
@@ -127,6 +162,8 @@ val SiloTvTypography = Typography(
         fontSize = 16.sp,
         lineHeight = 20.sp,
         letterSpacing = 0.sp,
+        textDirection = TextDirection.Content,
+        textAlign = TextAlign.Left,
     ),
 )
 

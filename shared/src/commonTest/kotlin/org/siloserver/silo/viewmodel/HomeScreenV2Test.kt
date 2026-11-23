@@ -38,7 +38,7 @@ class HomeScreenV2Test {
         override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, artworkFingerprint: String?, stillCurrent: () -> Boolean) { cacheWrites++; cached = HomeCacheSnapshot(sections, 1) }
     }
     private val local = object : UserItemStatePort by NoOpUserItemStatePort {
-        override suspend fun localPlaybackProgressForContent(contentIds: List<String>): Map<String, LocalPlaybackProgress> { overlayHook(); return emptyMap() }
+        override suspend fun localPlaybackProgressForContent(contentIds: List<String>, includeSent: Boolean): Map<String, LocalPlaybackProgress> { overlayHook(); return emptyMap() }
     }
     // Each test report is a new change: a minute apart on this clock.
     private var clockMs = 0L

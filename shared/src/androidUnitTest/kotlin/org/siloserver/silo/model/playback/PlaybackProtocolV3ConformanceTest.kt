@@ -251,6 +251,58 @@ class PlaybackProtocolV3ConformanceTest {
         assertTrue(production.validateForMedia3() is PlaybackV3Validation.Playable)
     }
 
+    @Test
+    fun nativeDecisionCarriesSwitchableInventoryIdentity() {
+        val raw = fixture("native-decision_response.json")
+
+        val decoded = json.decodeFromString(PlaybackDecisionResponseV3.serializer(), raw)
+
+        val plan = assertNotNull(decoded.playbackPlan)
+        assertEquals(PlaybackDelivery.ORIGINAL_HTTP, plan.delivery)
+        val embedded = plan.subtitle.inventory.single { it.source == "embedded" }
+        assertEquals(3, embedded.streamIndex)
+        assertEquals("4", embedded.containerTrackId)
+        assertEquals(true, embedded.nativeSelectable)
+        assertEquals(embedded.containerTrackId, plan.subtitle.embedded?.containerTrackId)
+        assertClientReadsEveryFieldExcept(
+            raw,
+            json.encodeToJsonElement(PlaybackDecisionResponseV3.serializer(), decoded),
+            UNMODELLED_SOURCE_DETAIL,
+        )
+        val production = SiloJson.decodeFromString(PlaybackDecisionResponseV3.serializer(), raw)
+        assertTrue(production.validateForMedia3() is PlaybackV3Validation.Playable)
+    }
+
+    @Test
+    fun everyTrackRenditionDecisionDecodesRoundTripsAndValidates() {
+        val raw = fixture("hls-subtitle-renditions-all-decision_response.json")
+
+        val decoded = json.decodeFromString(PlaybackDecisionResponseV3.serializer(), raw)
+
+        assertTrue(HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE in decoded.serverFeatures)
+        val plan = assertNotNull(decoded.playbackPlan)
+        assertEquals(PlaybackDelivery.SERVER_TRANSCODE_HLS, plan.delivery)
+        assertEquals(
+            PlaybackSubtitleHlsRenditionV3(groupId = "subs", name = "Español", format = "vtt", mimeType = "text/vtt", index = 2),
+            plan.subtitle.hlsRendition,
+        )
+        assertEquals(
+            listOf(
+                PlaybackSubtitleInventoryHlsRenditionV3("subs", "English", 1),
+                PlaybackSubtitleInventoryHlsRenditionV3("subs", "Español", 2),
+            ),
+            plan.subtitle.inventory.map { it.hlsRendition },
+        )
+        assertEquals(listOf("4", "5"), plan.subtitle.inventory.map { it.containerTrackId })
+        assertClientReadsEveryFieldExcept(
+            raw,
+            json.encodeToJsonElement(PlaybackDecisionResponseV3.serializer(), decoded),
+            UNMODELLED_SOURCE_DETAIL,
+        )
+        val production = SiloJson.decodeFromString(PlaybackDecisionResponseV3.serializer(), raw)
+        assertTrue(production.validateForMedia3() is PlaybackV3Validation.Playable)
+    }
+
     /**
      * A tolerant plan decoder is load-bearing — [TolerantPlaybackPlanV3Serializer]
      * turns an unreadable plan into a null the negotiation layer can gate on,
@@ -343,7 +395,6 @@ class PlaybackProtocolV3ConformanceTest {
         assertClientReadsEveryFieldExcept(
             raw,
             json.encodeToJsonElement(PlaybackStartRequestV3.serializer(), decoded),
-            unsentKeys = UNSENT_NETWORK_EVIDENCE,
         )
     }
 
@@ -368,7 +419,6 @@ class PlaybackProtocolV3ConformanceTest {
         assertClientReadsEveryFieldExcept(
             raw,
             json.encodeToJsonElement(PlaybackReplanRequestV3.serializer(), decoded),
-            unsentKeys = UNSENT_NETWORK_EVIDENCE,
         )
     }
 
@@ -575,7 +625,6 @@ class PlaybackProtocolV3ConformanceTest {
         assertClientReadsEveryFieldExcept(
             raw,
             json.encodeToJsonElement(ConformanceMatrixFixtureV3.serializer(), matrix),
-            unsentKeys = UNSENT_NETWORK_EVIDENCE,
         )
     }
 
@@ -647,12 +696,9 @@ class PlaybackProtocolV3ConformanceTest {
         rawFixture: String,
         reencoded: JsonElement,
         allowedMissing: Set<String> = emptySet(),
-        /** Request keys the client deliberately never sends, at any depth. */
-        unsentKeys: Set<String> = emptySet(),
     ) {
         val lost = mutableListOf<String>()
         collectLostPaths(SiloJson.parseToJsonElement(rawFixture), reencoded, "$", lost)
-        lost.removeAll { path -> unsentKeys.any { path.endsWith(".$it") } }
 
         assertEquals(
             allowedMissing.sorted(),
@@ -731,13 +777,6 @@ class PlaybackProtocolV3ConformanceTest {
          * it means a new server field went unread, so add an entry only with a
          * reason.
          */
-        /**
-         * The request field this client never sends: Media3's estimate can
-         * understate the link and make Auto convert. The fixtures still carry
-         * it. (`metered` is still sent, always false.)
-         */
-        val UNSENT_NETWORK_EVIDENCE = setOf("bandwidth_estimate_kbps")
-
         val UNMODELLED_SOURCE_DETAIL = setOf(
             "$.playback_plan.source.video_profile",
             "$.playback_plan.source.video_level",

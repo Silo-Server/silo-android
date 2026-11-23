@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
@@ -57,7 +59,7 @@ class MobileQualityMenuTest {
         // The source entry an older server still lists is not in the menu.
         val uncapped = state(sourcePlays)
         assertNull(uncapped.activeQualityId(menu))
-        assertEquals("1080p", playbackQualityValueLabel(menu, null, uncapped.qualityPreference))
+        assertEquals(UiText.Key(SharedString.Quality1080p), playbackQualityValueLabel(menu, null, uncapped.qualityPreference))
         assertEquals(listOf("auto", "1080p-medium", "720p-medium"), menu.map { it.id })
     }
 
@@ -80,7 +82,7 @@ class MobileQualityMenuTest {
         // An encode between two rungs: no row, and the control names the setting.
         val between = state(capped, reported = true)
         assertNull(between.activeQualityId(menu))
-        assertEquals("1080p", playbackQualityValueLabel(menu, null, between.qualityPreference))
+        assertEquals(UiText.Key(SharedString.Quality1080p), playbackQualityValueLabel(menu, null, between.qualityPreference))
         assertEquals("auto", state(capped, sessionPreference = "auto", reported = true).activeQualityId(menu))
     }
 

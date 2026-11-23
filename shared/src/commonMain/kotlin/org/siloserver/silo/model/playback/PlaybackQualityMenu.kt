@@ -1,6 +1,7 @@
 package org.siloserver.silo.model.playback
 
 import org.siloserver.silo.model.settings.QualityChoices
+import org.siloserver.silo.common.i18n.UiText
 
 /**
  * The quality preference that hands the choice back to the server's planner,
@@ -91,7 +92,7 @@ fun playbackQualityValueLabel(
     options: List<PlaybackQualityOption>,
     activeId: String?,
     preference: String?,
-): String = options.firstOrNull { it.id == activeId }?.name
+): UiText = options.firstOrNull { it.id == activeId }?.name?.let(UiText::Raw)
     ?: QualityChoices.resolutionLabel(videoQualityPreference(preference))
 
 /**

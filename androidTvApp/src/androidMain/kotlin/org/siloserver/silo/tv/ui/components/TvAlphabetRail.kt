@@ -30,6 +30,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -39,6 +40,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Right-edge vertical A–Z jump rail for the library Browse grid, following
@@ -273,7 +275,7 @@ private fun LetterButton(
                 }
             }
             isAll -> Text(
-                text = "All",
+                text = stringResource(CommonR.string.catalog_letters_all),
                 style = MaterialTheme.typography.labelMedium.copy(
                     fontSize = 14.sp,
                     lineHeight = 16.sp,

@@ -216,7 +216,7 @@ class SiloPictureInPictureCoordinator(
             SiloPlaybackService.ACTION_PIP_PLAY
         }
         val playPauseIcon = if (isPlaying) R.drawable.ic_pip_pause else R.drawable.ic_pip_play
-        val playPauseTitle = if (isPlaying) "Pause" else "Play"
+        val playPauseTitle = context.getString(if (isPlaying) R.string.player_audio_pause else R.string.player_audio_play)
         val intervals = seekIntervals()
         // Numbered glyphs exist for the legacy 10s back / 30s forward only;
         // any other interval uses the plain arrow and names the value in the
@@ -224,8 +224,16 @@ class SiloPictureInPictureCoordinator(
         val backIcon = if (intervals.backSeconds == 10) R.drawable.ic_pip_replay_10 else R.drawable.ic_pip_replay
         val forwardIcon =
             if (intervals.forwardSeconds == 30) R.drawable.ic_pip_forward_30 else R.drawable.ic_pip_forward
-        val backTitle = "Back ${intervals.backSeconds} seconds"
-        val forwardTitle = "Forward ${intervals.forwardSeconds} seconds"
+        val backTitle = context.resources.getQuantityString(
+            R.plurals.player_skip_back,
+            intervals.backSeconds,
+            intervals.backSeconds,
+        )
+        val forwardTitle = context.resources.getQuantityString(
+            R.plurals.player_skip_forward,
+            intervals.forwardSeconds,
+            intervals.forwardSeconds,
+        )
         return listOf(
             RemoteAction(
                 Icon.createWithResource(context, backIcon),

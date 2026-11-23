@@ -37,6 +37,8 @@ import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrol
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.model.catalog.personInitials
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Cast and crew matching the search, as a horizontal rail of circular
@@ -56,7 +58,7 @@ fun SearchPeopleRow(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
-            text = "People",
+            text = stringResource(CommonR.string.search_people),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
             color = SiloOnSurface,

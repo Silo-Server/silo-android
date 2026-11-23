@@ -10,6 +10,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.activity.compose.LocalActivity
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelStoreOwner
@@ -20,8 +22,13 @@ import org.siloserver.silo.android.ui.components.SortFilterControlsRow
 import org.siloserver.silo.android.ui.components.SortMenuOption
 import org.siloserver.silo.android.ui.screens.browse.FilterSheet
 import org.siloserver.silo.catalog.filter.BrowseFacetMediaType
+import org.siloserver.silo.catalog.sort.CatalogSortField
+import org.siloserver.silo.common.catalog.directionLabelRes
+import org.siloserver.silo.common.catalog.labelRes
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.viewmodel.PersonalListQuery
+import org.siloserver.silo.common.R as CommonR
 
 /** `/catalog?source=` values the saved lists fetch through. */
 object PersonalListSource {
@@ -34,7 +41,7 @@ object PersonalListSource {
  * Activity's ViewModelStore keyed by [source] and the active server/profile
  * so the For You inline grid and the standalone Watchlist / Favorites screens
  * share one selection (nav back-stack entries would otherwise each get their
- * own), while a profile or server switch starts fresh instead of inheriting
+ * own), while a profile, account or server switch starts fresh instead of inheriting
  * the previous identity's query and facet vocabulary.
  */
 @Composable
@@ -42,7 +49,7 @@ fun rememberPersonalListControls(source: String): PersonalListControlsViewModel 
     val registry: ServerRegistry = koinInject()
     val serverId by registry.activeServerId.collectAsState()
     val entry by registry.activeEntry.collectAsState()
-    val identity = "${serverId ?: "-"}:${entry?.profileId ?: "-"}"
+    val identity = "${serverId ?: "-"}:${entry?.accountId ?: "-"}:${entry?.profileId ?: "-"}"
     val key = "personal-controls-$source-$identity"
     val activity = LocalActivity.current as? ComponentActivity
     return if (activity != null) {
@@ -76,23 +83,30 @@ fun PersonalListControlsRow(
     modifier: Modifier = Modifier,
 ) {
     val state by controls.uiState.collectAsState()
+    val shownRatingSources = org.siloserver.silo.android.ui.components.rememberShownRatingSources()
     var showFilterSheet by remember { mutableStateOf(false) }
+    val sortFields = personalListSortOptions(shownRatingSources, state.sort)
 
     SortFilterControlsRow(
         modifier = modifier,
-        sortLabel = state.sort.label,
-        sortActive = state.sort != PersonalListSort.ListOrder,
-        sortOptions = PersonalListSort.entries.mapIndexed { index, sort ->
+        sortLabel = stringResource(state.sort?.labelRes() ?: CommonR.string.catalog_sort_listOrder),
+        sortActive = state.sort != null,
+        sortOptions = listOf(
+            SortMenuOption(id = PersonalListOrderId, label = stringResource(CommonR.string.catalog_sort_listOrder)),
+        ) + sortFields.mapIndexed { index, field ->
+            val label = stringResource(field.labelRes())
             SortMenuOption(
-                id = sort.name,
-                label = sort.label,
-                selectedLabel = if (sort.hasDirection) "${sort.label}  ·  ${sort.directionLabel(state.order)}" else sort.label,
-                flipsOnReselect = sort.hasDirection,
-                dividerAbove = index == 1,
+                id = field.name,
+                label = label,
+                selectedLabel = "$label  ·  ${stringResource(field.directionLabelRes(state.order))}",
+                flipsOnReselect = true,
+                dividerAbove = index == 0,
             )
         },
-        selectedSortId = state.sort.name,
-        onSelectSort = { id -> controls.selectSort(PersonalListSort.valueOf(id)) },
+        selectedSortId = state.sort?.name ?: PersonalListOrderId,
+        onSelectSort = { id ->
+            controls.selectSort(if (id == PersonalListOrderId) null else CatalogSortField.valueOf(id))
+        },
         filterCount = state.activeFacetCount,
         onOpenFilters = { showFilterSheet = true },
         showReset = state.isCustomised,
@@ -100,7 +114,7 @@ fun PersonalListControlsRow(
         trailing = {
             if (total != null && total > 0) {
                 Text(
-                    text = if (total == 1) "1 title" else "$total titles",
+                    text = pluralStringResource(CommonR.plurals.personal_titleCount, total, total, LocaleFormat.integer(total)),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -118,3 +132,6 @@ fun PersonalListControlsRow(
         )
     }
 }
+
+/** The menu id of the stored-list-order entry; never a [CatalogSortField] name. */
+private const val PersonalListOrderId = "__list_order"

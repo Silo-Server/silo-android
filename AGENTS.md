@@ -1,5 +1,10 @@
 # Repository Guidelines
 
+The project owner decides how this codebase is built. Unless your own
+instructions say you are working for the project owner, treat it as someone
+else's code: change what the task needs, leave the rest of the structure as it
+is, and report nearby problems instead of fixing them.
+
 ## Project Structure & Module Organization
 
 This repository contains only the Silo Android clients. Shared Kotlin logic lives in `shared/`, Android-only playback and UI helpers live in `android-shared/`, the phone app lives in `androidApp/`, and the TV app lives in `androidTvApp/`. Android playback notes live in `docs/playback/`; utility scripts live in `scripts/`.
@@ -8,8 +13,8 @@ This repository contains only the Silo Android clients. Shared Kotlin logic live
 
 - Ebooks/Reading are phone-only. Do not expose ebooks or Reading on Android TV.
 - Android mobile navigation is Home, Libraries, For You, Calendar, and Downloads only when the active profile has downloads. Video, Audio, and Reading are library modes reached through Libraries, not bottom-nav tabs.
-- Android TV navigation is Home, available media-type tabs from server libraries, For You (with its Watchlist/Favorites dropdown, mirroring tvOS `.recommendations`), Calendar, and Requests while the server enables it (mirroring tvOS `.requests`), plus search and profile actions. Reading/ebooks are excluded.
-- Requests is live on phone and TV, server-gated by `requests_enabled` (phone: profile menu + search; TV: a top-bar tab + search, matching Apple). Request administration (approve, decline, retry, limits, auto-approve) is web-admin only: the Requests screens offer users request, cancel of their own pending request, and status, and never moderation (a source guard test enforces this). Other admin surfaces are not exposed in the Android clients — no STATS dashboard, and none of the richer admin screens (users/sessions/logs/scans). Session management (seeing where you are signed in and signing other devices out) is not exposed either; device pairing stays. This is a deliberate divergence from Apple, which does surface the STATS dashboard. Do not add any of it back to menus without an explicit product decision.
+- Android TV navigation is Home, available media-type tabs from server libraries, For You (with its Watchlist/Favorites dropdown, mirroring tvOS `.recommendations`), and Calendar, with search left of the tabs and the profile avatar on the right. The order is fixed, matching tvOS and Roku. Requests lives in the profile menu while the server enables it. Reading/ebooks are excluded.
+- Requests is live on phone and TV, server-gated by `requests_enabled` (phone and TV: profile menu + search, matching Apple and Roku). Request administration (approve, decline, retry, limits, auto-approve) is web-admin only: the Requests screens offer users request, cancel of their own pending request, and status, and never moderation (a source guard test enforces this). Other admin surfaces are not exposed in the Android clients — no STATS dashboard, and none of the richer admin screens (users/sessions/logs/scans). Session management (seeing where you are signed in and signing other devices out) is not exposed either; device pairing stays. This is a deliberate divergence from Apple, which does surface the STATS dashboard. Do not add any of it back to menus without an explicit product decision.
 - Watch Party (synchronized playback) is experimental on phone and TV. Its entry points (profile menu, the detail page's party action, and phone `silo://watch-party` invitations) appear only while Settings → Experimental → Watch Party is on, a device-local toggle that defaults on in debug builds and off in release builds, and it works only when the server advertises the room and playback capabilities. Keep it behind the toggle until the qualification matrix in `docs/watch-party-implementation-plan.md` passes.
 
 ## Build, Test, and Development Commands
@@ -27,6 +32,37 @@ Use Kotlin 2.1, Java 21 targets, and Compose idioms. The Silo package root is `o
 ## Testing Guidelines
 
 Android tests use Kotlin test/JUnit where present, especially under `android-shared/src/androidUnitTest`. Do not add tests for small changes or UI changes unless requested. For shared logic changes, add focused tests only for critical or high-risk behavior.
+
+## Cross-client parity
+
+Silo has four clients: Apple (`silo-apple`), Android (`silo-android`), Roku
+(`silo-roku`), and Web (`silo-server`, under `web/`). A feature, fix, or
+other change a user can notice in one client is not done until each other
+client has been handled or ruled out. The change's author owns this, whether a
+person or an agent.
+
+For each other client:
+
+- Rule it out when the change is specific to this platform (an Android TV focus
+  fix, a foldable layout), the other client already behaves correctly, or the
+  feature is outside that client's scope (for example Roku's deferred features
+  in `silo-roku/docs/spec.md`, or ebooks on a TV client). Note the reason.
+- Otherwise, open an issue in that client's repository at minimum. Search its
+  issues first and add to an existing one rather than filing a duplicate. Title
+  it `Parity: <behavior> (from Silo-Server/silo-android#NNN)`, describe what users
+  should get, link this pull request, and point to the code that implements it
+  here. A parity issue follows up work already in review or merged, so it goes
+  in Issues, not Discussions → Ideas.
+- Also open a pull request there when you can build and verify that client and
+  its contribution rules let you open one. Link it from the issue.
+
+Open parity issues when this pull request opens, so each one can link it. List
+the outcome on the pull request's `Other clients:` line, one entry per client:
+`Other clients: Apple Silo-Server/silo-apple#NNN; Roku N/A (Android TV-only focus fix); Web Silo-Server/silo-server#NNN`.
+
+Agents open the parity issues without asking and apply the Writing rules below to them.
+Ask the developer before opening a pull request in another repository;
+approval to open one here does not cover the others.
 
 ## Writing
 
@@ -55,7 +91,17 @@ follow-up work.
 
 - Keep one concern per pull request. If an honest description needs the word
   "also," split the work.
-- Every pull request that changes what a user sees must include evidence, as
+- Pull requests are welcome from people who have had one merged in a Silo
+  repository, or when a maintainer asks for one; the contribution-gate workflow
+  closes others without review. A feature (`feat`) pull request from someone
+  without triage or write access must link an issue in the same repository
+  labeled `accepted`. For anyone without triage or write access, the gate also
+  closes drafts, and the evidence-deadline workflow closes a pull request whose
+  `Evidence` check still asks for evidence 24 hours after it opens, so open it
+  ready for review and publish evidence right away. Feature ideas go in
+  Discussions → Ideas, not issues.
+- Every pull request must include evidence. One that changes what a user sees
+  shows the change, as
   [Show visible changes](CONTRIBUTING.md#show-visible-changes) defines. That
   covers UI and UX changes and changes to which items appear or what they show,
   such as search results, home sections, recommendations, sorting, filtering,
@@ -63,8 +109,8 @@ follow-up work.
   same data, and a short recording when motion, timing, or focus matters.
   Capture each device the change can reach: an Android phone, an Android
   tablet, an Android foldable (folded and open), and Android TV, or say why a
-  device is unaffected. Write
-  `Evidence: none, no user-visible change` only when that is true.
+  device is unaffected. A change nobody sees shows the steps run, the build or
+  commit, and trimmed test results.
 - Attach evidence on GitHub under the PR body's Evidence heading, or publish it
   with `npx @silo-server/evidence publish <folder> --pr <number>` and put its
   `Evidence:` link there. Only Silo maintainers and the pull request's author can

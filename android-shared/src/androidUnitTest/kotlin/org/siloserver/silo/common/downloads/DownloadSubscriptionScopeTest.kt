@@ -8,11 +8,13 @@ class DownloadSubscriptionScopeTest {
     @Test
     fun explicitInputScopeWinsOverActiveScope() {
         assertEquals(
-            "srv-1" to "prof-1",
+            Triple("srv-1", "acct-1", "prof-1"),
             downloadSubscriptionScope(
                 inputServerId = "srv-1",
+                inputAccountId = "acct-1",
                 inputProfileId = "prof-1",
                 activeServerId = "srv-2",
+                activeAccountId = "acct-2",
                 activeProfileId = "prof-2",
             ),
         )
@@ -21,11 +23,13 @@ class DownloadSubscriptionScopeTest {
     @Test
     fun periodicRunWithoutInputUsesActiveScope() {
         assertEquals(
-            "srv-2" to "prof-2",
+            Triple("srv-2", "acct-2", "prof-2"),
             downloadSubscriptionScope(
                 inputServerId = null,
+                inputAccountId = null,
                 inputProfileId = null,
                 activeServerId = "srv-2",
+                activeAccountId = "acct-2",
                 activeProfileId = "prof-2",
             ),
         )
@@ -34,11 +38,13 @@ class DownloadSubscriptionScopeTest {
     @Test
     fun missingScopesFallBackToDownloadDefaults() {
         assertEquals(
-            DownloadEnqueuer.DEFAULT_SERVER_ID to DownloadEnqueuer.DEFAULT_PROFILE_ID,
+            Triple(DownloadEnqueuer.DEFAULT_SERVER_ID, "", DownloadEnqueuer.DEFAULT_PROFILE_ID),
             downloadSubscriptionScope(
                 inputServerId = null,
+                inputAccountId = null,
                 inputProfileId = null,
                 activeServerId = null,
+                activeAccountId = null,
                 activeProfileId = null,
             ),
         )
@@ -49,11 +55,13 @@ class DownloadSubscriptionScopeTest {
         // A one-shot enqueue always sets both keys; a lone value is stale
         // data and must not mix scopes (e.g. input server + active profile).
         assertEquals(
-            "srv-2" to "prof-2",
+            Triple("srv-2", "acct-2", "prof-2"),
             downloadSubscriptionScope(
                 inputServerId = "srv-1",
+                inputAccountId = "acct-1",
                 inputProfileId = null,
                 activeServerId = "srv-2",
+                activeAccountId = "acct-2",
                 activeProfileId = "prof-2",
             ),
         )

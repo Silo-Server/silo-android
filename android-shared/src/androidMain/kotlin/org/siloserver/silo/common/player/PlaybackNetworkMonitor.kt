@@ -28,12 +28,21 @@ data class PlaybackNetworkSnapshot(
     val vpn: Boolean = false,
     /**
      * Media3's throughput estimate from completed transfers, for diagnostics
-     * only: it starts as a guess from the network type, and loads that stall
-     * on a full buffer understate the link. Playback requests never carry it.
+     * only (route events and the diagnostics bundle): it starts as a guess
+     * from the network type, and loads that stall on a full buffer understate
+     * the link. Playback requests never carry it; the only estimate they send
+     * is the bandwidth probe's, from
+     * [org.siloserver.silo.common.player.probe.BandwidthProbeScheduler].
      */
     val bandwidthEstimateKbps: Int? = null,
     /** OS-reported link capacity, useful only as diagnostics. */
     val linkDownstreamKbps: Int? = null,
+    /**
+     * The default network's `Network.getNetworkHandle()`, or null with no
+     * connection. Android gives every new connection a new handle, so a
+     * change means another network even when the transport is the same.
+     */
+    val networkId: Long? = null,
 )
 
 fun interface PlaybackNetworkEvidenceProvider {
@@ -49,9 +58,10 @@ fun interface PlaybackNetworkEvidenceProvider {
 }
 
 /**
- * Process-wide network evidence for the phone's cellular quality choice and
- * for diagnostics (route events and the diagnostics bundle). Playback requests
- * carry no bandwidth estimate.
+ * Process-wide network evidence for the phone's cellular quality choice, the
+ * bandwidth probe's gates and cache, and diagnostics (route events and the
+ * diagnostics bundle). Media3's throughput estimate stays diagnostics-only:
+ * playback requests never carry it.
  *
  * A measured estimate is cleared when Android changes the default network so
  * Wi-Fi throughput is not reported against a cellular/VPN route. We do not
@@ -115,6 +125,7 @@ class PlaybackNetworkMonitor(
         _state.value = playbackNetworkSnapshot(
             caps = caps.takeIf { network != null },
             bandwidthEstimateKbps = measuredBitrateBps?.toKbpsInt(),
+            networkId = network?.networkHandle,
         )
     }
 
@@ -126,6 +137,7 @@ class PlaybackNetworkMonitor(
 internal fun playbackNetworkSnapshot(
     caps: NetworkCapabilities?,
     bandwidthEstimateKbps: Int? = null,
+    networkId: Long? = null,
 ): PlaybackNetworkSnapshot = PlaybackNetworkSnapshot(
     connected = caps != null,
     validated = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true,
@@ -135,6 +147,7 @@ internal fun playbackNetworkSnapshot(
     vpn = caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true,
     bandwidthEstimateKbps = bandwidthEstimateKbps,
     linkDownstreamKbps = caps?.linkDownstreamBandwidthKbps?.takeIf { it > 0 },
+    networkId = networkId.takeIf { caps != null },
 )
 
 private fun NetworkCapabilities?.transportName(): String = when {

@@ -17,6 +17,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -25,6 +26,7 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.repository.WatchTogetherConnectionState
 import org.siloserver.silo.tv.ui.components.TvDialogAction
 import org.siloserver.silo.tv.ui.components.TvDialogActionStyle
@@ -67,7 +69,7 @@ internal fun TvWatchPartyConfirmDialog(
     confirmLabel: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
-    cancelLabel: String = "Cancel",
+    cancelLabel: String = stringResource(CommonR.string.common_cancel),
     destructive: Boolean = false,
     focusConfirm: Boolean = false,
 ) {
@@ -125,7 +127,13 @@ internal fun rememberTvWatchPartyReconnectNotice(
         }
     }
     if (!down || !shown) return null
-    return if (connection.epoch == 0L) "Connecting to the party…" else "Reconnecting to the party…"
+    return stringResource(
+        if (connection.epoch == 0L) {
+            CommonR.string.watchParty_connection_connectingToParty
+        } else {
+            CommonR.string.watchParty_banner_reconnecting
+        },
+    )
 }
 
 internal const val TV_WATCH_PARTY_RECONNECT_NOTICE_DELAY_MS = 2_000L

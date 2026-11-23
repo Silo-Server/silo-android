@@ -10,19 +10,21 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.model.section.ProfileSectionSetting
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.ProfileHomeLayoutRepository
 
 data class HomeSectionsEditorState(
     val isLoading: Boolean = true,
     /** The profile's Home rows in display order, hidden rows included. */
     val rows: List<ProfileSectionSetting> = emptyList(),
-    val loadError: String? = null,
+    val loadError: UiText? = null,
     /** The last change that could not be saved; unless a later change carries it, the rows are back as the server has them. */
-    val saveError: String? = null,
+    val saveError: UiText? = null,
 )
 
 /**
@@ -72,7 +74,7 @@ class HomeSectionsEditorViewModel(private val repository: ProfileHomeLayoutRepos
                         it.copy(
                             isLoading = false,
                             rows = emptyList(),
-                            loadError = result.errorMessage("Could not load Home sections."),
+                            loadError = result.errorText(SharedString.HomeEditorLoadFailed),
                         )
                     }
                 }
@@ -124,7 +126,7 @@ class HomeSectionsEditorViewModel(private val repository: ProfileHomeLayoutRepos
                             // whole list itself; only the last change's list
                             // goes back, to what the server has.
                             rows = if (edit == rowsGeneration) confirmed else state.rows,
-                            saveError = result.errorMessage("Could not save Home sections."),
+                            saveError = result.errorText(SharedString.HomeEditorSaveFailed),
                         )
                     }
                 }

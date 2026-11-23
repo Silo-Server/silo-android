@@ -9,6 +9,12 @@ data class DeviceLoginStartRequest(
     @SerialName("device_platform") val devicePlatform: String? = null,
     @SerialName("client_purpose") val clientPurpose: String? = null,
     val temporary: Boolean? = null,
+    /**
+     * Session binding: base64url (no padding) of SHA-256 of the pairing
+     * session's secret. Sent only to servers whose capability reports
+     * `session_binding`; omitted otherwise.
+     */
+    val binding: String? = null,
 )
 
 /**
@@ -35,6 +41,8 @@ data class DeviceLoginStartResponse(
 @Serializable
 data class DeviceLoginPollRequest(
     @SerialName("device_code") val deviceCode: String,
+    /** The session secret behind the start request's `binding`, base64url without padding. */
+    @SerialName("binding_secret") val bindingSecret: String? = null,
 )
 
 /**
@@ -87,6 +95,12 @@ data class DeviceLoginLookupResponse(
     @SerialName("server_id") val serverId: String? = null,
     /** Display name of the issuing server, for the approval card. */
     @SerialName("server_name") val serverName: String? = null,
+    /**
+     * The request's session binding, when the device started it with one.
+     * A phone approving several requests from one TV session trusts a
+     * binding only from a request the person compared.
+     */
+    val binding: String? = null,
 )
 
 /**
@@ -102,6 +116,8 @@ data class DeviceLoginCapabilityResponse(
     val deviceLoginAvailable: Boolean = true,
     val cancel: Boolean = false,
     val openedSignal: Boolean = false,
+    /** The server checks a session binding on start and poll. */
+    val sessionBinding: Boolean = false,
 )
 
 @Serializable

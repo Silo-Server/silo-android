@@ -14,6 +14,18 @@ import org.siloserver.silo.common.cast.SiloCastTarget
 /** The phone's rules for a TV that keeps several controllers (silo-apple SiloControlPhonePolicy). */
 class SiloCastPhonePolicyTest {
     private val target = SiloCastTarget(deviceId = "tv-1", name = "Living Room", host = "10.0.0.2", port = 4711, version = 2)
+    /** The catalog's English wording (cast.replace.*), as the app's resources give it. */
+    private object EnglishText : SiloCastReplaceText {
+        override val replace = "Replace"
+        override fun resolve(text: SiloCastText) = (text as SiloCastText.Verbatim).text
+        override fun playOn(tv: String) = "Play on $tv"
+        override fun tvIsPlaying(tv: String, title: String) = "$tv is playing $title. Playing this will stop it."
+        override fun someoneWatchingSomething(tv: String) = "Someone is watching something on $tv. Play yours instead?"
+        override fun someoneWatching(title: String, tv: String) = "Someone is watching $title on $tv. Play yours instead?"
+        override fun profileWatching(profile: String, title: String, tv: String) =
+            "$profile is watching $title on $tv. Play yours instead?"
+    }
+
     private val request = SiloCastLaunchRequest(
         serverId = "srv-1",
         playback = SiloCastPlaybackRequest(contentId = "miasma", startFromBeginning = true),
@@ -51,10 +63,10 @@ class SiloCastPhonePolicyTest {
             target,
             request,
             SiloCastNowPlayingSummary(contentId = "oak", title = "Oak Street", subtitle = "Season 1", profileName = "Alex"),
-            fallbackMessage = "Alex is watching Oak Street on this TV.",
+            fallbackMessage = SiloCastText.Verbatim("Alex is watching Oak Street on this TV."),
         )
-        assertEquals("Alex is watching Season 1 · Oak Street on Living Room. Play yours instead?", pending.message)
-        assertEquals("Replace", pending.confirmLabel)
+        assertEquals("Alex is watching Season 1 · Oak Street on Living Room. Play yours instead?", pending.message(EnglishText))
+        assertEquals("Replace", pending.confirmLabel(EnglishText))
         assertEquals(SiloCastReplaceConsent(contentId = "oak"), pending.consent)
         assertEquals(request, pending.request)
     }
@@ -63,10 +75,10 @@ class SiloCastPhonePolicyTest {
     fun aPromptWithoutAProfileNameOrSummaryStillReads() {
         assertEquals(
             "Someone is watching Oak Street on Living Room. Play yours instead?",
-            SiloCastReplacePrompt.tvMessage(SiloCastNowPlayingSummary(title = "Oak Street"), "Living Room", null),
+            SiloCastReplacePrompt.tvMessage(SiloCastNowPlayingSummary(title = "Oak Street"), "Living Room", null, EnglishText),
         )
-        val fallback = SiloCastReplacePrompt.fromTv(target, request, nowPlaying = null, fallbackMessage = "Taken.")
-        assertEquals("Taken.", fallback.message)
+        val fallback = SiloCastReplacePrompt.fromTv(target, request, nowPlaying = null, fallbackMessage = SiloCastText.Verbatim("Taken."))
+        assertEquals("Taken.", fallback.message(EnglishText))
         assertNull(fallback.consent.contentId)
     }
 
@@ -78,8 +90,8 @@ class SiloCastPhonePolicyTest {
         assertFalse(SiloCastReplacePrompt.replacesPlayingTitle("", "miasma"))
 
         val pending = SiloCastReplacePrompt.beforeSending(target, request, currentContentId = "oak", currentTitle = "Oak Street")
-        assertEquals("Living Room is playing Oak Street. Playing this will stop it.", pending.message)
-        assertEquals("Play on Living Room", pending.confirmLabel)
+        assertEquals("Living Room is playing Oak Street. Playing this will stop it.", pending.message(EnglishText))
+        assertEquals("Play on Living Room", pending.confirmLabel(EnglishText))
         assertEquals(SiloCastReplaceConsent(contentId = "oak"), pending.consent)
     }
 

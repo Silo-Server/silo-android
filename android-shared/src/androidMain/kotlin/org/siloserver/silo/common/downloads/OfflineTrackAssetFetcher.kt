@@ -65,6 +65,7 @@ internal class OfflineTrackAssetFetcher(
     suspend fun fetch(
         downloadId: String,
         serverId: String,
+        accountId: String,
         profileId: String,
         fileId: Int,
         configure: HttpRequestBuilder.() -> Unit,
@@ -73,7 +74,7 @@ internal class OfflineTrackAssetFetcher(
         val body = fetchManifestBody(downloadId, configure) ?: return null
         val manifest = decodeOfflineManifestTracks(body) ?: return null
 
-        val directory = storage.offlineSubtitleDirectory(serverId, profileId, fileId)
+        val directory = storage.offlineSubtitleDirectory(serverId, accountId, profileId, fileId)
         // A replaced download (new revision) must not keep the previous
         // revision's sidecars around under the same file slot.
         directory?.deleteRecursively()
@@ -84,7 +85,7 @@ internal class OfflineTrackAssetFetcher(
                 fetchSubtitle(downloadId, ordinal, subtitle, directory, configure)
             }
         }
-        val artwork = fetchArtwork(downloadId, serverId, profileId, fileId, decodeOfflineManifestArtwork(body), configure)
+        val artwork = fetchArtwork(downloadId, serverId, accountId, profileId, fileId, decodeOfflineManifestArtwork(body), configure)
         return OfflineAssets(tracks = manifest.toOfflineTrackInfo(saved), artwork = artwork)
     }
 
@@ -126,12 +127,13 @@ internal class OfflineTrackAssetFetcher(
     private suspend fun fetchArtwork(
         downloadId: String,
         serverId: String,
+        accountId: String,
         profileId: String,
         fileId: Int,
         manifest: OfflineManifestArtwork?,
         configure: HttpRequestBuilder.() -> Unit,
     ): OfflineArtworkFiles {
-        val directory = storage.offlineArtworkDirectory(serverId, profileId, fileId)
+        val directory = storage.offlineArtworkDirectory(serverId, accountId, profileId, fileId)
         // Same slot, new revision: drop the previous revision's images first.
         directory?.deleteRecursively()
         if (manifest == null) return OfflineArtworkFiles()

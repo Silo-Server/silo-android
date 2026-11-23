@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.tv.ui.shell.TvLibraryTabType
@@ -22,9 +23,9 @@ import kotlinx.coroutines.flow.first
  * per server, per type, so reopening a tab lands on the user's last choice
  * instead of snapping back to the first library.
  *
- * Storage mirrors [TvLibrarySelectionStore]: a file-per-profile DataStore
- * (hashed profileId in the filename) so two profiles never clobber each
- * other. Within that file, each scope is partitioned by a key combining the
+ * Storage mirrors [TvLibrarySelectionStore]: a file-per-(account, profile)
+ * DataStore (account token and hashed profileId in the filename) so two
+ * profiles never clobber each other. Within that file, each scope is partitioned by a key combining the
  * active serverId and the [TvLibraryTabType] — matching tvOS's
  * `serverId·profileId·type` keying so two servers under one profile keep
  * independent scopes.
@@ -35,19 +36,22 @@ import kotlinx.coroutines.flow.first
 class TvLibraryScopeStore(
     private val context: Context,
     private val tokenManager: TokenManager,
-    private val dataStoreFactory: (profileId: String) -> DataStore<Preferences> = { profileId ->
+    private val dataStoreFactory: (accountId: String?, profileId: String) -> DataStore<Preferences> = { accountId, profileId ->
         PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(fileNameFor(profileId)) },
+            produceFile = { context.preferencesDataStoreFile(fileNameFor(accountId, profileId)) },
         )
     },
 ) {
 
     private val storeCache = mutableMapOf<String, DataStore<Preferences>>()
 
-    private fun storeFor(profileId: String): DataStore<Preferences> =
-        synchronized(storeCache) {
-            storeCache.getOrPut(profileId) { dataStoreFactory(profileId) }
+    /** The active account's file for [profileId]: profile ids repeat across accounts. */
+    private suspend fun storeFor(profileId: String): DataStore<Preferences> {
+        val accountId = tokenManager.getCurrentAccountId()
+        return synchronized(storeCache) {
+            storeCache.getOrPut(fileNameFor(accountId, profileId)) { dataStoreFactory(accountId, profileId) }
         }
+    }
 
     /**
      * The persisted library id for [type] under the active profile/server,
@@ -139,9 +143,12 @@ class TvLibraryScopeStore(
         private fun showAudiobooksKey(serverId: String) =
             androidx.datastore.preferences.core.booleanPreferencesKey("show_audiobooks_$serverId")
 
+        /** Per (account, profile); `AccountLocalData` adopts and purges these files. */
+        const val FILE_BASE = "tv_library_scope"
+
         // Filename pattern aligns with [TvLibrarySelectionStore.fileNameFor].
-        private fun fileNameFor(profileId: String): String =
-            "tv_library_scope_${profileHash(profileId)}"
+        private fun fileNameFor(accountId: String?, profileId: String): String =
+            AccountScopedKeys.profileFileName(FILE_BASE, accountId, profileHash(profileId))
 
         private fun profileHash(profileId: String): String =
             java.security.MessageDigest.getInstance("SHA-256")

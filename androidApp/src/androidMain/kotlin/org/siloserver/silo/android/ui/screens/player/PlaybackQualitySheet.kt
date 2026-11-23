@@ -5,7 +5,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.PlaybackQualityOption
 import org.siloserver.silo.model.playback.activePlaybackQualityId
 import org.siloserver.silo.model.playback.reportedQuality
@@ -39,6 +42,8 @@ internal val PlayerViewModel.PlayerUiState.qualityPreference: String?
 fun PlaybackQualitySheet(
     options: List<PlaybackQualityOption>,
     activeId: String?,
+    // Auto plays under a limit learned from buffering; its row says so.
+    autoLimitedAfterBuffering: Boolean = false,
     // A Watch Party keeps every member on the room's file; quality still
     // applies to this device's stream.
     inRoom: Boolean,
@@ -49,19 +54,21 @@ fun PlaybackQualitySheet(
     val controller = rememberPlayerMenuController(onDismiss)
 
     PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
-        PlayerPanelHeader(title = "Quality", onClose = { controller.dismiss() })
+        PlayerPanelHeader(title = stringResource(CommonR.string.options_quality), onClose = { controller.dismiss() })
         PlayerMenuScrollColumn(horizontalPadding = 12.dp) {
             if (inRoom) {
-                PlayerFootnote(
-                    "Watch Party keeps everyone on the same version. " +
-                        "You can adjust your streaming quality below.",
-                )
+                PlayerFootnote(stringResource(CommonR.string.player_quality_roomNote))
             }
             Spacer(Modifier.height(8.dp))
             PlayerGroup {
+                val autoLimitedLabel = stringResource(CommonR.string.bufferingQuality_autoLimited)
                 options.forEachIndexed { index, option ->
                     PlayerCheckRow(
-                        label = option.name,
+                        label = if (autoLimitedAfterBuffering && option.id == PLAYBACK_QUALITY_AUTO) {
+                            autoLimitedLabel
+                        } else {
+                            option.name
+                        },
                         detail = option.bitrateLabel,
                         selected = option.id == activeId,
                         onClick = {

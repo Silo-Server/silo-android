@@ -1,8 +1,7 @@
 package org.siloserver.silo.android.ui.screens.home
 
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.domain.settings.CatalogLanguageRevision
-import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
-import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,9 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.SettingsRemote
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -54,15 +51,20 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil3.imageLoader
 import coil3.request.ImageRequest
+import org.siloserver.silo.android.ui.navigation.ReportBottomNavPageTop
+import org.siloserver.silo.android.ui.components.TabContentGap
+import org.siloserver.silo.android.ui.components.TabContentTop
+import org.siloserver.silo.android.ui.components.TabHeaderRowHeight
 import org.siloserver.silo.android.ui.components.TopBarEdgeMargin
+import org.siloserver.silo.android.ui.components.TopBarRemoteControl
 import org.siloserver.silo.android.ui.components.TopBarRowTopInset
 import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.android.ui.components.SiloWordmark
 import org.siloserver.silo.android.ui.components.TabTopBarActions
-import org.siloserver.silo.android.ui.components.TopBarIconButton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
@@ -75,6 +77,7 @@ import org.siloserver.silo.android.ui.components.MediaRowSkeleton
 import org.siloserver.silo.android.ui.components.ProfileMenu
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.diagnostics.DiagnosticsHomeContentState
 import org.siloserver.silo.common.diagnostics.DiagnosticsHomeLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsHomeScrollRegion
@@ -94,6 +97,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.i18n.text
 
 private data class SeriesWarmTarget(
     val seriesId: String,
@@ -123,20 +127,20 @@ fun HomeScreen(
     onItemClick: (String) -> Unit,
     onContinueWatchingItemClick: (SectionItem) -> Unit,
     onPlayClick: (String, Double?) -> Unit,
-    onBottomNavMinimizedChange: (Boolean) -> Unit = {},
+    /** Opens a row's full page ("Explore all"). */
+    onExploreSection: ((org.siloserver.silo.model.section.ResolvedSection) -> Unit)? = null,
+    /** Opens a card of a row of collections. */
+    onCollectionClick: ((org.siloserver.silo.model.section.SectionCollectionCard) -> Unit)? = null,
     viewModel: HomeViewModel,
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
-    onRemoteControlClick: () -> Unit,
-    onRemoteChooseTvClick: () -> Unit,
-    onRemoteDisconnectClick: () -> Unit,
-    isRemoteControlActive: Boolean,
+    remoteControl: TopBarRemoteControl,
     onRequestsClick: (() -> Unit)?,
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    onSignOutClick: (removeServer: Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -145,10 +149,11 @@ fun HomeScreen(
     val activeEntry by serverRegistry.activeEntry.collectAsState()
     val sections = state.sections
     val profileScopeId = activeEntry?.profileId ?: activeProfile?.id
+    val activeAccountId = activeEntry?.accountId
     // No hero billboard on phone (matches iOS): a `featured` section is just
     // another row. The server already orders and hides rows for this
     // profile, so Home shows its populated rows exactly in that order.
-    val regularSections = remember(sections) { sections.filter { it.items.isNotEmpty() } }
+    val regularSections = remember(sections) { sections.filter { it.hasCards } }
     val context = LocalContext.current
     val catalogRepository: CatalogRepository = koinInject()
     val catalogLanguage: CatalogLanguageRevision = koinInject()
@@ -182,10 +187,10 @@ fun HomeScreen(
             .take(4)
             .toList()
     }
-    var warmedSeriesArtwork by remember(activeServerId, profileScopeId, languageRevision) {
+    var warmedSeriesArtwork by remember(activeServerId, activeAccountId, profileScopeId, languageRevision) {
         mutableStateOf<Map<String, WarmedSeriesArtwork>>(emptyMap())
     }
-    LaunchedEffect(activeServerId, profileScopeId, languageRevision, seriesWarmTargets) {
+    LaunchedEffect(activeServerId, activeAccountId, profileScopeId, languageRevision, seriesWarmTargets) {
         // Warm each Continue Watching and Next Up series in row order. Within one
         // title, its parent detail, exact episode and selector data run in
         // parallel. CatalogRepository keeps these calls alive/single-flight if
@@ -262,30 +267,8 @@ fun HomeScreen(
     }
 
     val listState = rememberLazyListState()
+    ReportBottomNavPageTop(listState)
     val currentDiagnosticsSections by rememberUpdatedState(regularSections)
-    val currentBottomNavCallback by rememberUpdatedState(onBottomNavMinimizedChange)
-    LaunchedEffect(listState) {
-        var previousIndex = listState.firstVisibleItemIndex
-        var previousOffset = listState.firstVisibleItemScrollOffset
-        snapshotFlow {
-            Triple(
-                listState.firstVisibleItemIndex,
-                listState.firstVisibleItemScrollOffset,
-                listState.isScrollInProgress,
-            )
-        }.collect { (index, offset, isScrolling) ->
-            val isAtTop = index == 0 && offset == 0
-            if (isAtTop) {
-                currentBottomNavCallback(false)
-            } else if (isScrolling) {
-                val movingDown = index > previousIndex ||
-                    (index == previousIndex && offset > previousOffset)
-                if (movingDown) currentBottomNavCallback(true)
-            }
-            previousIndex = index
-            previousOffset = offset
-        }
-    }
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
             .distinctUntilChanged()
@@ -322,12 +305,12 @@ fun HomeScreen(
         when {
             state.isLoading && regularSections.isEmpty() -> HomeLoadingSkeleton()
             state.error != null && regularSections.isEmpty() -> ErrorView(
-                message = state.error ?: "Something went wrong",
+                message = state.error?.text() ?: stringResource(CommonR.string.status_errorGeneric),
                 onRetry = { viewModel.loadSections() },
             )
             regularSections.isEmpty() -> EmptyStateView(
-                title = "Nothing to watch yet",
-                subtitle = "Add media to your libraries or start watching to see it here.",
+                title = stringResource(CommonR.string.home_empty),
+                subtitle = stringResource(CommonR.string.home_emptyBody),
             )
             else -> PullToRefreshBox(
                 isRefreshing = state.isRefreshing,
@@ -348,20 +331,25 @@ fun HomeScreen(
                         // iOS `sectionSpacing` = SiloTheme.largePadding (24).
                         verticalArrangement = Arrangement.spacedBy(24.dp),
                     ) {
-                        // Reserve runway under the floating header so the first row
-                        // doesn't slide under the status-bar chrome. iOS runway =
-                        // topInset + 40 + smallPadding(8) + largePadding(24) +
-                        // smallPadding(8) - headerTopReclaim(16) = topInset + 64.
+                        // The wordmark sits in the header row; the space below
+                        // it covers the pill band Libraries and For You use, so
+                        // the first row starts at TabContentTop on every tab.
                         item(key = "homeIdentity") {
-                            Row(
+                            Box(
                                 modifier = Modifier
                                     .windowInsetsPadding(WindowInsets.statusBars)
                                     .fillMaxWidth()
-                                    .height(64.dp)
-                                    .padding(horizontal = 16.dp),
-                                verticalAlignment = Alignment.Top,
+                                    .height(TabContentTop - TabContentGap),
                             ) {
-                                SiloWordmark()
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(TabHeaderRowHeight)
+                                        .padding(horizontal = TopBarEdgeMargin),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    SiloWordmark()
+                                }
                             }
                         }
 
@@ -400,6 +388,9 @@ fun HomeScreen(
                                                     thumbhash = it.backdropThumbhash
                                                         ?: it.posterThumbhash,
                                                 )
+                                            }
+                                            ?: item.seriesHeroBackdrop()?.let {
+                                                WarmedSeriesArtwork(url = it.url, thumbhash = it.thumbhash)
                                             }
                                         // MediaRow hands off the episode still, which
                                         // the series page never shows. Load with the
@@ -440,6 +431,9 @@ fun HomeScreen(
                                 onToggleFavorite = viewModel::toggleFavorite,
                                 onToggleWatchlist = viewModel::toggleWatchlist,
                                 onRemoveFromHome = viewModel::dismissFromHome,
+                                onExploreAllClick = onExploreSection?.let { open -> { open(section) } },
+                                onCollectionClick = onCollectionClick,
+                                activeProfileId = profileScopeId,
                             )
                         }
 
@@ -457,15 +451,12 @@ fun HomeScreen(
         HomeFloatingChrome(
             activeProfile = activeProfile,
             onSearchClick = onSearchClick,
-            onRemoteControlClick = onRemoteControlClick,
-            onRemoteChooseTvClick = onRemoteChooseTvClick,
-            onRemoteDisconnectClick = onRemoteDisconnectClick,
-            isRemoteControlActive = isRemoteControlActive,
+            remoteControl = remoteControl,
             onRequestsClick = onRequestsClick,
             onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
-            onSwitchServerClick = onSwitchServerClick,
+            onChangeAccountClick = onChangeAccountClick,
             onSignOutClick = onSignOutClick,
         )
 
@@ -482,7 +473,7 @@ private fun HomeLoadingSkeleton() {
         Spacer(
             modifier = Modifier
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .height(64.dp),
+                .height(TabContentTop - TabContentGap),
         )
         repeat(4) {
             MediaRowSkeleton(progress = shimmer)
@@ -494,91 +485,35 @@ private fun HomeLoadingSkeleton() {
 private fun HomeFloatingChrome(
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
-    onRemoteControlClick: () -> Unit,
-    onRemoteChooseTvClick: () -> Unit,
-    onRemoteDisconnectClick: () -> Unit,
-    isRemoteControlActive: Boolean,
+    remoteControl: TopBarRemoteControl,
     onRequestsClick: (() -> Unit)?,
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    onSignOutClick: (removeServer: Boolean) -> Unit,
 ) {
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
     Box(modifier = Modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier
                 .padding(top = statusBarPadding.calculateTopPadding() + TopBarRowTopInset)
-                .padding(start = TopBarEdgeMargin, end = TopBarEdgeMargin, bottom = 8.dp)
-                .fillMaxWidth(),
+                .padding(start = TopBarEdgeMargin, end = TopBarEdgeMargin)
+                .fillMaxWidth()
+                .height(TabHeaderRowHeight),
         ) {
             // The SILO identity scrolls with the feed; only utilities remain pinned.
             TabTopBarActions(
                 modifier = Modifier.align(Alignment.CenterEnd),
                 activeProfile = activeProfile,
+                remoteControl = remoteControl,
                 onSearchClick = onSearchClick,
                 onRequestsClick = onRequestsClick,
                 onWatchPartyClick = onWatchPartyClick,
                 onSettingsClick = onSettingsClick,
                 onSwitchProfileClick = onSwitchProfileClick,
-                onSwitchServerClick = onSwitchServerClick,
+                onChangeAccountClick = onChangeAccountClick,
                 onSignOutClick = onSignOutClick,
-                leadingActions = {
-                    // Mirrors Apple's SiloControlModeButton: chrome-free at rest,
-                    // filled disc while controlling a TV; the active state opens a
-                    // menu instead of jumping straight to the remote.
-                    Box {
-                        var remoteMenuExpanded by remember { mutableStateOf(false) }
-                        TopBarIconButton(
-                            onClick = {
-                                if (isRemoteControlActive) {
-                                    remoteMenuExpanded = true
-                                } else {
-                                    onRemoteControlClick()
-                                }
-                            },
-                            isActive = isRemoteControlActive,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.SettingsRemote,
-                                contentDescription = "Remote Control",
-                            )
-                        }
-                        SiloDropdownMenu(
-                            expanded = remoteMenuExpanded,
-                            onDismissRequest = { remoteMenuExpanded = false },
-                        ) {
-                            SiloDropdownMenuItem(
-                                text = { Text("Remote Control") },
-                                onClick = {
-                                    remoteMenuExpanded = false
-                                    onRemoteControlClick()
-                                },
-                            )
-                            SiloDropdownMenuItem(
-                                text = { Text("Choose TV") },
-                                onClick = {
-                                    remoteMenuExpanded = false
-                                    onRemoteChooseTvClick()
-                                },
-                            )
-                            HorizontalDivider()
-                            SiloDropdownMenuItem(
-                                text = {
-                                    Text(
-                                        "Turn Off Control Mode",
-                                        color = MaterialTheme.colorScheme.error,
-                                    )
-                                },
-                                onClick = {
-                                    remoteMenuExpanded = false
-                                    onRemoteDisconnectClick()
-                                },
-                            )
-                        }
-                    }
-                },
             )
         }
     }

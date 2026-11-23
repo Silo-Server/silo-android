@@ -31,16 +31,36 @@ val networkModule = module {
     single { org.siloserver.silo.repository.ImageCapabilitiesSession(get(), get(), get()) }
     // The apps bind an ArtworkLayout; without one, reads carry no artwork widths.
     single { org.siloserver.silo.repository.ArtworkSizing(getOrNull(), get()) }
-    single { AuthApi(get(), get()) }
+    single {
+        AuthApi(
+            client = get(),
+            apiV2Gate = get(),
+            // The password change must never be resent by the engine.
+            nonReplayingClient = createSiloClient(
+                tokenManager = get(),
+                deviceMetadataProvider = getOrNull(),
+                diagnosticsObserver = getOrNull(),
+                cleartextOriginConsent = getOrNull(),
+                retryOnConnectionFailure = false,
+                accessChangeSignals = get(),
+            ),
+        )
+    }
     single { OnboardingApi(get(), get(), get()) }
     single<DeviceLoginApi> { DefaultDeviceLoginApi(get(), get()) }
     single<ServerIdentityApi> { DefaultServerIdentityApi(get()) }
+    // /me with a token not saved yet, on a client without the Silo auth plugin.
+    single { UnsavedSessionAccountReader() }
     single<org.siloserver.silo.network.api.ExternalSignInApi> {
         org.siloserver.silo.network.api.DefaultExternalSignInApi(get(), get())
     }
     single { CatalogV2Api(get(), get(), get()) }
+    single { org.siloserver.silo.network.apiv2.ThemeMusicV2Api(get(), get(), get()) }
     single { PersonRefreshV2Api(get(), get(), get()) }
     single { WatchDetailV2Api(get(), get(), get()) }
+    single<org.siloserver.silo.playback.trickplay.TrickplayManifestSource> {
+        org.siloserver.silo.network.apiv2.TrickplayV2Api(get(), get(), get())
+    }
     single { CatalogApi(get(), get(), get(), get()) }
     single { PersonalDataApi(get(), get(), get()) }
     single { CollectionApi(get(), get(), get()) }
@@ -48,7 +68,8 @@ val networkModule = module {
     single { LibrarySectionItemsV2Api(get(), get(), get()) }
     single { HomeSectionsV2Api(get(), get(), get()) }
     single { org.siloserver.silo.network.apiv2.ProfileSectionsV2Api(get(), get(), get()) }
-    single { SectionApi(get(), get(), get(), get()) }
+    single { org.siloserver.silo.network.api.SectionRowItemLimit(get<HomeSectionsV2Api>()) }
+    single { SectionApi(get(), get(), get(), get(), get()) }
     single { SimilarCardsV2Api(get(), get(), get()) }
     single { TasteProfileV2Api(get(), get(), get()) }
     single { DiscoverV2Api(get(), get(), get()) }
@@ -56,6 +77,9 @@ val networkModule = module {
     single { RecommendationApi(get(), get(), get(), get()) }
     single<RequestsApi> { DefaultRequestsApi(get(), get(), get()) }
     single<MetadataAiApi> { DefaultMetadataAiApi(get(), get(), get()) }
+    single<org.siloserver.silo.network.api.RatingsCapabilityApi> {
+        org.siloserver.silo.network.api.DefaultRatingsCapabilityApi(get(), get(), get())
+    }
     single { EventsSocketV2Api(get(), get(), get(), getOrNull()) }
     single<HomeRealtimeClient> { DefaultHomeRealtimeClient(get()) }
     single<CalendarApi> { DefaultCalendarApi(get(), get(), get()) }

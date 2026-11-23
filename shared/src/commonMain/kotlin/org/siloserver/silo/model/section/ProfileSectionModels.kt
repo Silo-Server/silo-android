@@ -17,6 +17,9 @@ data class ProfileSectionSetting(
     @SerialName("section_type") val sectionType: String = "",
     val title: String = "",
     @SerialName("default_title") val defaultTitle: String = "",
+    /** The catalog key whose English is [title], as on [ResolvedSection.titleKey]. */
+    @SerialName("title_key") val titleKey: String? = null,
+    @SerialName("title_args") val titleArgs: Map<String, String>? = null,
     val featured: Boolean = false,
     @SerialName("item_limit") val itemLimit: Int = 0,
     val hidden: Boolean = false,

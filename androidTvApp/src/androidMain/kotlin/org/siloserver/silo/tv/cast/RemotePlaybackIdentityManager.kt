@@ -2,6 +2,9 @@ package org.siloserver.silo.tv.cast
 
 import java.time.Instant
 import java.util.UUID
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -10,12 +13,14 @@ import org.siloserver.silo.cast.SiloCastHandoffChallenge
 import org.siloserver.silo.cast.SiloCastHandoffOffer
 import org.siloserver.silo.cast.SiloCastHandoffReady
 import org.siloserver.silo.cast.SiloCastProtocol
+import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TemporaryAuthScope
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.DeviceLoginApi
+import org.siloserver.silo.network.api.ServerIdentityProbe
 
 /**
  * Owns the process-only identity installed while content launched by a phone
@@ -27,6 +32,12 @@ class RemotePlaybackIdentityManager(
     private val deviceLoginApi: DeviceLoginApi,
     private val tokenManager: TokenManager,
     private val deviceNameProvider: () -> String,
+    /** Classifies one address; production probes `GET /api/v2/system/identity`. */
+    private val identityProbe: suspend (serverUrl: String) -> ServerIdentityProbe = { ServerIdentityProbe.Unreachable },
+    /** This TV's own saved addresses for a deployment identity, the active server first. */
+    private val savedUrlsFor: suspend (serverIdentity: String) -> List<String> = { emptyList() },
+    /** Whether this TV approved a plain-HTTP origin; credentials go to no other. */
+    private val cleartextApproved: suspend (serverUrl: String) -> Boolean = { false },
 ) {
     data class ActiveIdentity(
         val generationId: String,
@@ -95,13 +106,14 @@ class RemotePlaybackIdentityManager(
 
         onFullHandoff()
 
-        val capability = deviceLoginApi.remotePlaybackCapabilityAt(offer.serverURL).successOrThrow()
+        val serverUrl = resolveServerUrl(offer)
+        val capability = deviceLoginApi.remotePlaybackCapabilityAt(serverUrl).successOrThrow()
         require(capability.remotePlaybackHandoff && SiloCastProtocol.version in capability.protocolVersions) {
             "The phone's Silo server does not support remote playback handoff."
         }
 
         val started = deviceLoginApi.startRemotePlaybackAt(
-            serverUrl = offer.serverURL,
+            serverUrl = serverUrl,
             deviceName = deviceNameProvider(),
             // Matches the X-Silo-Device-Platform header spelling.
             devicePlatform = "android-tv",
@@ -121,7 +133,7 @@ class RemotePlaybackIdentityManager(
 
         val deadlineMs = System.currentTimeMillis() + started.expiresIn.coerceAtLeast(1) * 1_000L
         while (System.currentTimeMillis() < deadlineMs) {
-            when (val result = deviceLoginApi.pollDeviceLoginAt(offer.serverURL, started.deviceCode)) {
+            when (val result = deviceLoginApi.pollDeviceLoginAt(serverUrl, started.deviceCode)) {
                 is ApiResult.Success -> {
                     val poll = result.data
                     when (poll.status) {
@@ -142,7 +154,7 @@ class RemotePlaybackIdentityManager(
                                 TemporaryAuthScope(
                                     generationId = generationId,
                                     serverId = offer.serverId,
-                                    serverUrl = normalizedUrl(offer.serverURL),
+                                    serverUrl = serverUrl,
                                     accessToken = accessToken,
                                     refreshToken = refreshToken,
                                     profileId = profileId,
@@ -163,7 +175,7 @@ class RemotePlaybackIdentityManager(
                             val active = ActiveIdentity(
                                 generationId = generationId,
                                 serverId = offer.serverId,
-                                serverUrl = normalizedUrl(offer.serverURL),
+                                serverUrl = serverUrl,
                                 serverName = offer.serverName,
                                 serverIdentity = offer.serverIdentity?.trim()?.takeIf { it.isNotEmpty() },
                                 profileId = profileId,
@@ -270,6 +282,67 @@ class RemotePlaybackIdentityManager(
         }
     }
 
+    /**
+     * The address this TV runs the handoff at. With a deployment identity the
+     * phone's address is one candidate (see [RemotePlaybackCandidatePolicy]):
+     * the first that reports the same identity from here wins, so a TV signed
+     * in over the LAN stays on the LAN while the phone uses a public address.
+     * Without one (an older phone) the phone's address is used as-is.
+     *
+     * Candidates are probed at once and judged in order, so stale addresses
+     * cost one probe timeout in total, well inside the phone's wait for the
+     * challenge (15 s on Android).
+     */
+    private suspend fun resolveServerUrl(offer: SiloCastHandoffOffer): String {
+        val offered = normalizedUrl(offer.serverURL)
+        val expected = offer.serverIdentity?.trim()?.takeIf { it.isNotEmpty() } ?: return offered
+        val saved = savedUrlsFor(expected).map(::normalizedUrl)
+        val candidates = RemotePlaybackCandidatePolicy.candidateUrls(
+            savedUrls = saved,
+            offeredUrl = offered,
+            endpointUrls = offer.serverEndpoints.orEmpty().map { it.url },
+        ) {
+            // The phone's own address keeps its old treatment; any other
+            // plain-HTTP address needs this TV's earlier approval.
+            it == offered || !isCleartext(it) || cleartextApproved(it)
+        }
+        return coroutineScope {
+            val probes = candidates.map { it to async { identityProbe(it) } }
+            try {
+                firstMatching(probes, offered, saved, expected)
+            } finally {
+                probes.forEach { (_, probe) -> probe.cancel() }
+            }
+        } ?: error("This TV can't reach ${offer.serverName?.takeIf { it.isNotBlank() } ?: "the phone's server"}.")
+    }
+
+    /** The first candidate, in order, whose answer qualifies it; see [resolveServerUrl]. */
+    private suspend fun firstMatching(
+        probes: List<Pair<String, Deferred<ServerIdentityProbe>>>,
+        offered: String,
+        saved: List<String>,
+        expected: String,
+    ): String? {
+        for ((candidate, probe) in probes) {
+            when (val answer = probe.await()) {
+                is ServerIdentityProbe.Identity -> {
+                    if (answer.serverId == expected) return candidate
+                    // The phone vouches for its addresses, so another server
+                    // answering at one ends the handoff. A saved address of
+                    // this TV's alone may since point elsewhere; it is skipped.
+                    if (candidate == offered || candidate !in saved) error("The phone's server address reached a different Silo server.")
+                }
+                // Reachable, but it can't prove who it is: only the phone's
+                // own address is trusted that way, as before.
+                ServerIdentityProbe.UnsupportedServer -> if (candidate == offered) return candidate
+                ServerIdentityProbe.Unreachable -> Unit
+            }
+        }
+        return null
+    }
+
+    private fun isCleartext(url: String): Boolean = url.startsWith("http://", ignoreCase = true)
+
     private fun ActiveIdentity.toReady(requestId: String, reused: Boolean) = SiloCastHandoffReady(
         requestId = requestId,
         serverId = serverId,
@@ -301,5 +374,64 @@ class RemotePlaybackIdentityManager(
     private companion object {
         const val DEFAULT_SESSION_MS = 24 * 60 * 60 * 1_000L
         const val LOGOUT_TIMEOUT_MS = 5_000L
+    }
+}
+
+/**
+ * The addresses a TV tries for a handoff, in order, de-duplicated: its own
+ * saved addresses for the deployment (already known to work from here), the
+ * phone's address, then the deployment's other addresses in the server's
+ * order. Mirrors silo-apple `RemotePlaybackCandidatePolicy`.
+ */
+internal object RemotePlaybackCandidatePolicy {
+    /** Endpoint-only addresses probed per offer. */
+    const val MAX_ENDPOINTS = 6
+
+    /** Endpoints read from one offer at all, so a long list can't cost unbounded consent lookups. */
+    const val MAX_ENDPOINTS_READ = 24
+
+    const val MAX_SAVED = 6
+
+    /**
+     * This TV's saved addresses that may serve [identity], at most
+     * [MAX_SAVED]: those recorded under it, then those with no recorded
+     * identity, the active server first within each. Every candidate is
+     * probed and an unverified one that answers for another deployment is
+     * skipped, so trying them is safe.
+     */
+    fun savedUrls(entries: List<ServerEntry>, activeId: String?, identity: String): List<String> {
+        fun recorded(entry: ServerEntry) = entry.verifiedServerId?.takeIf { it.isNotBlank() }
+        return entries
+            .filter { recorded(it) == identity || recorded(it) == null }
+            .sortedWith(compareBy({ recorded(it) == null }, { it.id != activeId }))
+            .take(MAX_SAVED)
+            .map { it.url }
+    }
+
+    /**
+     * The candidates [mayProbe] allows, de-duplicated. Of [endpointUrls], at
+     * most [MAX_ENDPOINTS_READ] are read and the first [MAX_ENDPOINTS]
+     * allowed new ones kept, so the cap counts addresses that will be probed.
+     */
+    suspend fun candidateUrls(
+        savedUrls: List<String>,
+        offeredUrl: String,
+        endpointUrls: List<String>,
+        mayProbe: suspend (String) -> Boolean = { true },
+    ): List<String> {
+        val seen = mutableSetOf<String>()
+        fun fresh(url: String) = url.trim().trimEnd('/').takeIf { it.isNotEmpty() && seen.add(it) }
+
+        val candidates = (savedUrls + offeredUrl).mapNotNull(::fresh).filter { mayProbe(it) }.toMutableList()
+        var endpoints = 0
+        for (url in endpointUrls.take(MAX_ENDPOINTS_READ)) {
+            if (endpoints == MAX_ENDPOINTS) break
+            val candidate = fresh(url) ?: continue
+            if (mayProbe(candidate)) {
+                candidates += candidate
+                endpoints += 1
+            }
+        }
+        return candidates
     }
 }

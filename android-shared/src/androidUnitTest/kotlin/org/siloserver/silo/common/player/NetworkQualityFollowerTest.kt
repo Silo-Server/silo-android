@@ -92,6 +92,20 @@ class NetworkQualityFollowerTest {
     }
 
     @Test
+    fun `a stretch of several seconds on mobile data during steady Wi-Fi does not replan`() = runTest {
+        val network = MutableStateFlow(snapshot("wifi"))
+        val replans = follow(network, { FollowedSession("s1", main) })
+
+        network.value = snapshot("cellular", metered = true)
+        advanceTimeBy(6_000)
+        runCurrent()
+        network.value = snapshot("wifi")
+        settle()
+
+        assertEquals(emptyList(), replans)
+    }
+
+    @Test
     fun `moments without a connection are not read as unmetered`() = runTest {
         val network = MutableStateFlow(snapshot("cellular", metered = true))
         val replans = follow(network, { FollowedSession("s1", cellular) })

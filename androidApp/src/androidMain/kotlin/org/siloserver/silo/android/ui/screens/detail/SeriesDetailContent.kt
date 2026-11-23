@@ -1,5 +1,10 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.localizedResources
+import android.content.res.Resources
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
@@ -31,7 +36,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.util.rememberDominantColor
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.i18n.displayLowercaseFirst
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.catalog.ItemDetail
@@ -39,6 +47,7 @@ import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.trailerRailEntries
 import org.siloserver.silo.model.settings.EpisodeSpoilers
+import org.siloserver.silo.model.catalog.isEpisodeDescriptionTranslating
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
@@ -66,9 +75,11 @@ fun SeriesDetailContent(
     isLoadingSelectedEpisodeDetail: Boolean,
     selectedVersionIndex: Int,
     isAutoVersion: Boolean,
+    preferredQuality: String?,
     selectedAudioIndex: Int?,
     selectedSubtitleIndex: Int?,
     onVersionSelected: (Int?) -> Unit,
+    onEditionSelected: (String) -> Unit,
     onAudioSelected: (Int?) -> Unit,
     onSubtitleSelected: (Int?) -> Unit,
     onPlayClick: () -> Unit,
@@ -87,7 +98,7 @@ fun SeriesDetailContent(
     onWatchlistClick: () -> Unit,
     onToggleWatched: () -> Unit,
     onPersonClick: (String) -> Unit,
-    onItemDetailClick: (String) -> Unit,
+    onSimilarItemClick: (String) -> Unit,
     onPlayExtra: (ItemExtra) -> Unit = {},
     onSeriesDownloadClick: (() -> Unit)? = null,
     onEpisodeDownloadClick: (() -> Unit)? = null,
@@ -98,6 +109,8 @@ fun SeriesDetailContent(
     /** The Watch Party overflow action (host, add, or suggest), when one applies. */
     partyAction: org.siloserver.silo.android.ui.screens.watchparty.DetailPartyAction? = null,
     translation: (@Composable () -> Unit)? = null,
+    // The season whose translation job, which fills its episodes' descriptions, is running.
+    translatingSeasonContentId: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val dominantColor by rememberDominantColor(
@@ -137,17 +150,36 @@ fun SeriesDetailContent(
         selectedEpisodeOverview != null -> hasMachineTranslatedOverview(selectedEpisode?.machineTranslatedFields)
         else -> false
     }
-    val episodeTranslationLabel: (@Composable () -> Unit)? =
-        if (!hidesSelectedEpisodeOverview && selectedEpisodeOverviewMachineTranslated) {
-            { DetailMachineTranslatedLabel() }
-        } else {
-            null
+    // The loaded detail tracks the rail's pending language, and wins once loaded.
+    val selectedEpisodePendingLanguage = if (loadedSelectedEpisodeDetail != null) {
+        loadedSelectedEpisodeDetail.pendingTranslationLanguage
+    } else {
+        selectedEpisode?.pendingTranslationLanguage
+    }
+    val selectedEpisodeTranslating = isEpisodeDescriptionTranslating(
+        pendingLanguage = selectedEpisodePendingLanguage,
+        shownSeasonContentId = selectedSeason?.contentId,
+        translatingContentId = translatingSeasonContentId,
+    )
+    val episodeTranslationLabel: (@Composable () -> Unit)? = when {
+        hidesSelectedEpisodeOverview -> null
+        selectedEpisodeTranslating -> {
+            { TranslatingDescriptionLabel() }
         }
+        selectedEpisodeOverviewMachineTranslated -> {
+            { DetailMachineTranslatedLabel() }
+        }
+        else -> null
+    }
     // iOS keeps the series cast credit stable while the selected episode's
     // overview and playback options change. Reusing the series credit avoids
     // replacing it with a skeleton (and repainting different names) on every
     // horizontal episode selection.
-    val fixedSeriesCredit = remember(detail.contentId, detail.cast) { seriesStarringCredit(detail) }
+    val resources = localizedResources()
+    val seriesCastNames = remember(detail.contentId, detail.cast) {
+        detail.cast.take(3).map { it.name }.takeIf { it.isNotEmpty() }?.joinToString(separator = ", ")
+    }
+    val fixedSeriesCredit = seriesCastNames?.let { stringResourceWithNames(CommonR.string.detail_starring, it) }
     val markableSelectedSeason = selectedSeason?.takeIf {
         onSeasonWatchedChange != null && it.episodeCount > 0
     }
@@ -156,7 +188,7 @@ fun SeriesDetailContent(
         onShuffleSeason != null && org.siloserver.silo.model.shuffle.canShuffleSeason(episodes)
     }
     val episodeCountSubtitle = selectedSeason?.episodeCount?.takeIf { it > 0 }?.let { count ->
-        "$count episode${if (count == 1) "" else "s"}"
+        pluralStringResource(CommonR.plurals.detail_episodeCount, count, count, LocaleFormat.integer(count))
     }
 
     val playbackSelector: @Composable () -> Unit = {
@@ -173,13 +205,18 @@ fun SeriesDetailContent(
                             detail = loadedSelectedEpisodeDetail,
                             selectedVersionIndex = selectedVersionIndex,
                             isAutoVersion = isAutoVersion,
+                            preferredQuality = preferredQuality,
                             onVersionSelected = onVersionSelected,
+                            onEditionSelected = onEditionSelected,
                         )
                         PlaybackSelectorDivider()
                         TrackSelectorRow(
                             icon = Icons.Outlined.AudioFile,
-                            label = "Audio",
-                            value = if (audioTracks.isEmpty()) "Unavailable" else formatAudioValueLabel(
+                            label = stringResource(CommonR.string.detail_audio),
+                            value = if (audioTracks.isEmpty()) {
+                                stringResource(CommonR.string.detail_trackUnavailable)
+                            } else formatAudioValueLabel(
+                                resources,
                                 audioTracks,
                                 selectedAudioIndex,
                                 selectedVersion?.effectiveAudioTrackIndex,
@@ -190,10 +227,16 @@ fun SeriesDetailContent(
                         PlaybackSelectorDivider()
                         TrackSelectorRow(
                             icon = Icons.Outlined.ClosedCaption,
-                            label = "Subtitles",
-                            value = if (subtitleTracks.isEmpty()) "Unavailable" else formatSubtitleValueLabel(
+                            label = stringResource(CommonR.string.detail_subtitles),
+                            value = if (subtitleTracks.isEmpty()) {
+                                stringResource(CommonR.string.detail_trackUnavailable)
+                            } else formatSubtitleValueLabel(
+                                resources,
                                 subtitleTracks,
                                 selectedSubtitleIndex,
+                                seriesSignature = loadedSelectedEpisodeDetail.effectiveSubtitleTrackSignature,
+                                seriesOff = loadedSelectedEpisodeDetail.effectiveSubtitleTrackSignature == null &&
+                                    loadedSelectedEpisodeDetail.effectiveSubtitleMode.equals("off", ignoreCase = true),
                             ),
                             onClick = { showSubtitlePicker = true },
                             interactive = subtitleTracks.size > 1,
@@ -217,11 +260,11 @@ fun SeriesDetailContent(
             if (showsEpisodeDetails) {
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     SectionHeader(
-                        title = seriesSeasonSectionTitle(selectedSeason),
+                        title = seriesSeasonSectionTitle(resources, selectedSeason),
                         trailingText = episodeCountSubtitle,
                     )
                     Text(
-                        text = "Tap to focus",
+                        text = stringResource(CommonR.string.detail_tapToFocus),
                         fontSize = 11.sp,
                         color = DetailTertiaryText,
                         modifier = Modifier.padding(horizontal = SafePadding),
@@ -229,7 +272,7 @@ fun SeriesDetailContent(
                 }
             } else {
                 SectionHeader(
-                    title = seriesSeasonSectionTitle(selectedSeason),
+                    title = seriesSeasonSectionTitle(resources, selectedSeason),
                     trailingText = episodeCountSubtitle,
                 )
             }
@@ -314,8 +357,9 @@ fun SeriesDetailContent(
                 },
             ) {
                 HeroActionStack(
-                    primaryLabel = selectedEpisode?.let { "Play ${episodeNumberText(it)}" }
-                        ?: computePlayLabel(detail, nextEpisodeLabel),
+                    primaryLabel = selectedEpisode?.let {
+                        stringResource(CommonR.string.detail_playEpisodeCode, episodeNumberText(resources, it))
+                    } ?: computePlayLabel(resources, detail, nextEpisodeLabel),
                     onPlay = onPlayClick,
                     onPlayFromBeginning = onPlayFromBeginning,
                     resumeStoppedAtLabel = resumeStoppedAtLabel,
@@ -332,7 +376,7 @@ fun SeriesDetailContent(
                         { dismiss ->
                             if (onShuffleSeries != null) {
                                 SiloDropdownMenuItem(
-                                    text = { Text("Shuffle Series") },
+                                    text = { Text(stringResource(CommonR.string.detail_more_shuffleSeries)) },
                                     leadingIcon = { Icon(Icons.Filled.Shuffle, contentDescription = null) },
                                     onClick = {
                                         dismiss()
@@ -342,7 +386,14 @@ fun SeriesDetailContent(
                             }
                             if (shuffleableSelectedSeason != null && onShuffleSeason != null) {
                                 SiloDropdownMenuItem(
-                                    text = { Text("Shuffle ${phoneSeasonLabel(shuffleableSelectedSeason)}") },
+                                    text = {
+                                        Text(
+                                            stringResource(
+                                                CommonR.string.detail_more_shuffleSeason,
+                                                phoneSeasonLabel(resources, shuffleableSelectedSeason),
+                                            ),
+                                        )
+                                    },
                                     leadingIcon = { Icon(Icons.Filled.Shuffle, contentDescription = null) },
                                     onClick = {
                                         dismiss()
@@ -355,8 +406,14 @@ fun SeriesDetailContent(
                                 SiloDropdownMenuItem(
                                     text = {
                                         Text(
-                                            "Mark ${phoneSeasonLabel(markableSelectedSeason)} " +
-                                                if (seasonWatched) "Unwatched" else "Watched",
+                                            stringResourceWithNames(
+                                                if (seasonWatched) {
+                                                    CommonR.string.detail_more_markNamedSeasonUnwatched
+                                                } else {
+                                                    CommonR.string.detail_more_markNamedSeasonWatched
+                                                },
+                                                phoneSeasonLabel(resources, markableSelectedSeason),
+                                            ),
                                         )
                                     },
                                     leadingIcon = {
@@ -420,11 +477,11 @@ fun SeriesDetailContent(
                                 ) {
                                     if (onEpisodeDownloadClick != null) {
                                         SiloDropdownMenuItem(
-                                            text = { Text(when {
-                                                episodeDownloadState.isDownloaded -> "Episode downloaded"
-                                                episodeDownloadState.progress != null -> "Cancel episode download"
-                                                else -> "Download episode"
-                                            }) },
+                                            text = { Text(stringResource(when {
+                                                episodeDownloadState.isDownloaded -> CommonR.string.detail_episodeDownloaded
+                                                episodeDownloadState.progress != null -> CommonR.string.detail_cancelEpisodeDownload
+                                                else -> CommonR.string.detail_downloadEpisode
+                                            })) },
                                             enabled = !episodeDownloadState.isDownloaded,
                                             onClick = {
                                                 showDownloadMenu = false
@@ -434,7 +491,17 @@ fun SeriesDetailContent(
                                     }
                                     if (onSeriesDownloadClick != null) {
                                         SiloDropdownMenuItem(
-                                            text = { Text(if (seriesDownloadState.isDownloaded) "Series downloaded" else "Download series") },
+                                            text = {
+                                                Text(
+                                                    stringResource(
+                                                        if (seriesDownloadState.isDownloaded) {
+                                                            CommonR.string.detail_seriesDownloaded
+                                                        } else {
+                                                            CommonR.string.detail_downloadSeries
+                                                        },
+                                                    ),
+                                                )
+                                            },
                                             enabled = !seriesDownloadState.isDownloaded,
                                             onClick = {
                                                 showDownloadMenu = false
@@ -461,7 +528,7 @@ fun SeriesDetailContent(
         if (detail.cast.isNotEmpty()) {
             item(contentType = "detail-cast") {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    SectionHeader(title = "Cast & Crew")
+                    SectionHeader(title = stringResource(CommonR.string.detail_cast))
                     CastCrewSection(
                         cast = detail.cast,
                         onPersonClick = onPersonClick,
@@ -485,7 +552,7 @@ fun SeriesDetailContent(
         item(contentType = "detail-similar") {
             SimilarRail(
                 items = similarItems,
-                onSelect = onItemDetailClick,
+                onSelect = onSimilarItemClick,
             )
         }
 
@@ -518,28 +585,24 @@ fun SeriesDetailContent(
     }
 }
 
-internal fun seriesSeasonSectionTitle(season: Season?): String =
-    season?.let { "${phoneSeasonLabel(it)} Episodes" } ?: "Episodes"
+internal fun seriesSeasonSectionTitle(resources: Resources, season: Season?): String =
+    season?.let { resources.getString(CommonR.string.detail_seasonEpisodes, phoneSeasonLabel(resources, it)) }
+        ?: resources.getString(CommonR.string.detail_episodes_title)
 
 // Retained for formatter tests and non-visual accessibility copy even though
 // the iOS-aligned Episodes header no longer renders a season download button.
-internal fun seriesSeasonSectionLabel(season: Season?): String =
-    season?.let(::phoneSeasonLabel) ?: "Episodes"
+internal fun seriesSeasonSectionLabel(resources: Resources, season: Season?): String =
+    season?.let { phoneSeasonLabel(resources, it) } ?: resources.getString(CommonR.string.detail_episodes_title)
 
 internal fun seasonDownloadContentDescription(
+    resources: Resources,
     season: Season,
     isDownloaded: Boolean,
 ): String {
-    val label = phoneSeasonLabel(season)
+    val label = phoneSeasonLabel(resources, season)
     return if (isDownloaded) {
-        "$label downloaded"
+        resources.getString(CommonR.string.detail_seasonDownloaded, label)
     } else {
-        "Download ${label.replaceFirstChar(Char::lowercase)}"
+        resources.getString(CommonR.string.detail_downloadSeason, label.displayLowercaseFirst())
     }
 }
-
-private fun seriesStarringCredit(detail: ItemDetail): String? =
-    detail.cast.take(3)
-        .map { it.name }
-        .takeIf { it.isNotEmpty() }
-        ?.joinToString(prefix = "Starring ", separator = ", ")

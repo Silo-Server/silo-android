@@ -18,8 +18,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Phone-side CC picker for a live Google Cast session. The receiver (the TV
@@ -45,13 +47,13 @@ fun CastSubtitleMenuButton(
             } else {
                 Icons.Outlined.ClosedCaptionOff
             },
-            contentDescription = "Subtitles",
+            contentDescription = stringResource(CommonR.string.cast_subtitles_title),
             tint = if (tint == Color.Unspecified) LocalContentColor.current else tint,
             modifier = Modifier.size(iconSize),
         )
         SiloDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             SiloDropdownMenuItem(
-                text = { Text("Off") },
+                text = { Text(stringResource(CommonR.string.cast_subtitles_off)) },
                 leadingIcon = {
                     if (activeId == null) Icon(Icons.Default.Check, contentDescription = null)
                 },

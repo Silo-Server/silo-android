@@ -77,7 +77,8 @@ class SiloCastMessageTest {
                     "fileId":7,
                     "audioTrackIndex":1,
                     "startFromBeginning":false,
-                    "resumePosition":120.5
+                    "resumePosition":120.5,
+                    "pinsVersion":true
                 }
             }}
             """,
@@ -91,6 +92,7 @@ class SiloCastMessageTest {
                         subtitleTrackIndex = null,
                         startFromBeginning = false,
                         resumePosition = 120.5,
+                        pinsVersion = true,
                     ),
                 ),
             ),
@@ -126,6 +128,7 @@ class SiloCastMessageTest {
             """{"type":"launch","v":2,"launch":{"serverId":"srv-1","playback":{"contentId":"movie-42","startFromBeginning":true}}}""",
         )
         assertNull(assertIs<SiloCastMessage.Launch>(decoded).launch.playback.libraryId)
+        assertNull(assertIs<SiloCastMessage.Launch>(decoded).launch.playback.pinsVersion)
     }
 
     @Test
@@ -205,6 +208,33 @@ class SiloCastMessageTest {
         assertEquals("auto", state.activeQualityId)
         assertEquals("standard", state.subtitlePosition)
         assertNull(state.subtitleSyncMs)
+    }
+
+    @Test
+    fun stateCarriesPosterAndOverviewOnlyWhenKnown() {
+        val frame = { extra: String ->
+            """
+            {"type":"state","v":2,"state":{
+                "title":"Movie","isPlaying":true,"isLoading":false,"isBuffering":false,
+                "currentTime":1.0,"duration":2.0,"audioTracks":[],"subtitleTracks":[],
+                "qualityOptions":[],"activeQualityId":"auto","isQualitySwitching":false,
+                "playbackSpeed":1.0,"videoGravity":"fit","hdrEnabled":false,
+                "supportsVideoGravity":true,"supportsHDRToggle":false,$extra
+                "volume":1.0,"isMuted":false,"hasNextEpisode":false
+            }}
+            """
+        }
+        // A TV that predates the fields.
+        val old = assertIs<SiloCastMessage.State>(json.decodeFromString(SiloCastMessage.serializer(), frame(""))).state
+        assertNull(old.posterUrl)
+        assertNull(old.overview)
+        assertFalse("posterUrl" in json.encodeToString(SiloCastMessage.serializer(), SiloCastMessage.State(state = old)))
+
+        val withArt = old.copy(posterUrl = "https://silo.example/p.webp?exp=1&sig=x", overview = "Plot")
+        assertWireEquals(
+            frame(""""posterUrl":"https://silo.example/p.webp?exp=1&sig=x","overview":"Plot","""),
+            SiloCastMessage.State(state = withArt),
+        )
     }
 
     @Test
@@ -359,6 +389,34 @@ class SiloCastMessageTest {
                     resumeToken = "tok",
                     replaceConfirmed = true,
                     replacingContentId = "oak",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun offerCarriesTheServersOtherAddresses() {
+        assertWireEquals(
+            """{"type":"handoff_offer","v":2,"handoffOffer":{"requestId":"req-3","serverId":"srv-1",""" +
+                """"serverURL":"https://silo.example","profileId":"p","serverIdentity":"deploy-1",""" +
+                """"serverEndpoints":[{"url":"https://silo.example","kind":"public"},""" +
+                """{"url":"https://silo.tail.ts.net","kind":"provider","provider":"tailscale","displayName":"Tailscale"}]}}""",
+            SiloCastMessage.HandoffOffer(
+                SiloCastHandoffOffer(
+                    requestId = "req-3",
+                    serverId = "srv-1",
+                    serverURL = "https://silo.example",
+                    profileId = "p",
+                    serverIdentity = "deploy-1",
+                    serverEndpoints = listOf(
+                        SiloCastServerEndpoint(url = "https://silo.example", kind = "public"),
+                        SiloCastServerEndpoint(
+                            url = "https://silo.tail.ts.net",
+                            kind = "provider",
+                            provider = "tailscale",
+                            displayName = "Tailscale",
+                        ),
+                    ),
                 ),
             ),
         )

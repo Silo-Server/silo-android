@@ -34,18 +34,23 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
 
-/** Builds the free-form speech recogniser intent used by voice search. */
-private fun voiceSearchIntent(): Intent =
+/**
+ * Builds the free-form speech recogniser intent used by voice search. [prompt]
+ * is the recogniser's on-screen prompt; an availability probe can omit it.
+ */
+private fun voiceSearchIntent(prompt: String? = null): Intent =
     Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(
             RecognizerIntent.EXTRA_LANGUAGE_MODEL,
             RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
         )
-        putExtra(RecognizerIntent.EXTRA_PROMPT, "Search Silo")
+        if (prompt != null) putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
     }
 
@@ -96,6 +101,7 @@ fun SearchBar(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val voicePrompt = stringResource(CommonR.string.search_voicePrompt)
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -130,14 +136,14 @@ fun SearchBar(
             .focusRequester(focusRequester),
         placeholder = {
             Text(
-                text = "Search movies, shows, and more",
+                text = stringResource(CommonR.string.search_placeholder),
                 style = MaterialTheme.typography.bodyLarge,
             )
         },
         leadingIcon = {
             Icon(
                 imageVector = Icons.Default.Search,
-                contentDescription = "Search",
+                contentDescription = stringResource(CommonR.string.nav_search),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
@@ -147,12 +153,12 @@ fun SearchBar(
                     IconButton(
                         onClick = {
                             try {
-                                voiceLauncher.launch(voiceSearchIntent())
+                                voiceLauncher.launch(voiceSearchIntent(voicePrompt))
                             } catch (_: ActivityNotFoundException) {
                                 onVoiceUnavailable()
                                 Toast.makeText(
                                     context,
-                                    "Voice search isn't available on this device",
+                                    context.getString(CommonR.string.search_voiceUnavailable),
                                     Toast.LENGTH_SHORT,
                                 ).show()
                             }
@@ -160,7 +166,7 @@ fun SearchBar(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Mic,
-                            contentDescription = "Search by voice",
+                            contentDescription = stringResource(CommonR.string.search_voice),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -169,7 +175,7 @@ fun SearchBar(
                     IconButton(onClick = onClear) {
                         Icon(
                             imageVector = Icons.Default.Clear,
-                            contentDescription = "Clear search",
+                            contentDescription = stringResource(CommonR.string.search_clear),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }

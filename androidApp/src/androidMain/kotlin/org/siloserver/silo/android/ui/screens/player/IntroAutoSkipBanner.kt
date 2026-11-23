@@ -22,10 +22,6 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,7 +31,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.siloserver.silo.android.R
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.ui.components.rememberNoticeCountdownFill
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 
@@ -66,30 +63,7 @@ fun IntroAutoSkipBanner(
     /** False while the timer is frozen by a pause — the fill holds where it is. */
     timerRunning: Boolean = true,
 ) {
-    // The fill shows time remaining, so it runs off the frame clock rather than
-    // an AnimationSpec, which the system animator duration scale would stretch.
-    val fill = remember { mutableFloatStateOf(0f) }
-    val secondsRemaining = state.secondsRemainingOrNull
-    // Deliberately not keyed on `secondsRemaining`: a tick must not restart the
-    // sweep. `countdownRun` is what says the clock moved.
-    LaunchedEffect(countdownRun, timerRunning, totalSeconds, secondsRemaining == null) {
-        if (secondsRemaining == null || totalSeconds <= 0) {
-            fill.floatValue = 0f
-            return@LaunchedEffect
-        }
-        val remaining = secondsRemaining.coerceAtLeast(1)
-        val from = (1f - remaining.toFloat() / totalSeconds.toFloat()).coerceIn(0f, 1f)
-        fill.floatValue = from
-        if (!timerRunning) return@LaunchedEffect
-        val durationMs = remaining * 1000f
-        val startedAt = withFrameMillis { it }
-        var progressed = 0f
-        while (progressed < 1f) {
-            val frameMs = withFrameMillis { it }
-            progressed = ((frameMs - startedAt) / durationMs).coerceIn(0f, 1f)
-            fill.floatValue = from + (1f - from) * progressed
-        }
-    }
+    val fill = rememberNoticeCountdownFill(state.secondsRemainingOrNull, totalSeconds, countdownRun, timerRunning)
 
     // Keyed on the state kind so per-second ticks recompose the slot rather than
     // recreating the subtree, which would restart the fill.
@@ -113,14 +87,14 @@ fun IntroAutoSkipBanner(
                 Spacer(Modifier.size(0.dp))
             }
             1 -> IntroPromptPill(
-                label = stringResource(R.string.intro_skip_pill_skip),
+                label = stringResource(CommonR.string.introSkip_pill_skip),
                 icon = Icons.Filled.SkipNext,
                 progress = fill.floatValue,
                 onClick = onSelect,
             )
             else -> IntroPromptPill(
-                label = stringResource(R.string.intro_skip_pill_undo),
-                caption = stringResource(R.string.intro_skip_pill_undo_caption),
+                label = stringResource(CommonR.string.introSkip_pill_undo),
+                caption = stringResource(CommonR.string.introSkip_pill_undoCaption),
                 icon = Icons.Filled.Replay,
                 progress = fill.floatValue,
                 onClick = onSelect,

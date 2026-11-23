@@ -24,12 +24,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.util.formatClockTime
 import org.siloserver.silo.audiobook.audiobookChapterLabel
 import org.siloserver.silo.model.catalog.VersionChapter
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Chapters bottom sheet. Replaces the always-expanded inline list. Highlights
@@ -43,7 +48,10 @@ fun ChaptersSheet(
     currentChapterIndex: Int,
     onJumpTo: (VersionChapter) -> Unit,
     onDismiss: () -> Unit,
+    /** Tints the current chapter, as Apple's sheet uses the cover accent. */
+    accent: Color = Color.Unspecified,
 ) {
+    val currentTint = if (accent.isSpecified) accent else MaterialTheme.colorScheme.primary
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val listState = rememberLazyListState()
 
@@ -63,7 +71,7 @@ fun ChaptersSheet(
     ) {
         Column(modifier = Modifier.padding(horizontal = 24.dp).fillMaxWidth()) {
             Text(
-                text = "Chapters",
+                text = stringResource(CommonR.string.options_chapters),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -92,13 +100,13 @@ fun ChaptersSheet(
                         if (isCurrent) {
                             Icon(
                                 imageVector = Icons.Filled.GraphicEq,
-                                contentDescription = "Now playing",
-                                tint = MaterialTheme.colorScheme.primary,
+                                contentDescription = stringResource(CommonR.string.player_chapters_nowPlaying),
+                                tint = currentTint,
                                 modifier = Modifier.width(24.dp).height(16.dp),
                             )
                         } else {
                             Text(
-                                text = "${idx + 1}",
+                                text = "${idx + 1}", // i18n-ignore
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -107,10 +115,10 @@ fun ChaptersSheet(
                         }
                         Spacer(modifier = Modifier.width(14.dp))
                         Text(
-                            text = audiobookChapterLabel(idx, chapter.title),
+                            text = audiobookChapterLabel(idx, chapter.title).text(),
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (isCurrent) MaterialTheme.colorScheme.primary
+                            color = if (isCurrent) currentTint
                             else MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,

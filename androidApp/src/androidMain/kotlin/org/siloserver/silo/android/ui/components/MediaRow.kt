@@ -1,6 +1,21 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.viewmodel.DetailSeeds
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,6 +29,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.PlayArrow
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.model.catalog.isBookLikeItemType
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.imageLoader
@@ -89,7 +106,9 @@ fun MediaRow(
     /** Direct-resume action for the backdrop card's center play glyph;
      *  null keeps the glyph decorative. Never applied to book items. */
     onItemPlay: ((SectionItem) -> Unit)? = null,
-    onSeeAllClick: (() -> Unit)? = null,
+    /** Opens the row's full page: the title gains a chevron and the row ends
+     *  with an "Explore all" card. Null shows neither. */
+    onExploreAllClick: (() -> Unit)? = null,
     showProgress: Boolean = false,
     cardStyle: CardStyle = CardStyle.Poster,
     icon: ImageVector? = null,
@@ -102,6 +121,9 @@ fun MediaRow(
     val imageCapabilities: ImageCapabilitiesSession = koinInject()
     val heroHandoff = LocalHeroSourceHandoff.current
     val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
+    // Square covers when the row is all audiobooks, as on iOS; the row keeps
+    // one card height otherwise.
+    val posterAspectRatio = remember(uniqueItems) { sharedArtworkAspectRatio(uniqueItems.map { it.type }) }
     val diagnosticsKeySnapshot = remember(items) {
         DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
     }
@@ -145,55 +167,7 @@ fun MediaRow(
     }
 
     Column(modifier = modifier) {
-        // iOS MediaRow header: optional leading icon (16pt semibold onSurface,
-        // 6pt to the title), siloHeadline (16sp) title, plain caption
-        // "See All" at onSurface 0.6 — no chevron. rowVerticalSpacing =
-        // smallPadding (8dp) below the header.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (icon != null) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-                // Row headings read a step larger than the 16sp headline so
-                // "Continue Watching" / "Next Up" carry the feed against
-                // 14sp card captions. 20sp at the default font scale (and it
-                // grows with larger settings as usual), but floored at 20dp
-                // so a "small" system font cannot shrink it into a caption.
-                val density = LocalDensity.current
-                val headingSize = with(density) { maxOf(20.sp.toPx(), 20.dp.toPx()).toSp() }
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.headlineSmall.copy(
-                        fontSize = headingSize,
-                        lineHeight = headingSize * 1.3f,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-            if (onSeeAllClick != null) {
-                Text(
-                    text = "See All",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.clickable(onClick = onSeeAllClick),
-                )
-            }
-        }
+        MediaRowHeader(title = title, icon = icon, onExploreAllClick = onExploreAllClick)
 
         // Horizontal rows live inside the vertically scrolling feed. iOS gets
         // this "for free": the nested horizontal/vertical UIScrollViews claim by
@@ -223,6 +197,15 @@ fun MediaRow(
         // vertical fling (the helper ORs in any deferral already in scope).
         val rowState = rememberLazyListState()
         fun openDetail(item: SectionItem) {
+            DetailSeeds.offer(item)
+            // An episode opens on its series page, so hand off the series
+            // backdrop its card carries. It is never a still.
+            item.seriesHeroBackdrop()?.let { series ->
+                heroHandoff?.pendingArtworkUrl = series.url
+                heroHandoff?.pendingArtworkThumbhash = series.thumbhash
+                onItemClick(item.contentId)
+                return
+            }
             // A blurred episode still must not reappear sharp as the detail
             // page's loading artwork, so it is neither warmed nor handed off.
             // (Home swaps in the parent series artwork when it knows it.)
@@ -267,7 +250,8 @@ fun MediaRow(
                 } else {
                     val info = rowState.layoutInfo
                     val viewportCenter = (info.viewportStartOffset + info.viewportEndOffset) / 2
-                    info.visibleItemsInfo.minByOrNull { visible ->
+                    // The "Explore all" card is not an item to publish.
+                    info.visibleItemsInfo.filter { it.key != EXPLORE_ALL_KEY }.minByOrNull { visible ->
                         kotlin.math.abs((visible.offset + visible.size / 2) - viewportCenter)
                     }?.key as? String
                 }
@@ -312,7 +296,7 @@ fun MediaRow(
                             overlay = rowItem.overlay,
                             actions = cardActions(item),
                             overlayIcon = if (rowItem.isBook) Icons.AutoMirrored.Filled.MenuBook else Icons.Default.PlayArrow,
-                            overlayContentDescription = if (rowItem.isBook) "Read" else "Play",
+                            overlayContentDescription = stringResource(if (rowItem.isBook) CommonR.string.shell_card_read else CommonR.string.common_play),
                             onOverlayClick = if (!rowItem.isBook && onItemPlay != null) {
                                 { onItemPlay(item) }
                             } else {
@@ -335,14 +319,150 @@ fun MediaRow(
                             overlay = rowItem.overlay,
                             actions = cardActions(item),
                             modifier = Modifier.animateItem(),
+                            artworkAspectRatio = posterAspectRatio,
                             sharedContentId = item.contentId,
+                            widthIsExact = true,
                         )
                     }
                 }
                 }
             }
+            if (onExploreAllClick != null) {
+                item(key = EXPLORE_ALL_KEY, contentType = "explore-all:${cardStyle.name}") {
+                    CompositionLocalProvider(LocalViewConfiguration provides baseViewConfiguration) {
+                        ExploreAllCard(cardStyle = cardStyle, onClick = onExploreAllClick, posterAspectRatio = posterAspectRatio)
+                    }
+                }
+            }
         }
         }
+        }
+    }
+}
+
+/**
+ * A row's heading: optional leading [icon] and the title. With
+ * [onExploreAllClick] the title opens the row's full page and carries a
+ * chevron. Shared by [MediaRow] and the row of collections.
+ */
+@Composable
+internal fun MediaRowHeader(
+    title: String,
+    icon: ImageVector? = null,
+    onExploreAllClick: (() -> Unit)? = null,
+) {
+    // iOS MediaRow header: optional leading icon (16pt semibold onSurface,
+    // 6pt to the title), siloHeadline (16sp) title. rowVerticalSpacing =
+    // smallPadding (8dp) below the header. A row with a full page makes
+    // the title a link to it, marked with a trailing chevron.
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = if (onExploreAllClick != null) {
+                Modifier
+                    .clip(MaterialTheme.shapes.small)
+                    .clickable(onClickLabel = stringResource(CommonR.string.rows_exploreAll), role = Role.Button, onClick = onExploreAllClick)
+            } else {
+                Modifier
+            },
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (icon != null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            // Row headings read a step larger than the 16sp headline so
+            // "Continue Watching" / "Next Up" carry the feed against
+            // 14sp card captions. 20sp at the default font scale (and it
+            // grows with larger settings as usual), but floored at 20dp
+            // so a "small" system font cannot shrink it into a caption.
+            val density = LocalDensity.current
+            val headingSize = with(density) { maxOf(20.sp.toPx(), 20.dp.toPx()).toSp() }
+            Text(
+                text = title,
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontSize = headingSize,
+                    lineHeight = headingSize * 1.3f,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (onExploreAllClick != null) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        }
+    }
+}
+
+private const val EXPLORE_ALL_KEY = "\u0000explore-all"
+
+/**
+ * The row's last card: opens the row's full page. Same size and shape as the
+ * row's cards (a poster or a 16:9 thumbnail), with an icon and the label.
+ * [width] overrides the card size for rows that resize their cards, such as
+ * a movie page's box set row.
+ */
+@Composable
+internal fun ExploreAllCard(
+    cardStyle: CardStyle,
+    onClick: () -> Unit,
+    width: Dp? = null,
+    /** The row's poster shape: square in an audiobook row. */
+    posterAspectRatio: Float = PosterArtworkAspectRatio,
+) {
+    val scale = LocalCardPresentation.current.posterSize.posterScale
+    val (defaultWidth, aspectRatio, shape) = when (cardStyle) {
+        CardStyle.Poster -> Triple(120.dp * scale, posterAspectRatio, MaterialTheme.shapes.small)
+        CardStyle.Backdrop -> Triple(280.dp * scale, 16f / 9f, RoundedCornerShape(10.dp))
+    }
+    Box(
+        modifier = Modifier
+            .width(width ?: defaultWidth)
+            .aspectRatio(aspectRatio)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f), shape)
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Text(
+                text = stringResource(CommonR.string.rows_exploreAll),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }
@@ -355,7 +475,7 @@ fun MediaRow(
  * the row's scroll; the cards re-provide the base configuration so their tap
  * radius stays tight (see the provider setup in [MediaRow]).
  */
-private class HorizontalBiasViewConfiguration(
+internal class HorizontalBiasViewConfiguration(
     private val base: ViewConfiguration,
 ) : ViewConfiguration by base {
     // Bumped 1.75 -> 2.25 (Jim QA 2026-07-09: rows still too grabby on Pixel,

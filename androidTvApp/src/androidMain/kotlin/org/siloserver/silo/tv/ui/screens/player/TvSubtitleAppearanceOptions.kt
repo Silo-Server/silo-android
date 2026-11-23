@@ -1,7 +1,9 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import android.content.res.Resources
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontFamily
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
@@ -15,35 +17,49 @@ import org.siloserver.silo.model.settings.pointSize
  * Settings must offer identical choices, so both lift these from here rather
  * than defining their own. Hex palettes match the silo-apple
  * `SubtitleAppearance.fontColors` / `backgroundColors` / `outlineColors`.
+ * Labels are string resource ids; the functions taking [Resources] resolve
+ * them, since some pickers build their rows outside composition.
  */
 object TvSubtitleAppearanceOptions {
     data class PreviewDecoration(val outline: Boolean, val shadow: Boolean)
-    val FONT_SIZES: List<Pair<SubtitleFontSizePreset, String>> = listOf(
-        SubtitleFontSizePreset.Small to "Small",
-        SubtitleFontSizePreset.Medium to "Medium",
-        SubtitleFontSizePreset.Large to "Large",
-        SubtitleFontSizePreset.XLarge to "X-Large",
-        SubtitleFontSizePreset.XXLarge to "XX-Large",
+    private val FONT_SIZES: List<Pair<SubtitleFontSizePreset, Int>> = listOf(
+        SubtitleFontSizePreset.Small to CommonR.string.player_subtitles_size_small,
+        SubtitleFontSizePreset.Medium to CommonR.string.player_subtitles_size_medium,
+        SubtitleFontSizePreset.Large to CommonR.string.player_subtitles_size_large,
+        SubtitleFontSizePreset.XLarge to CommonR.string.player_subtitles_size_xLarge,
+        SubtitleFontSizePreset.XXLarge to CommonR.string.player_subtitles_size_xxLarge,
     )
 
-    val FONT_FAMILIES: List<Pair<String, String>> = listOf(
-        SubtitleAppearance.SANS_SERIF to "Sans-serif",
-        SubtitleAppearance.SERIF to "Serif",
-        SubtitleAppearance.MONOSPACE to "Monospace",
+    private val FONT_FAMILIES: List<Pair<String, Int>> = listOf(
+        SubtitleAppearance.SANS_SERIF to CommonR.string.player_subtitles_font_sansSerif,
+        SubtitleAppearance.SERIF to CommonR.string.player_subtitles_font_serif,
+        SubtitleAppearance.MONOSPACE to CommonR.string.player_subtitles_font_monospace,
     )
 
-    val BACKGROUND_STYLES: List<Pair<SubtitleBackgroundStylePreset, String>> = listOf(
-        SubtitleBackgroundStylePreset.None to "No background",
-        SubtitleBackgroundStylePreset.Box to "Box",
-        SubtitleBackgroundStylePreset.Shadow to "Drop Shadow",
-        SubtitleBackgroundStylePreset.Outline to "Outline",
+    private val BACKGROUND_STYLES: List<Pair<SubtitleBackgroundStylePreset, Int>> = listOf(
+        SubtitleBackgroundStylePreset.None to CommonR.string.player_subtitles_background_noBackground,
+        SubtitleBackgroundStylePreset.Box to CommonR.string.player_subtitles_background_box,
+        SubtitleBackgroundStylePreset.Shadow to CommonR.string.player_subtitles_background_dropShadow,
+        SubtitleBackgroundStylePreset.Outline to CommonR.string.player_subtitles_background_outline,
     )
 
-    val POSITIONS: List<Pair<SubtitlePositionPreset, String>> = listOf(
-        SubtitlePositionPreset.Bottom to "Bottom",
-        SubtitlePositionPreset.LowerThird to "Lower Third",
-        SubtitlePositionPreset.Top to "Top",
+    private val POSITIONS: List<Pair<SubtitlePositionPreset, Int>> = listOf(
+        SubtitlePositionPreset.Bottom to CommonR.string.player_subtitles_position_bottom,
+        SubtitlePositionPreset.LowerThird to CommonR.string.player_subtitles_position_lowerThirdTitleCase,
+        SubtitlePositionPreset.Top to CommonR.string.player_subtitles_position_top,
     )
+
+    fun fontSizes(resources: Resources): List<Pair<SubtitleFontSizePreset, String>> = FONT_SIZES.resolve(resources)
+    fun fontFamilies(resources: Resources): List<Pair<String, String>> = FONT_FAMILIES.resolve(resources)
+    fun backgroundStyles(resources: Resources): List<Pair<SubtitleBackgroundStylePreset, String>> =
+        BACKGROUND_STYLES.resolve(resources)
+    fun positions(resources: Resources): List<Pair<SubtitlePositionPreset, String>> = POSITIONS.resolve(resources)
+    fun fontColors(resources: Resources): List<Pair<String, String>> = FONT_COLORS.resolve(resources)
+    fun backgroundColors(resources: Resources): List<Pair<String, String>> = BACKGROUND_COLORS.resolve(resources)
+    fun outlineColors(resources: Resources): List<Pair<String, String>> = OUTLINE_COLORS.resolve(resources)
+
+    private fun <T> List<Pair<T, Int>>.resolve(resources: Resources): List<Pair<T, String>> =
+        map { (value, label) -> value to resources.getString(label) }
 
     /** Background-opacity percentage steps for the HUD quick overlay (coarse). */
     val OPACITY_STEPS: List<Int> = listOf(0, 25, 50, 75, 100)
@@ -74,57 +90,60 @@ object TvSubtitleAppearanceOptions {
         (steps + current).toSortedSet().toList()
 
     /** Font / outline color palette: (hex, label). Matches Apple `fontColors`. */
-    val FONT_COLORS: List<Pair<String, String>> = listOf(
-        "#ffffff" to "White",
-        "#facc15" to "Yellow",
-        "#22c55e" to "Green",
-        "#06b6d4" to "Cyan",
-        "#d946ef" to "Magenta",
-        "#ef4444" to "Red",
-        "#3b82f6" to "Blue",
-        "#9ca3af" to "Gray",
-        "#000000" to "Black",
+    private val FONT_COLORS: List<Pair<String, Int>> = listOf(
+        "#ffffff" to CommonR.string.player_subtitles_color_white,
+        "#facc15" to CommonR.string.player_subtitles_color_yellow,
+        "#22c55e" to CommonR.string.player_subtitles_color_green,
+        "#06b6d4" to CommonR.string.player_subtitles_color_cyan,
+        "#d946ef" to CommonR.string.player_subtitles_color_magenta,
+        "#ef4444" to CommonR.string.player_subtitles_color_red,
+        "#3b82f6" to CommonR.string.player_subtitles_color_blue,
+        "#9ca3af" to CommonR.string.player_subtitles_color_gray,
+        "#000000" to CommonR.string.player_subtitles_color_black,
     )
 
     /** Background / outline color palette: (hex, label). Matches Apple `backgroundColors`. */
-    val BACKGROUND_COLORS: List<Pair<String, String>> = listOf(
-        "#000000" to "Black",
-        "#374151" to "Dark Gray",
-        "#1e3a5f" to "Navy",
-        "#7f1d1d" to "Dark Red",
-        "#14532d" to "Dark Green",
+    private val BACKGROUND_COLORS: List<Pair<String, Int>> = listOf(
+        "#000000" to CommonR.string.player_subtitles_color_black,
+        "#374151" to CommonR.string.player_subtitles_color_darkGrayTitleCase,
+        "#1e3a5f" to CommonR.string.player_subtitles_color_navy,
+        "#7f1d1d" to CommonR.string.player_subtitles_color_darkRedTitleCase,
+        "#14532d" to CommonR.string.player_subtitles_color_darkGreenTitleCase,
     )
 
     /** Outline color palette: matches silo-apple `SubtitleAppearance.outlineColors`,
      *  which is defined as `= backgroundColors` (the 5 dark tones), NOT the font
      *  palette. Both the HUD and Settings outline pickers must use this. */
-    val OUTLINE_COLORS: List<Pair<String, String>> = BACKGROUND_COLORS
+    private val OUTLINE_COLORS: List<Pair<String, Int>> = BACKGROUND_COLORS
 
     /** Hex-only swatch lists used by the HUD's inline color swatch rows. */
     val TEXT_COLOR_SWATCHES: List<String> = FONT_COLORS.map { it.first }
     val BACKGROUND_COLOR_SWATCHES: List<String> = BACKGROUND_COLORS.map { it.first }
     val OUTLINE_COLOR_SWATCHES: List<String> = OUTLINE_COLORS.map { it.first }
 
-    fun fontSizeLabel(value: SubtitleFontSizePreset): String =
-        FONT_SIZES.firstOrNull { it.first == value }?.second ?: value.name
+    fun fontSizeLabel(value: SubtitleFontSizePreset, resources: Resources): String =
+        FONT_SIZES.labelFor(resources) { it == value } ?: value.name
 
-    fun fontFamilyLabel(value: String): String =
-        FONT_FAMILIES.firstOrNull { it.first == value }?.second ?: value
+    fun fontFamilyLabel(value: String, resources: Resources): String =
+        FONT_FAMILIES.labelFor(resources) { it == value } ?: value
 
-    fun backgroundStyleLabel(value: SubtitleBackgroundStylePreset): String =
-        BACKGROUND_STYLES.firstOrNull { it.first == value }?.second ?: value.name
+    fun backgroundStyleLabel(value: SubtitleBackgroundStylePreset, resources: Resources): String =
+        BACKGROUND_STYLES.labelFor(resources) { it == value } ?: value.name
 
-    fun positionLabel(value: SubtitlePositionPreset): String =
-        POSITIONS.firstOrNull { it.first == value }?.second ?: value.name
+    fun positionLabel(value: SubtitlePositionPreset, resources: Resources): String =
+        POSITIONS.labelFor(resources) { it == value } ?: value.name
 
-    fun fontColorLabel(hex: String): String =
-        FONT_COLORS.firstOrNull { it.first.equals(hex, ignoreCase = true) }?.second ?: hex
+    fun fontColorLabel(hex: String, resources: Resources): String =
+        FONT_COLORS.labelFor(resources) { it.equals(hex, ignoreCase = true) } ?: hex
 
-    fun backgroundColorLabel(hex: String): String =
-        BACKGROUND_COLORS.firstOrNull { it.first.equals(hex, ignoreCase = true) }?.second ?: hex
+    fun backgroundColorLabel(hex: String, resources: Resources): String =
+        BACKGROUND_COLORS.labelFor(resources) { it.equals(hex, ignoreCase = true) } ?: hex
 
-    fun outlineColorLabel(hex: String): String =
-        OUTLINE_COLORS.firstOrNull { it.first.equals(hex, ignoreCase = true) }?.second ?: hex
+    fun outlineColorLabel(hex: String, resources: Resources): String =
+        OUTLINE_COLORS.labelFor(resources) { it.equals(hex, ignoreCase = true) } ?: hex
+
+    private inline fun <T> List<Pair<T, Int>>.labelFor(resources: Resources, matches: (T) -> Boolean): String? =
+        firstOrNull { matches(it.first) }?.let { resources.getString(it.second) }
 
     fun previewFontSizeSp(value: SubtitleFontSizePreset): Float =
         (value.pointSize * 0.36).toFloat()

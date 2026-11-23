@@ -33,6 +33,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -114,7 +116,7 @@ fun OnboardingTourScreen(
                         .padding(horizontal = TourGutter),
                     horizontalArrangement = Arrangement.End,
                 ) {
-                    AuroraGhostButton(label = "Skip", onClick = viewModel::onSkip)
+                    AuroraGhostButton(label = stringResource(CommonR.string.firstRun_tour_skip), onClick = viewModel::onSkip)
                 }
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Color(0xFFF3EFE9))
@@ -177,7 +179,7 @@ fun OnboardingTourScreen(
                         )
                     }
                 }
-                AuroraGhostButton(label = "Skip", onClick = viewModel::onSkip)
+                AuroraGhostButton(label = stringResource(CommonR.string.firstRun_tour_skip), onClick = viewModel::onSkip)
             }
 
             Spacer(Modifier.height(24.dp))
@@ -223,14 +225,16 @@ fun OnboardingTourScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (state.currentIndex > 0) {
-                    AuroraGhostButton(label = "Back", onClick = viewModel::onBack)
+                    AuroraGhostButton(label = stringResource(CommonR.string.common_back), onClick = viewModel::onBack)
                 }
                 AuroraPrimaryButton(
-                    label = when {
-                        isTerminal -> "Done"
-                        state.currentIndex == 0 -> "Show me"
-                        else -> "Next"
-                    },
+                    label = stringResource(
+                        when {
+                            isTerminal -> CommonR.string.common_done
+                            state.currentIndex == 0 -> CommonR.string.firstRun_tour_showMe
+                            else -> CommonR.string.firstRun_tour_next
+                        },
+                    ),
                     onClick = if (isTerminal) viewModel::onFinish else viewModel::onAdvance,
                     modifier = Modifier.weight(1f),
                 )

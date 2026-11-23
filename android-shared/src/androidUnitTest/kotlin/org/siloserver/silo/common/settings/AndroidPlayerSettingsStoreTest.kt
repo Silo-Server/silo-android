@@ -110,7 +110,7 @@ class AndroidPlayerSettingsStoreTest {
             val store = AndroidPlayerSettingsStore(mockContextStub(), fakeLegacyCache,
                 { owner.profileId }, { owner.serverUrl }, fakeFlusher,
                 settingsRepository = SettingsRepository(api), getDeviceId = { "device" }, getAuthScope = { owner },
-                dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "legacy_import.preferences_pb") }) })
+                dataStoreFactory = { _, _ -> PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "legacy_import.preferences_pb") }) })
             assertFalse(store.importLegacyDeviceSettings(original, linkedMapOf(
                 PlaybackSettingsKeys.AutoPlayNext to "false", PlaybackSettingsKeys.AutoSkipCredits to "true")))
             assertEquals(listOf<org.siloserver.silo.network.AuthScopeSnapshot?>(original), seen)
@@ -137,7 +137,7 @@ class AndroidPlayerSettingsStoreTest {
             val store = AndroidPlayerSettingsStore(mockContextStub(), fakeLegacyCache,
                 { owner.profileId }, { owner.serverUrl }, fakeFlusher,
                 settingsRepository = SettingsRepository(api), getDeviceId = { "device" }, getAuthScope = { owner },
-                dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root,"legacy_ack.preferences_pb") }) })
+                dataStoreFactory = { _, _ -> PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root,"legacy_ack.preferences_pb") }) })
             assertTrue(store.importLegacyDeviceSettings(owner, linkedMapOf(
                 PlaybackSettingsKeys.PreferredQuality to "720p", PlaybackSettingsKeys.MaxBitrateKbps to "2000",
                 PlaybackSettingsKeys.AutoPlayNext to "false")))
@@ -175,7 +175,7 @@ class AndroidPlayerSettingsStoreTest {
             val store = AndroidPlayerSettingsStore(mockContextStub(), fakeLegacyCache,
                 { owner.profileId }, { owner.serverUrl }, fakeFlusher,
                 settingsRepository = SettingsRepository(SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl(), ApiV2Gate.Unrestricted))), getDeviceId = { "device" },
-                getAuthScope = { owner }, dataStoreFactory = { barrier })
+                getAuthScope = { owner }, dataStoreFactory = { _, _ -> barrier })
             assertFalse(store.importLegacyDeviceSettings(original, mapOf(PlaybackSettingsKeys.AutoPlayNext to "false")))
             assertEquals(0,localWrites)
             assertTrue(fakeFlusher.calls.isEmpty())
@@ -213,7 +213,7 @@ class AndroidPlayerSettingsStoreTest {
             profileChangeSignal = flowOf(Unit),
             settingsRepository = repository,
             getDeviceId = { deviceId },
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 val file = File(tempFolder.root, "ds_$id.preferences_pb")
                 PreferenceDataStoreFactory.create(produceFile = { file })
             },
@@ -243,7 +243,7 @@ class AndroidPlayerSettingsStoreTest {
             serverSettingsFlusher = fakeFlusher,
             profileChangeSignal = flowOf(Unit),
             getDeviceId = { null },
-            dataStoreFactory = { shared },
+            dataStoreFactory = { _, _ -> shared },
         )
     }
 
@@ -330,7 +330,7 @@ class AndroidPlayerSettingsStoreTest {
             context = mockContextStub(), legacyCache = fakeLegacyCache,
             getActiveProfileId = { profile }, getServerUrl = { server },
             getDeviceId = { "device" }, serverSettingsFlusher = fakeFlusher,
-            dataStoreFactory = { id -> stores.getOrPut(id) {
+            dataStoreFactory = { _, id -> stores.getOrPut(id) {
                 PreferenceDataStoreFactory.create(
                     produceFile = { File(tempFolder.root, "hdr_$id.preferences_pb") },
                 )
@@ -401,7 +401,7 @@ class AndroidPlayerSettingsStoreTest {
             getServerUrl = { serverUrl },
             serverSettingsFlusher = fakeFlusher,
             getDeviceId = { null },
-            dataStoreFactory = { gated },
+            dataStoreFactory = { _, _ -> gated },
         )
         // Runs the one-time migrations so the gate only sees the two edits.
         store.setSubtitleAppearance(SubtitleAppearance.DEFAULT)
@@ -438,7 +438,7 @@ class AndroidPlayerSettingsStoreTest {
             settingsRepository = SettingsRepository(FakeSettingsApi()),
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_rev_$id.preferences_pb") })
             },
         )
@@ -629,7 +629,7 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
-    fun `subtitleSyncMs writes the canonical remote device setting`() = runTest {
+    fun `subtitleSyncMs saves to the profile from revision 19`() = runTest {
         val store = newStore()
 
         store.setSubtitleSyncMs(-1900)
@@ -641,6 +641,178 @@ class AndroidPlayerSettingsStoreTest {
         assertEquals("-1900", call.value)
         assertEquals(serverUrl, call.serverUrl)
         assertFalse(call.isDelete)
+        // The flusher decides at send time; below 19 it lands on the device.
+        assertEquals(SettingWriteScope.Profile(clearDevice = false), call.scope)
+    }
+
+    @Test
+    fun `subtitleSyncMs stays on the device when the server is known to be below revision 19`() = runTest {
+        val contractRevision = SettingsContractRevision({ capabilitiesAt(18) }, { serverUrl })
+        contractRevision.revisionFor(serverUrl)
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { _, _ -> PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_sync18.preferences_pb") }) },
+        )
+
+        store.setSubtitleSyncMs(400)
+
+        assertEquals(SettingWriteScope.Device, fakeFlusher.calls.last().scope)
+        assertTrue(PlaybackSettingsKeys.SubtitleSyncMs in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `the subtitle delay says where it is saved`() = runTest {
+        var revision = capabilitiesAt(18)
+        val contractRevision = SettingsContractRevision({ revision }, { serverUrl })
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { _, _ -> PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncscope.preferences_pb") }) },
+        )
+        contractRevision.refresh(serverUrl)
+        assertFalse(store.subtitleSyncSavedToProfileFlow.first(), "below 19 timing stays on this device")
+
+        revision = capabilitiesAt(19)
+        contractRevision.refresh(serverUrl)
+        assertTrue(store.subtitleSyncSavedToProfileFlow.first())
+
+        store.setSubtitleDeviceOverrideEnabled(true)
+        assertFalse(store.subtitleSyncSavedToProfileFlow.first(), "Only on This Device keeps it here")
+    }
+
+    @Test
+    fun `subtitleSyncMs follows the device toggle and clears a stale device row`() = runTest {
+        val store = newStore()
+        store.setSubtitleDeviceOverrideEnabled(true)
+        store.setSubtitleSyncMs(300)
+        assertEquals(SettingWriteScope.Device, fakeFlusher.calls.last().scope)
+        assertTrue(PlaybackSettingsKeys.SubtitleSyncMs in store.deviceOverrideKeysFlow.first())
+
+        store.setSubtitleDeviceOverrideEnabled(false)
+        assertTrue(
+            fakeFlusher.calls.any { it.isDelete && it.key == PlaybackSettingsKeys.SubtitleSyncMs },
+            "turning the toggle off returns timing to the profile's value",
+        )
+        assertFalse(PlaybackSettingsKeys.SubtitleSyncMs in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `turning the device toggle off while the revision is unknown still clears the timing row`() = runTest {
+        // Offline: the probe cannot answer, so the store cannot tell whether
+        // the server keeps timing per profile. The clear is queued gated on
+        // revision 19 for the flusher to settle once the revision is known.
+        val contractRevision = SettingsContractRevision(
+            { ApiResult.NetworkError(IllegalStateException("offline")) },
+            { serverUrl },
+        )
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { _, _ -> PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncoff.preferences_pb") }) },
+        )
+        store.setSubtitleDeviceOverrideEnabled(true)
+        store.setSubtitleSyncMs(300)
+
+        store.setSubtitleDeviceOverrideEnabled(false)
+
+        val clear = fakeFlusher.calls.single { it.isDelete && it.key == PlaybackSettingsKeys.SubtitleSyncMs }
+        assertTrue(clear.onlyWhereStoredPerProfile)
+        assertFalse(PlaybackSettingsKeys.SubtitleSyncMs in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `turning the device toggle off below revision 19 keeps the timing row`() = runTest {
+        val contractRevision = SettingsContractRevision({ capabilitiesAt(18) }, { serverUrl })
+        contractRevision.revisionFor(serverUrl)
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { _, _ -> PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncoff18.preferences_pb") }) },
+        )
+        store.setSubtitleDeviceOverrideEnabled(true)
+        store.setSubtitleSyncMs(300)
+
+        store.setSubtitleDeviceOverrideEnabled(false)
+
+        assertTrue(fakeFlusher.calls.none { it.isDelete && it.key == PlaybackSettingsKeys.SubtitleSyncMs })
+        assertTrue(PlaybackSettingsKeys.SubtitleSyncMs in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `an appearance edit saves to the profile and leaves the device toggle off`() = runTest {
+        val store = newStore()
+
+        store.updateSubtitleAppearance { it.copy(fontSize = SubtitleFontSizePreset.XLarge) }
+
+        val call = fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.SubtitleAppearance }
+        assertEquals(SettingWriteScope.Profile(clearDevice = false), call.scope)
+        assertFalse(store.subtitleUsesDeviceOverrideFlow.first(), "editing no longer pins appearance to this device")
+        assertFalse(PlaybackSettingsKeys.SubtitleAppearance in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `an appearance edit with the toggle off clears a stale device row`() = runTest {
+        // The server says this device still holds its own appearance, but the
+        // toggle is off locally (e.g. it was switched off while offline).
+        val store = newStoreSeededWith { prefs ->
+            prefs[androidx.datastore.preferences.core.stringSetPreferencesKey("device_override_keys")] =
+                setOf(PlaybackSettingsKeys.SubtitleAppearance)
+        }
+
+        store.updateSubtitleAppearance { it.copy(fontColor = "#ffff00") }
+
+        val call = fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.SubtitleAppearance }
+        assertEquals(SettingWriteScope.Profile(clearDevice = true), call.scope)
+        assertEquals("#ffff00", SubtitleAppearance.decode(call.value.orEmpty()).fontColor)
+        assertFalse(PlaybackSettingsKeys.SubtitleAppearance in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `an appearance edit with the toggle on stays on this device`() = runTest {
+        val store = newStore()
+        store.setSubtitleDeviceOverrideEnabled(true)
+
+        store.updateSubtitleAppearance { it.copy(fontSize = SubtitleFontSizePreset.Small) }
+        store.flushProjectedSubtitleAppearance()
+
+        val call = fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.SubtitleAppearance }
+        assertEquals(SettingWriteScope.Device, call.scope)
+        assertTrue(store.subtitleUsesDeviceOverrideFlow.first())
+    }
+
+    @Test
+    fun `turning the device toggle on pins the appearance on screen`() = runTest {
+        val store = newStore()
+        val onScreen = SubtitleAppearance.DEFAULT.copy(fontColor = "#00ffff")
+        store.setSubtitleAppearance(onScreen)
+
+        store.setSubtitleDeviceOverrideEnabled(true)
+
+        val call = fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.SubtitleAppearance }
+        assertEquals(SettingWriteScope.Device, call.scope)
+        assertEquals(onScreen, SubtitleAppearance.decode(call.value.orEmpty()))
+        assertEquals(onScreen, store.subtitleAppearanceFlow.first())
     }
 
     // ---- Server-sync surface ------------------------------------------
@@ -917,7 +1089,7 @@ class AndroidPlayerSettingsStoreTest {
             context = mockContextStub(), legacyCache = fakeLegacyCache,
             getActiveProfileId = { profile }, getServerUrl = { serverUrl },
             getDeviceId = { "device" }, serverSettingsFlusher = fakeFlusher,
-            dataStoreFactory = { id -> stores.getOrPut(id) {
+            dataStoreFactory = { _, id -> stores.getOrPut(id) {
                 PreferenceDataStoreFactory.create(
                     produceFile = { File(tempFolder.root, "overrides_$id.preferences_pb") },
                 )
@@ -981,7 +1153,7 @@ class AndroidPlayerSettingsStoreTest {
             getActiveProfileId = { owner.profileId }, getServerUrl = { serverUrl },
             getDeviceId = { "device" }, serverSettingsFlusher = fakeFlusher,
             settingsRepository = SettingsRepository(api), getAuthScope = { owner },
-            dataStoreFactory = { id -> stores.getOrPut(id) {
+            dataStoreFactory = { _, id -> stores.getOrPut(id) {
                 PreferenceDataStoreFactory.create(
                     produceFile = { File(tempFolder.root, "reset_switch_$id.preferences_pb") },
                 )
@@ -1038,14 +1210,13 @@ class AndroidPlayerSettingsStoreTest {
             fontColor = "#ff0000",
         )
 
+        store.setSubtitleDeviceOverrideEnabled(true)
         store.setSubtitleAppearance(custom)
         store.setSubtitleDeviceOverrideEnabled(false)
 
+        // The profile's appearance applies again; the device one is remembered.
         assertEquals(fallback, store.subtitleAppearanceFlow.first())
         assertEquals(custom, store.savedCustomSubtitleAppearanceFlow.first())
-
-        store.setSubtitleDeviceOverrideEnabled(true)
-        assertEquals(custom, store.subtitleAppearanceFlow.first())
     }
 
     @Test
@@ -1100,6 +1271,60 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `theme music is off by default and the switches write this device's values`() = runTest {
+        val store = newStore()
+        assertEquals(false, store.themeMusicEnabledFlow.first())
+        assertEquals(false, store.themeMusicLoopFlow.first())
+
+        store.setThemeMusicEnabled(true)
+        store.setThemeMusicLoop(true)
+
+        assertEquals(true, store.themeMusicEnabledFlow.first())
+        assertEquals(true, store.themeMusicLoopFlow.first())
+        val flushed = fakeFlusher.calls.filterNot { it.isDelete }.associate { it.key to it.value }
+        assertEquals("true", flushed[SettingKeys.UI_THEME_MUSIC_ENABLED])
+        assertEquals("true", flushed[SettingKeys.UI_THEME_MUSIC_LOOP])
+    }
+
+    @Test
+    fun `theme music is read from a revision 11 server and left out for an older one`() = runTest {
+        var revision = capabilitiesAt(10)
+        val contractRevision = SettingsContractRevision({ revision }, { serverUrl })
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                stored(SettingKeys.UI_THEME_MUSIC_ENABLED, JsonPrimitive(true)),
+                stored(SettingKeys.UI_THEME_MUSIC_LOOP, JsonPrimitive(true)),
+            ),
+        )
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            settingsRepository = SettingsRepository(api),
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { _, id ->
+                PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_theme_$id.preferences_pb") })
+            },
+        )
+
+        // An older server would refuse the whole batch over keys it lacks.
+        store.refreshFromServer()
+        assertTrue(api.requestedKeys.isNotEmpty())
+        assertTrue(SettingKeys.UI_THEME_MUSIC_ENABLED !in api.requestedKeys)
+        assertTrue(SettingKeys.UI_THEME_MUSIC_LOOP !in api.requestedKeys)
+        assertEquals(false, store.themeMusicEnabledFlow.first())
+
+        revision = capabilitiesAt(11)
+        store.refreshFromServer()
+        assertTrue(SettingKeys.UI_THEME_MUSIC_ENABLED in api.requestedKeys)
+        assertEquals(true, store.themeMusicEnabledFlow.first())
+        assertEquals(true, store.themeMusicLoopFlow.first())
+    }
+
+    @Test
     fun `cellular quality defaults to the 720p preset`() = runTest {
         val store = newStore()
 
@@ -1147,7 +1372,7 @@ class AndroidPlayerSettingsStoreTest {
             settingsRepository = SettingsRepository(api),
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_$id.preferences_pb") })
             },
         )
@@ -1185,7 +1410,7 @@ class AndroidPlayerSettingsStoreTest {
             settingsRepository = SettingsRepository(FakeSettingsApi()),
             getDeviceId = { null },
             contractRevision = SettingsContractRevision({ revision() }, { serverUrl }),
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_${name}_$id.preferences_pb") })
             },
         )
@@ -1228,7 +1453,7 @@ class AndroidPlayerSettingsStoreTest {
                 },
                 { serverUrl },
             ),
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_race_$id.preferences_pb") })
             },
         )
@@ -1269,7 +1494,7 @@ class AndroidPlayerSettingsStoreTest {
             settingsRepository = SettingsRepository(api),
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_upgrade_$id.preferences_pb") })
             },
         )
@@ -1311,6 +1536,45 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `the buffering mode follows the server only when its manifest has the setting`() = runTest {
+        var keys: Set<String> = setOf(PlaybackSettingsKeys.PreferredQuality)
+        var contract = capabilitiesAt(30)
+        val api = FakeSettingsApi(
+            effective = mapOf(stored(PlaybackSettingsKeys.BufferingQualityMode, JsonPrimitive("ask"))),
+        )
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            settingsRepository = SettingsRepository(api),
+            getDeviceId = { null },
+            // A later revision than the setting's, so only the key's presence can tell.
+            contractRevision = SettingsContractRevision({ contract }, { serverUrl }, { ApiResult.Success(keys) }),
+            dataStoreFactory = { _, id ->
+                PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_bq_$id.preferences_pb") })
+            },
+        )
+        store.setBufferingQualityMode(org.siloserver.silo.domain.player.BufferingQualityMode.NEVER)
+        assertEquals(org.siloserver.silo.domain.player.BufferingQualityMode.NEVER, store.bufferingQualityModeFlow.first(), "the last mode seen, until the manifest is read")
+
+        // A server without the setting: the row hides and nothing on this device stands in for it.
+        store.refreshFromServer()
+        assertTrue(api.requestedKeys.isNotEmpty())
+        assertFalse(PlaybackSettingsKeys.BufferingQualityMode in api.requestedKeys)
+        assertFalse(store.bufferingQualityModeSupportedFlow.first())
+        assertEquals(org.siloserver.silo.domain.player.BufferingQualityMode.ALWAYS, store.bufferingQualityModeFlow.first())
+
+        // The server upgrades to a contract with the setting.
+        keys = keys + PlaybackSettingsKeys.BufferingQualityMode
+        contract = capabilitiesAt(31)
+        store.refreshFromServer()
+        assertTrue(PlaybackSettingsKeys.BufferingQualityMode in api.requestedKeys)
+        assertTrue(store.bufferingQualityModeSupportedFlow.first())
+    }
+
+    @Test
     fun `cellular quality is left out of the batch while the server revision is unknown`() = runTest {
         val contractRevision = SettingsContractRevision(
             { ApiResult.NetworkError(IllegalStateException("offline")) },
@@ -1326,7 +1590,7 @@ class AndroidPlayerSettingsStoreTest {
             settingsRepository = SettingsRepository(api),
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_unknown_$id.preferences_pb") })
             },
         )
@@ -1495,15 +1759,35 @@ private class FakeServerSettingsFlusher : ServerSettingsFlusher {
         val value: String?,
         val isDelete: Boolean,
         val serverUrl: String,
+        val scope: SettingWriteScope = SettingWriteScope.Device,
+        val onlyWhereStoredPerProfile: Boolean = false,
     )
     val calls = mutableListOf<Call>()
     var flushNowCount: Int = 0
-    override fun enqueue(profileId: String, key: String, value: String, serverUrl: String, authority: org.siloserver.silo.network.AuthScopeSnapshot?) {
-        calls.add(Call(profileId, key, value, isDelete = false, serverUrl = serverUrl))
+    override fun enqueue(
+        profileId: String,
+        key: String,
+        value: String,
+        serverUrl: String,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
+        scope: SettingWriteScope,
+    ) {
+        calls.add(Call(profileId, key, value, isDelete = false, serverUrl = serverUrl, scope = scope))
     }
 
-    override fun enqueueDelete(profileId: String, key: String, serverUrl: String, authority: org.siloserver.silo.network.AuthScopeSnapshot?) {
-        calls.add(Call(profileId, key, value = null, isDelete = true, serverUrl = serverUrl))
+    override fun enqueueDelete(
+        profileId: String,
+        key: String,
+        serverUrl: String,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
+        onlyWhereStoredPerProfile: Boolean,
+    ) {
+        calls.add(
+            Call(
+                profileId, key, value = null, isDelete = true, serverUrl = serverUrl,
+                onlyWhereStoredPerProfile = onlyWhereStoredPerProfile,
+            ),
+        )
     }
 
     override suspend fun flushNow() {

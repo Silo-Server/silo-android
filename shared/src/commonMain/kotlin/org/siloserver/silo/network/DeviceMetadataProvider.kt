@@ -25,6 +25,12 @@ data class SiloDeviceMetadata(
      * layer server-side.
      */
     val clientFamily: String? = null,
+    /**
+     * The interface language the app shows now, sent as `Accept-Language`.
+     * Nothing on the server reads it yet; it prepares for server-rendered
+     * text. Null sends no header.
+     */
+    val acceptLanguage: String? = null,
 )
 
 interface DeviceMetadataProvider {

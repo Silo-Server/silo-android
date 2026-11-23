@@ -1,13 +1,15 @@
 package org.siloserver.silo.android.ui.screens.browse
 
+import androidx.annotation.StringRes
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
 
 enum class CatalogViewDensity(
-    val label: String,
+    @StringRes val labelRes: Int,
     val minCardWidth: Dp,
 ) {
-    Comfortable("Comfortable", 128.dp),
-    Normal("Normal", 104.dp),
-    Compact("Compact", 92.dp),
+    Comfortable(CommonR.string.library_density_comfortable, 128.dp),
+    Normal(CommonR.string.library_density_normal, 104.dp),
+    Compact(CommonR.string.library_density_compact, 92.dp),
 }
