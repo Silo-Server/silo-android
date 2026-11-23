@@ -254,7 +254,7 @@ a same-plan reopen.
 
 The server remembers what a lowering learned. A start or replan
 carrying `bandwidth_estimate_source: "observed_rebuffer"` records a learned
-limit for this user, device (`X-Silo-Device-Id`) and connection for 7 days from
+limit for this user, device (`X-Silo-Device-Id`) and connection for 24 hours from
 the last observation, and Auto plans under it. A plan the limit lowered carries
 `playback_plan.bandwidth_limit`, and the Quality menu labels Auto “Auto ·
 limited after buffering”. **Restore quality** sends `learned_limit: "clear"`,
@@ -281,11 +281,20 @@ A request sends `bandwidth_estimate_kbps` in two cases only:
   the server uses it only to rule out a source above 80% of the estimate, and
   only when playback starts. Replans never carry it.
 - **The step-down estimate, on lowering replans.** A replan that lowers Auto
-  after repeated rebuffering sends `floor(delivered bitrate × 7 / 10)` with
-  `bandwidth_estimate_source: "observed_rebuffer"`. Later Auto replans in the
-  same playback keep sending that estimate, without a source, so a failure or
-  track replan does not lift it. The carry ends with **Restore quality**, a
-  quality change the controller did not send, or a new playback attempt.
+  after repeated rebuffering sends `floor(delivered bitrate × 7 / 10)`. It
+  carries `bandwidth_estimate_source: "observed_rebuffer"` only when the
+  plan's measured throughput is below its delivered bitrate, and only while
+  that reading still stands when the request is built: the meter has none once
+  the network changed, since the server would learn it against the new
+  connection. Otherwise the stall may be the server producing media slower
+  than real time, and the estimate goes without a source, which the server
+  plans under but does not learn. The meter counts pauses inside a request,
+  including those while a full buffer holds a progressive request open, so on
+  progressive delivery a stall that was not the link's can still read as a
+  slow link. Later Auto replans in the same playback keep sending that
+  estimate, without a source, so a failure or track replan does not lift it.
+  The carry ends with **Restore quality**, a quality change the controller did
+  not send, or a new playback attempt.
 
 Media3's bandwidth meter is never sent. It times loads that stall on a full
 buffer or wait on a live transcode, so its figure can understate the link and

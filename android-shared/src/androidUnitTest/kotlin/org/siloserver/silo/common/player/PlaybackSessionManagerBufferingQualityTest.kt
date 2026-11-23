@@ -94,7 +94,8 @@ class PlaybackSessionManagerBufferingQualityTest {
         capabilityFeatures: List<String>,
         mode: BufferingQualityMode = BufferingQualityMode.Default,
         estimate: Int? = null,
-        playingPlanThroughputKbps: () -> Int? = { null },
+        // A lowering claims a slow link only with a reading to send.
+        playingPlanThroughputKbps: () -> Int? = { 8_806 },
         throughputKbps: () -> Int? = { null },
     ) {
         val probe = Probe(estimate)
@@ -271,6 +272,7 @@ class PlaybackSessionManagerBufferingQualityTest {
 
         assertEquals(2, harness.replanBodies.size)
         assertEquals(harness.replanBodies[0], harness.replanBodies[1])
+        assertEquals(BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER, harness.replanBodies[1].string("bandwidth_estimate_source"))
     }
 
     @Test
@@ -662,6 +664,19 @@ class PlaybackSessionManagerBufferingQualityTest {
         val lowering = harness.replanBodies.single()
         assertEquals(JsonPrimitive(44_100), lowering["bandwidth_estimate_kbps"])
         assertEquals(BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER, lowering.string("bandwidth_estimate_source"))
+    }
+
+    @Test
+    fun aLoweringWhoseReadingIsGoneWhenSentClaimsNoSlowLink() = runTest {
+        // The controller saw slow transfer, then the network changed before the
+        // request was built: the meter has no reading for the new connection.
+        val harness = Harness(BUFFERING_QUALITY_SERVER, playingPlanThroughputKbps = { null })
+        harness.start()
+        harness.lower()
+        val lowering = harness.replanBodies.single()
+        assertEquals(JsonPrimitive(44_100), lowering["bandwidth_estimate_kbps"])
+        assertNull(lowering["bandwidth_estimate_source"])
+        assertNull(lowering["observed_throughput_kbps"])
     }
 
     @Test

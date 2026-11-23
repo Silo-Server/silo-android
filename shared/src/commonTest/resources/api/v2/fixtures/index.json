@@ -143,7 +143,8 @@
         "method": "DELETE",
         "path": "/api/v2/account/identities/4",
         "headers": {
-          "Authorization": "Bearer tok-member"
+          "Authorization": "Bearer tok-member",
+          "X-Profile-Id": "p-primary"
         }
       },
       "expected_status": 409,
@@ -175,6 +176,27 @@
       "response_media_type": "application/json",
       "schema": "#/components/schemas/CatalogItemDetail",
       "body_file": "get_catalog_item_ok.json"
+    },
+    {
+      "name": "get_catalog_search_capabilities_ok",
+      "operation_id": "getCatalogSearchCapabilities",
+      "scenario": "Search exposes its ranked result window and fixed session lifetime.",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/catalog/search/capabilities",
+        "headers": {
+          "Authorization": "Bearer tok-member",
+          "X-Profile-Id": "p-owner"
+        }
+      },
+      "expected_status": 200,
+      "response_headers": {
+        "Cache-Control": "private, no-cache",
+        "Content-Type": "application/json"
+      },
+      "response_media_type": "application/json",
+      "schema": "#/components/schemas/CatalogSearchCapabilities",
+      "body_file": "get_catalog_search_capabilities_ok.json"
     },
     {
       "name": "get_current_user_ok",
@@ -423,6 +445,48 @@
       "response_media_type": "application/json",
       "schema": "#/components/schemas/AuthProviderCollection",
       "body_file": "list_auth_providers_ok.json"
+    },
+    {
+      "name": "list_catalog_item_collections_ok",
+      "operation_id": "listCatalogItemCollections",
+      "scenario": "The collections a movie's page lists under Also in: a server collection, then one of the profile's own.",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/catalog/items/movie:harbor-lights-2019/collections?library_id=1",
+        "headers": {
+          "Authorization": "Bearer tok-member",
+          "X-Profile-Id": "p-owner"
+        }
+      },
+      "expected_status": 200,
+      "response_headers": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json"
+      },
+      "response_media_type": "application/json",
+      "schema": "#/components/schemas/CatalogItemCollections",
+      "body_file": "list_catalog_item_collections_ok.json"
+    },
+    {
+      "name": "list_catalog_item_collections_single_preview",
+      "operation_id": "listCatalogItemCollections",
+      "scenario": "A movie only one collection holds: its card, and its other titles to show in place of the card.",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/catalog/items/movie:night-ferry-2021/collections?library_id=1",
+        "headers": {
+          "Authorization": "Bearer tok-member",
+          "X-Profile-Id": "p-owner"
+        }
+      },
+      "expected_status": 200,
+      "response_headers": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json"
+      },
+      "response_media_type": "application/json",
+      "schema": "#/components/schemas/CatalogItemCollections",
+      "body_file": "list_catalog_item_collections_single_preview.json"
     },
     {
       "name": "list_progress_offset_rejected",

@@ -1,9 +1,5 @@
 package org.siloserver.silo.common.diagnostics
 
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DataSourceException
-import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.Locale
@@ -182,29 +178,24 @@ object DiagnosticsPlaybackLogger {
 
     fun audioUnderrun() = SiloLog.w(DiagnosticsLogCategory.PLAYBACK, "Media3Analytics", "audio underrun")
 
-    fun playerError(error: PlaybackException) = SiloLog.e(
-        DiagnosticsLogCategory.PLAYBACK, "Media3Analytics", "player error ${failureDetails(error, error.errorCodeName)}",
+    // Error lines carry their codes twice: as attributes for self-hosted
+    // reports, and as a short code list in the message because the hosted
+    // collector keeps no error attributes. Every message token comes from a
+    // fixed vocabulary (Media3 constant names, class names, HTTP status), never
+    // an exception message, which can hold a stream URL.
+    fun playerError(detail: DiagnosticsPlayerErrorDetail) = SiloLog.e(
+        DiagnosticsLogCategory.PLAYBACK,
+        "Media3Analytics",
+        withReasonCode("player error", detail.messageCodes()),
+        detail.attributes(),
     )
 
-    @UnstableApi
-    fun loadError(error: IOException) = SiloLog.w(
-        DiagnosticsLogCategory.PLAYBACK, "Media3Analytics", "media load error ${failureDetails(error)}",
+    fun loadError(detail: DiagnosticsLoadErrorDetail) = SiloLog.w(
+        DiagnosticsLogCategory.PLAYBACK,
+        "Media3Analytics",
+        withReasonCode("media load error", detail.messageCodes()),
+        detail.attributes(),
     )
-
-    // Keep class names and Media3 codes in the message so hosted reports retain them.
-    // Exception messages may contain stream URLs or request headers.
-    @androidx.annotation.OptIn(UnstableApi::class)
-    private fun failureDetails(error: Throwable, playerCode: String? = null): String {
-        val causes = generateSequence(error) { it.cause }.take(8).toList()
-        val code = playerCode ?: causes.filterIsInstance<DataSourceException>().firstOrNull()?.let {
-            PlaybackException.getErrorCodeName(it.reason)
-        }
-        return buildString {
-            if (code != null) append("code=$code ")
-            append("causes=")
-            causes.joinTo(this, separator = " > ") { it.javaClass.name }
-        }
-    }
 
     // Seek and state lines carry their meaning in the message, not attributes:
     // the hosted collector strips position_ms and reason. Reason codes come from
@@ -282,6 +273,73 @@ object DiagnosticsPlaybackLogger {
         message: String,
         attributes: Map<String, SiloLogAttribute> = emptyMap(),
     ) = SiloLog.i(DiagnosticsLogCategory.PLAYBACK, "Media3Analytics", message, attributes)
+}
+
+/**
+ * Identifier-free description of a Media3 player error. Built from error
+ * codes, class names, and format fields only; see `toDiagnosticsDetail()` in
+ * the player package.
+ */
+data class DiagnosticsPlayerErrorDetail(
+    val errorCode: Int,
+    val errorCodeName: String,
+    val httpStatus: Int? = null,
+    /** Simple class name of the immediate cause. */
+    val causeClass: String? = null,
+    /** Simple class name of the deepest cause, when it differs from [causeClass]. */
+    val rootCauseClass: String? = null,
+    val renderer: String? = null,
+    val decoder: String? = null,
+    val sampleMimeType: String? = null,
+    val formatSupport: String? = null,
+    /** Simple class names of the whole bounded cause chain, outermost first. */
+    val causeClasses: List<String> = listOfNotNull(causeClass, rootCauseClass),
+) {
+    internal fun messageCodes(): String = (
+        listOfNotNull(errorCodeName, httpStatus?.let { "http $it" }, renderer) + causeClasses
+        ).joinToString(", ")
+
+    internal fun attributes(): Map<String, SiloLogAttribute> = buildMap {
+        put("error_code", SiloLogAttribute.Integer(errorCode.toLong()))
+        put("error_name", SiloLogAttribute.Text(errorCodeName))
+        httpStatus?.let { put("http_status", SiloLogAttribute.Integer(it.toLong())) }
+        causeClass?.let { put("error_class", SiloLogAttribute.Text(it)) }
+        rootCauseClass?.let { put("root_error_class", SiloLogAttribute.Text(it)) }
+        renderer?.let { put("renderer", SiloLogAttribute.Text(it)) }
+        decoder?.let { put("decoder", SiloLogAttribute.Text(it)) }
+        sampleMimeType?.let { put("fmt", SiloLogAttribute.Text(it)) }
+        formatSupport?.let { put("format_support", SiloLogAttribute.Text(it)) }
+    }
+}
+
+/** Identifier-free description of one failed Media3 load. */
+data class DiagnosticsLoadErrorDetail(
+    val dataType: String,
+    val trackType: String,
+    /** Media3 error code name from the first `DataSourceException` in the chain. */
+    val errorCodeName: String? = null,
+    val httpStatus: Int? = null,
+    val errorClass: String,
+    val rootCauseClass: String? = null,
+    val wasCanceled: Boolean,
+    /** Simple class names of the whole bounded cause chain, starting with [errorClass]. */
+    val causeClasses: List<String> = listOfNotNull(errorClass, rootCauseClass),
+) {
+    internal fun messageCodes(): String = (
+        listOfNotNull("$dataType $trackType", errorCodeName, httpStatus?.let { "http $it" }) +
+            causeClasses +
+            listOfNotNull("canceled".takeIf { wasCanceled })
+        ).joinToString(", ")
+
+    internal fun attributes(): Map<String, SiloLogAttribute> = buildMap {
+        put("data_type", SiloLogAttribute.Text(dataType))
+        put("track_type", SiloLogAttribute.Text(trackType))
+        errorCodeName?.let { put("error_name", SiloLogAttribute.Text(it)) }
+        httpStatus?.let { put("http_status", SiloLogAttribute.Integer(it.toLong())) }
+        put("error_class", SiloLogAttribute.Text(errorClass))
+        rootCauseClass?.let { put("root_error_class", SiloLogAttribute.Text(it)) }
+        put("was_canceled", SiloLogAttribute.Flag(wasCanceled))
+    }
 }
 
 object DiagnosticsLifecycleLogger {

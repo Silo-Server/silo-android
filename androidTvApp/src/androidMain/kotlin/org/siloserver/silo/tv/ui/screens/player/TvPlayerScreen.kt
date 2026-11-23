@@ -2483,7 +2483,7 @@ fun TvPlayerScreen(
                             } else {
                                 // seekImmediate pre-writes position so a scrub
                                 // committed into the credits region isn't mistaken
-                                // for natural playback crossing the credits point.
+                                // for natural playback crossing the Up Next point.
                                 viewModel.seekImmediate(targetSec)
                             }
                             viewModel.setControlsVisible(true)
@@ -2588,7 +2588,7 @@ fun TvPlayerScreen(
                             subtitleSync = hudSubtitleSync,
                             onSyncSubtitle = viewModel::requestSubtitleSync,
                             onResetSubtitleTiming = viewModel::resetSubtitleTiming,
-                            onSearchSubtitles = if (state.mediaFileId != null) {
+                            onSearchSubtitles = if (state.mediaFileId != null && subtitleSearch.providerAvailable == true) {
                                 {
                                     viewModel.closeHUD()
                                     viewModel.openSubtitleSearchDialog()
@@ -2623,7 +2623,7 @@ fun TvPlayerScreen(
                                     } else {
                                         // Solo: seekImmediate pre-writes position so a
                                         // chapter jump into credits isn't mistaken for
-                                        // natural playback crossing the credits point.
+                                        // natural playback crossing the Up Next point.
                                         viewModel.seekImmediate(sec)
                                     }
                                 }

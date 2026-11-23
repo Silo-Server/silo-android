@@ -1,11 +1,15 @@
 package org.siloserver.silo.common.player
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
+import androidx.core.content.ContextCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.upstream.BandwidthMeter
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
@@ -26,6 +30,8 @@ data class PlaybackNetworkSnapshot(
     val cellular: Boolean = false,
     /** The network has TRANSPORT_VPN. */
     val vpn: Boolean = false,
+    /** Android Data Saver is active and this app is not exempt (RESTRICT_BACKGROUND_STATUS_ENABLED). */
+    val dataSaver: Boolean = false,
     /**
      * Media3's throughput estimate from completed transfers, for diagnostics
      * only (route events and the diagnostics bundle): it starts as a guess
@@ -73,7 +79,8 @@ class PlaybackNetworkMonitor(
     context: Context,
     bandwidthMeter: DefaultBandwidthMeter,
 ) : PlaybackNetworkEvidenceProvider, BandwidthMeter.EventListener {
-    private val connectivity = context.applicationContext
+    private val appContext = context.applicationContext
+    private val connectivity = appContext
         .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private val _state = MutableStateFlow(PlaybackNetworkSnapshot())
     val state: StateFlow<PlaybackNetworkSnapshot> = _state.asStateFlow()
@@ -92,10 +99,24 @@ class PlaybackNetworkMonitor(
         }
     }
 
+    private val dataSaverReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == ConnectivityManager.ACTION_RESTRICT_BACKGROUND_CHANGED) {
+                refreshCurrentNetwork()
+            }
+        }
+    }
+
     init {
         bandwidthMeter.addEventListener(Handler(Looper.getMainLooper()), this)
-        refresh(defaultNetwork)
+        refreshCurrentNetwork()
         connectivity.registerDefaultNetworkCallback(callback)
+        ContextCompat.registerReceiver(
+            appContext,
+            dataSaverReceiver,
+            IntentFilter(ConnectivityManager.ACTION_RESTRICT_BACKGROUND_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
 
     override fun snapshot(): PlaybackNetworkSnapshot = _state.value
@@ -110,24 +131,34 @@ class PlaybackNetworkMonitor(
     }
 
     @Synchronized
+    private fun refreshCurrentNetwork() {
+        val current = defaultNetwork
+        publish(current, capabilities(current))
+    }
+
+    @Synchronized
     private fun refresh(
         network: Network?,
-        knownCapabilities: NetworkCapabilities? = capabilities(network),
+        knownCapabilities: NetworkCapabilities? = null,
     ) {
         if (network != defaultNetwork) {
             defaultNetwork = network
             measuredBitrateBps = null
         }
-        publish(network, knownCapabilities)
+        publish(network, knownCapabilities ?: capabilities(network))
     }
 
     private fun publish(network: Network?, caps: NetworkCapabilities?) {
         _state.value = playbackNetworkSnapshot(
             caps = caps.takeIf { network != null },
+            dataSaver = isDataSaverEnabled(),
             bandwidthEstimateKbps = measuredBitrateBps?.toKbpsInt(),
             networkId = network?.networkHandle,
         )
     }
+
+    private fun isDataSaverEnabled(): Boolean =
+        connectivity.restrictBackgroundStatus == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED
 
     private fun capabilities(network: Network?): NetworkCapabilities? =
         network?.let(connectivity::getNetworkCapabilities)
@@ -136,6 +167,7 @@ class PlaybackNetworkMonitor(
 /** The snapshot for the default network's [caps]; null caps is no connection. */
 internal fun playbackNetworkSnapshot(
     caps: NetworkCapabilities?,
+    dataSaver: Boolean = false,
     bandwidthEstimateKbps: Int? = null,
     networkId: Long? = null,
 ): PlaybackNetworkSnapshot = PlaybackNetworkSnapshot(
@@ -145,6 +177,7 @@ internal fun playbackNetworkSnapshot(
     transport = caps.transportName(),
     cellular = caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true,
     vpn = caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true,
+    dataSaver = dataSaver,
     bandwidthEstimateKbps = bandwidthEstimateKbps,
     linkDownstreamKbps = caps?.linkDownstreamBandwidthKbps?.takeIf { it > 0 },
     networkId = networkId.takeIf { caps != null },

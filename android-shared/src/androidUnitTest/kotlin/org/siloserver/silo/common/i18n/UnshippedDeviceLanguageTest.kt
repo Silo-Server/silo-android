@@ -9,6 +9,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.siloserver.silo.common.R
+import org.siloserver.silo.model.settings.AppLanguage
 import java.util.Locale
 import kotlin.test.assertEquals
 
@@ -75,5 +76,17 @@ class UnshippedDeviceLanguageTest {
             val base = app.createConfigurationContext(Configuration(app.resources.configuration).apply { setLocale(locale) })
             assertEquals(locale, AppLocales.wrap(base).resources.configuration.locales[0])
         }
+    }
+
+    @Test
+    fun hebrewAndIndonesianShipUnderTheCodesDevicesReport() {
+        assertEquals("he", AppLocales.modernTag("iw"))
+        assertEquals("id", AppLocales.modernTag("in"))
+        assertEquals("he-IL", AppLocales.modernTag("iw-IL"))
+        assertEquals("it", AppLocales.modernTag("it"))
+        assertEquals("zh-Hans", AppLocales.modernTag("zh-Hans"))
+        val shipped = listOf("en", "iw", "in").map(AppLocales::modernTag)
+        assertEquals("he", AppLanguage.match("he-IL", shipped))
+        assertEquals("id", AppLanguage.match("id-ID", shipped))
     }
 }
