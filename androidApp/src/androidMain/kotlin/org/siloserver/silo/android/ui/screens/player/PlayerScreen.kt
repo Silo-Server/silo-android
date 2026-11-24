@@ -692,12 +692,15 @@ fun PlayerScreen(
     var mediaController by remember { mutableStateOf<MediaController?>(null) }
     // With Next Up off, the end of playback leaves the player like Back. The
     // position ticker stops in the background, so report the end position
-    // first; the exit saves the last reported one.
+    // first; the exit saves the last reported one. In picture-in-picture,
+    // leaving the route would fill the window with the screen behind the
+    // player, so the ended frame stays until picture-in-picture ends.
     LaunchedEffect(Unit) {
         viewModel.closeAtEndRequests.collect {
             mediaController?.takeIf { it.mediaItemCount > 0 }?.let { controller ->
                 viewModel.onPositionChanged(controller.currentPosition, controller.duration)
             }
+            pictureInPictureCoordinator.isInPictureInPictureMode.first { !it }
             exitPlayer()
         }
     }

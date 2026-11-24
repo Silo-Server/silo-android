@@ -1079,10 +1079,10 @@ class PlayerViewModel(
     private val _closeAtEndRequests = MutableSharedFlow<Unit>(
         replay = 0,
         extraBufferCapacity = 1,
-        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     /** PlayerScreen leaves the player the way Back does: playback ended with Next Up off. */
-    val closeAtEndRequests: kotlinx.coroutines.flow.SharedFlow<Unit> = _closeAtEndRequests.asSharedFlow()
+    val closeAtEndRequests: SharedFlow<Unit> = _closeAtEndRequests.asSharedFlow()
 
     /**
      * Video relative-seek intervals every phone surface uses (buttons,
@@ -6412,6 +6412,14 @@ class PlayerViewModel(
                 val playbackEnded =
                     if (startedAtEnd) wallRemaining <= 0 else _uiState.value.upNextVideoEnded
                 if (!playbackEnded) continue
+                // Next Up turned off while this countdown ran: the end closes
+                // the player instead of starting the next episode.
+                if (shufflePlayback == null && !nextUpEnabled.value) {
+                    upNextCountdownJob = null
+                    _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
+                    _closeAtEndRequests.tryEmit(Unit)
+                    return@launch
+                }
                 // Unattended countdown-expiry advance: increment the pass-out streak
                 // so a long unattended binge eventually trips the gate. An explicit
                 // Play Now (below) resets the streak instead.

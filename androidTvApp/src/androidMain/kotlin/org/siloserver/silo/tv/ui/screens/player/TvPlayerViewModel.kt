@@ -1896,6 +1896,9 @@ class TvPlayerViewModel(
     // Playback reached the closing credits or the end of this item. Unlike
     // autoAdvanceHandled, opening Up Next by hand or Keep Watching never sets it.
     private var reachedCreditsOrEnd = false
+    // The showing Up Next overlay is one the viewer opened by hand. Set by
+    // every path that shows it, so it is read only while it shows.
+    private var nextUpOpenedByViewer = false
     // The identity generation this player was launched under.
     private val launchIdentityGeneration: Long? = identityTransitions?.generation?.value
     private val nextUpTransitionGate = NextUpTransitionGate()
@@ -5481,14 +5484,16 @@ class TvPlayerViewModel(
         } else if (!nextUpEnabled.value) {
             // Next Up off: nothing before the end, and the player closes at the
             // end. A shuffle still moves on; the viewer asked for one. An
-            // overlay the viewer opened stays up, without a countdown.
+            // overlay the viewer opened stays up, without a countdown; one that
+            // opened on its own before Off arrived closes with the player.
             if (videoEnded) {
-                if (_uiState.value.showNextUp) {
-                    // A countdown left from before Off arrived must not advance.
-                    nextUpCountdownJob?.cancel()
-                    nextUpCountdownJob = null
+                // A countdown left from before Off arrived must not advance.
+                nextUpCountdownJob?.cancel()
+                nextUpCountdownJob = null
+                if (_uiState.value.showNextUp && nextUpOpenedByViewer) {
                     _uiState.update { it.copy(nextUpVideoEnded = true, nextUpCountdownSeconds = null) }
                 } else {
+                    _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
                     _closeAtEndRequests.tryEmit(Unit)
                 }
             }
@@ -5498,6 +5503,7 @@ class TvPlayerViewModel(
         // A card still showing keeps its existing countdown.
         if (autoAdvanceHandled) {
             if (videoEnded) {
+                nextUpOpenedByViewer = false
                 _uiState.update { it.copy(showNextUp = true, hudOpen = false, nextUpVideoEnded = true) }
             }
             return
@@ -5521,6 +5527,7 @@ class TvPlayerViewModel(
             // autoAdvanceHandled here, so a next episode that resolves moments
             // later can still arm the countdown via resolveNextEpisode.
             if (ended) {
+                nextUpOpenedByViewer = false
                 _uiState.update {
                     it.copy(
                         showNextUp = true,
@@ -5571,6 +5578,7 @@ class TvPlayerViewModel(
         if (_uiState.value.showNextUp) return
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
+        nextUpOpenedByViewer = true
         _uiState.update {
             it.copy(showNextUp = true, hudOpen = false, nextUpCountdownSeconds = null)
         }
@@ -5592,6 +5600,7 @@ class TvPlayerViewModel(
             else -> ceil((current.duration - current.position).coerceAtLeast(0.0)).toInt()
         }
 
+        nextUpOpenedByViewer = false
         _uiState.update {
             it.copy(
                 showNextUp = true,
@@ -5651,6 +5660,14 @@ class TvPlayerViewModel(
                 val playbackEnded =
                     if (startedAtEnd) wallRemaining <= 0 else _uiState.value.nextUpVideoEnded
                 if (!playbackEnded) continue
+                // Next Up turned off while this countdown ran: the end closes
+                // the player instead of starting the next episode.
+                if (shufflePlayback == null && !nextUpEnabled.value) {
+                    nextUpCountdownJob = null
+                    _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
+                    _closeAtEndRequests.tryEmit(Unit)
+                    return@launch
+                }
                 // Automatic countdown-expiry advance: increment the pass-out streak
                 // so a long unattended binge eventually trips the "still watching?"
                 // gate. An explicit Play Now (below) resets the streak instead.

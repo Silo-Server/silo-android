@@ -490,7 +490,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     @Test
     fun nextUpOffShowsNoCardAndClosesThePlayerAtTheEnd() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
-        val fixture = playerViewModel(starter, backgroundScope, nextUpEnabled = false)
+        val fixture = playerViewModel(starter, backgroundScope, nextUpEnabled = flowOf(false))
         val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
         try {
             val viewModel = fixture.viewModel
@@ -509,6 +509,35 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             assertTrue(closes.isEmpty())
 
             viewModel.onApproachingEnd(videoEnded = true)
+            runCurrent()
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertEquals(1, closes.size)
+            assertEquals(1, starter.startedRequestCount)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun nextUpTurnedOffDuringTheEndCountdownClosesInsteadOfAdvancing() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val nextUpEnabled = MutableStateFlow(true)
+        val fixture = playerViewModel(starter, backgroundScope, nextUpEnabled = nextUpEnabled)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val closes = mutableListOf<Unit>()
+            backgroundScope.launch { viewModel.closeAtEndRequests.collect { closes += it } }
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            viewModel.offerNextEpisode()
+            viewModel.onApproachingEnd(videoEnded = true)
+            assertEquals(PlayerViewModel.UP_NEXT_COUNTDOWN_SECONDS, viewModel.uiState.value.upNextCountdownSeconds)
+
+            nextUpEnabled.value = false
+            testScheduler.advanceTimeBy(30_000)
             runCurrent()
             assertFalse(viewModel.uiState.value.showUpNext)
             assertEquals(1, closes.size)
@@ -927,7 +956,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         network: PlaybackNetworkEvidenceProvider = PlaybackNetworkEvidenceProvider.None,
         /** The reachability probe answers; otherwise it has no server to probe. */
         serverReachable: Boolean = false,
-        nextUpEnabled: Boolean = true,
+        nextUpEnabled: Flow<Boolean> = flowOf(true),
     ): PlayerFixture {
         val client = noOpClient()
         val tokenManager = FakeTokenManager()
@@ -2092,9 +2121,9 @@ private class FakeServerRegistry : ServerRegistry {
 
 private class FakePlayerSettingsStore(
     private val audioLanguage: String = "",
-    nextUpEnabled: Boolean = true,
+    nextUpEnabled: Flow<Boolean> = flowOf(true),
 ) : PlayerSettingsStore {
-    override val nextUpEnabledFlow: Flow<Boolean> = flowOf(nextUpEnabled)
+    override val nextUpEnabledFlow: Flow<Boolean> = nextUpEnabled
     override val introSkipModeFlow: Flow<IntroSkipMode> = flowOf(IntroSkipMode.ASK)
     override val bufferingQualityModeFlow: Flow<BufferingQualityMode> = flowOf(BufferingQualityMode.Default)
     override val autoSkipCreditsFlow: Flow<Boolean> = flowOf(false)
