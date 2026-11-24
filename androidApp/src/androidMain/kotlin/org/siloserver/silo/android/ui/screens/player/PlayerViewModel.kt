@@ -1125,17 +1125,15 @@ class PlayerViewModel(
     private var shufflePlayback: org.siloserver.silo.playback.ShufflePlayback? = null
 
     init {
-        // Next Up turned off while the automatic end card waits (no
-        // countdown, or no next episode at all): that card was all that
-        // held the player open, so close as Off would have at the end.
+        // Next Up turned off while a card shows: one before the end goes
+        // away as Keep Watching would, and one at the end was all that held
+        // the player open, so close as Off would have at the end.
         viewModelScope.launch {
             nextUpEnabled.collect { enabled ->
                 val state = _uiState.value
-                if (!enabled && shufflePlayback == null && !remoteTransportSuppressed &&
-                    state.showUpNext && state.upNextVideoEnded && !state.isNextUpTransitioning
-                ) {
-                    closeAtEndWithNextUpOff()
-                }
+                if (enabled || shufflePlayback != null || remoteTransportSuppressed) return@collect
+                if (!state.showUpNext || state.isNextUpTransitioning) return@collect
+                if (state.upNextVideoEnded) closeAtEndWithNextUpOff() else dismissUpNext()
             }
         }
     }

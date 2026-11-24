@@ -2053,20 +2053,22 @@ class TvPlayerViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     init {
-        // Next Up turned off while an automatic end overlay waits (no
-        // countdown, or no next episode at all): close as Off would have at
-        // the end. An overlay the viewer opened stays theirs.
+        // Next Up turned off while an automatic overlay shows: one before the
+        // end goes away as Keep Watching would, and one at the end closes the
+        // player as Off would have. An overlay the viewer opened stays theirs.
         viewModelScope.launch {
             nextUpEnabled.collect { enabled ->
                 val state = _uiState.value
-                if (!enabled && roomId == null && shufflePlayback == null && !nextUpOpenedByViewer &&
-                    state.showNextUp && state.nextUpVideoEnded && !state.isNextUpTransitioning
-                ) {
-                    nextUpCountdownJob?.cancel()
-                    nextUpCountdownJob = null
-                    _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
-                    _closeAtEndRequests.tryEmit(Unit)
+                if (enabled || roomId != null || shufflePlayback != null || nextUpOpenedByViewer) return@collect
+                if (!state.showNextUp || state.isNextUpTransitioning) return@collect
+                if (!state.nextUpVideoEnded) {
+                    dismissNextUp()
+                    return@collect
                 }
+                nextUpCountdownJob?.cancel()
+                nextUpCountdownJob = null
+                _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
+                _closeAtEndRequests.tryEmit(Unit)
             }
         }
     }

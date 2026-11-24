@@ -577,6 +577,40 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun nextUpTurnedOffBeforeTheEndClearsTheCardAndClosesAtTheEnd() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val nextUpEnabled = MutableStateFlow(true)
+        val fixture = playerViewModel(starter, backgroundScope, nextUpEnabled = nextUpEnabled)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val closes = mutableListOf<Unit>()
+            backgroundScope.launch { viewModel.closeAtEndRequests.collect { closes += it } }
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            viewModel.offerNextEpisode()
+            viewModel.onApproachingEnd()
+            assertTrue(viewModel.uiState.value.showUpNext)
+
+            nextUpEnabled.value = false
+            runCurrent()
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertNull(viewModel.uiState.value.upNextCountdownSeconds)
+            assertTrue(closes.isEmpty())
+
+            viewModel.onApproachingEnd(videoEnded = true)
+            runCurrent()
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertEquals(1, closes.size)
+            assertEquals(1, starter.startedRequestCount)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun keepWatchingSuppressesCreditsPromptButReopensNextUpAtPlaybackEnd() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)
