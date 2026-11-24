@@ -1851,6 +1851,7 @@ class PlayerViewModel(
                 )
                 if (!ownsLoad(loadOwner)) return@launch
                 if (localPlaybackStarted) {
+                    startIntroAutoSkipObserver(offerIntro = false)
                     return@launch
                 }
 
@@ -2357,7 +2358,12 @@ class PlayerViewModel(
         scheduleControlsHide()
     }
 
-    private fun startIntroAutoSkipObserver() {
+    /**
+     * Starts the skip pills for the playback just published. [offerIntro] is
+     * false for a downloaded file, which has never offered the intro pill;
+     * its recap and credits pill still runs, as it did before it was timed.
+     */
+    private fun startIntroAutoSkipObserver(offerIntro: Boolean = true) {
         // In a Watch Party an intro never skips on its own: the mode is pinned
         // to Ask, so the controller only offers the pill and the screen sends
         // its Skip as a room seek (or hides it from members who cannot seek).
@@ -2387,15 +2393,19 @@ class PlayerViewModel(
                 deliberatelyInactive = _uiState.map { it.isPaused },
             )
         introObserverJob?.cancel()
-        introObserverJob = introAutoSkipController.observe(
-            position = position,
-            introRange = introOccurrence,
-            mode = introMode,
-            introKey = playbackKey,
-            onSeek = { seekToSec -> onSeek(seekToSec) },
-            playbackActive = playbackActive,
-            controlsVisible = skipPillControlsVisible,
-        )
+        introObserverJob = if (offerIntro) {
+            introAutoSkipController.observe(
+                position = position,
+                introRange = introOccurrence,
+                mode = introMode,
+                introKey = playbackKey,
+                onSeek = { seekToSec -> onSeek(seekToSec) },
+                playbackActive = playbackActive,
+                controlsVisible = skipPillControlsVisible,
+            )
+        } else {
+            null
+        }
         // The recap and credits pill freezes, or waits to start, while the
         // intro pill or Up Next covers it, so it shows with the time it had.
         segmentObserverJob?.cancel()
