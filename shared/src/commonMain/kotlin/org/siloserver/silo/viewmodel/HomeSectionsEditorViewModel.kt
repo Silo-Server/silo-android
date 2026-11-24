@@ -10,7 +10,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.siloserver.silo.common.i18n.SharedString
 import org.siloserver.silo.common.i18n.UiText
@@ -47,8 +46,8 @@ class HomeSectionsEditorViewModel(private val repository: ProfileHomeLayoutRepos
     /** The rows as the server last confirmed them: read, or saved. A failed save goes back to these unless a later change carries it. */
     private var confirmed: List<ProfileSectionSetting> = emptyList()
 
-    /** Held by each save, and by each read so it never runs beside a save and shows the layout before it. */
-    private val saves = Mutex()
+    /** Held by each save, and by each read so it never runs beside a save and shows the layout before it. Shared by every editor instance. */
+    private val saves get() = repository.editorLock
     private var loadJob: Job? = null
 
     /** Counts edits and reloads, so a failed save can tell whether something later owns the rows on screen. */
@@ -130,7 +129,7 @@ class HomeSectionsEditorViewModel(private val repository: ProfileHomeLayoutRepos
                     // The reply can be lost after the server stored the
                     // change, so read back what it has instead of assuming
                     // the old rows.
-                    val serverRows = repository.readBack(owner, next)
+                    val serverRows = repository.readBack(owner, previous = confirmed)
                     if (serverRows != null) confirmed = serverRows
                     val landed = serverRows?.sameLayoutAs(next) == true
                     // A later change or reload carries this one and reports

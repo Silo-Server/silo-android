@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
 import org.siloserver.silo.model.section.ProfileSectionSetting
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
@@ -39,6 +40,13 @@ class ProfileHomeLayoutRepository(
     private val changes: HomeLayoutChanges,
     private val newId: () -> String = ::newOverrideId,
 ) {
+    /**
+     * Held by every editor's saves and reads. The repository outlives each
+     * editor, so an editor reopened while an earlier one still saves reads
+     * the layout after that save, not before it.
+     */
+    internal val editorLock = Mutex()
+
     suspend fun load(): ApiResult<ProfileHomeLayout> {
         val owner = api.capture() ?: return noProfile()
         return when (val rows = api.homeSettings(owner)) {
@@ -72,14 +80,15 @@ class ProfileHomeLayoutRepository(
     /**
      * After a failed [save] for [owner]: the rows the server now has, or null
      * when they can't be read. A save whose reply was lost may still have
-     * landed; when the rows match [expected], Home re-reads as after a save.
+     * landed, or the layout changed elsewhere; when the rows differ from
+     * [previous] (the rows last confirmed), Home re-reads as after a save.
      */
     suspend fun readBack(
         owner: AuthScopeSnapshot,
-        expected: List<ProfileSectionSetting>,
+        previous: List<ProfileSectionSetting>,
     ): List<ProfileSectionSetting>? {
         val rows = (api.homeSettings(owner) as? ApiResult.Success)?.data ?: return null
-        if (rows.sameLayoutAs(expected)) changes.changed()
+        if (rows.map { it.id to it.hidden } != previous.map { it.id to it.hidden }) changes.changed()
         return rows
     }
 
@@ -90,6 +99,12 @@ class ProfileHomeLayoutRepository(
 @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 private fun newOverrideId(): String = kotlin.uuid.Uuid.random().toString()
 
-/** The same rows in the same order, each shown or hidden alike. */
-fun List<ProfileSectionSetting>.sameLayoutAs(other: List<ProfileSectionSetting>): Boolean =
-    map { it.id to it.hidden } == other.map { it.id to it.hidden }
+/**
+ * The rows both lists have are in the same order and shown or hidden alike.
+ * A row the admin added or removed in the meantime doesn't count against it.
+ */
+fun List<ProfileSectionSetting>.sameLayoutAs(other: List<ProfileSectionSetting>): Boolean {
+    val shared = map { it.id }.toSet().intersect(other.map { it.id }.toSet())
+    fun List<ProfileSectionSetting>.layout() = filter { it.id in shared }.map { it.id to it.hidden }
+    return layout() == other.layout()
+}
