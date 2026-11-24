@@ -9,6 +9,7 @@ import org.siloserver.silo.model.profile.CreateProfileRequest
 import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.withAccessLimits
 import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.model.profile.ProfilesResponse
 import org.siloserver.silo.model.profile.hasProfileNamed
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.ProfileRepository
@@ -61,12 +62,14 @@ class TvCreateProfileViewModel(
         loadLibraries()
     }
 
-    /** Returns whether the server takes `requests_allowed`, or null when the read failed. */
-    private suspend fun loadHousehold(): Boolean? {
-        val result = profileRepository.listHousehold() as? ApiResult.Success ?: return null
-        existingProfiles = result.data.profiles
-        _uiState.update { it.copy(requestsAllowedSupported = result.data.requestsAllowedSupported) }
-        return result.data.requestsAllowedSupported
+    /** Reads the household; on success it also records whether the server takes `requests_allowed`. */
+    private suspend fun loadHousehold(): ApiResult<ProfilesResponse> {
+        val result = profileRepository.listHousehold()
+        if (result is ApiResult.Success) {
+            existingProfiles = result.data.profiles
+            _uiState.update { it.copy(requestsAllowedSupported = result.data.requestsAllowedSupported) }
+        }
+        return result
     }
 
     fun onNameChanged(value: String) {
@@ -179,12 +182,19 @@ class TvCreateProfileViewModel(
 
             // Without the support answer a Child Profile would be created with
             // requests allowed, the server's default.
-            val requestsAllowedSupported = current.requestsAllowedSupported ?: loadHousehold()
-            if (requestsAllowedSupported == null) {
-                _uiState.update {
-                    it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_network))
+            val requestsAllowedSupported = current.requestsAllowedSupported ?: run {
+                val household = loadHousehold()
+                if (household !is ApiResult.Success) {
+                    // The server's explanation when it refused, else the network error.
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = household.errorText(CommonR.string.newProfile_error_createFailed),
+                        )
+                    }
+                    return@launch
                 }
-                return@launch
+                household.data.requestsAllowedSupported
             }
 
             val request = CreateProfileRequest(
