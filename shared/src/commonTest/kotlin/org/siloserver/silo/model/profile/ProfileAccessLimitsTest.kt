@@ -112,4 +112,28 @@ class ProfileAccessLimitsTest {
         )
         assertEquals(UiText.Key(SharedString.ProfileLibrariesFailed), AssignableLibraries.from(ApiResult.Error(500, "internal", " ")).let { (it as AssignableLibraries.Failed).text })
     }
+
+    @Test fun childTurnsRequestsOffLikeTheWebKidsPresetUnlessSetByHand() {
+        assertFalse(ProfileAccessLimits().withChild(true).requestsAllowed)
+        assertTrue(ProfileAccessLimits().withRequestsAllowed(true).withChild(true).requestsAllowed)
+        assertFalse(ProfileAccessLimits().withRequestsAllowed(false).withChild(true).requestsAllowed)
+        // Off: requests come back on, as the rating and libraries clear.
+        assertTrue(ProfileAccessLimits().withChild(true).withChild(false).requestsAllowed)
+        assertTrue(ProfileAccessLimits().withRequestsAllowed(false).withChild(true).withChild(false).requestsAllowed)
+    }
+
+    @Test fun requestsAllowedGoesOnlyToServersThatTakeIt() {
+        val child = ProfileAccessLimits().withChild(true)
+        assertNull(CreateProfileRequest("Kid").withAccessLimits(child).requestsAllowed)
+        assertEquals(false, CreateProfileRequest("Kid").withAccessLimits(child, requestsAllowedSupported = true).requestsAllowed)
+
+        val loaded = ProfileAccessLimits(requestsAllowed = true)
+        val blocked = loaded.withRequestsAllowed(false)
+        assertFalse(patch(blocked, loaded).containsKey("requests_allowed"))
+        fun supportedPatch(limits: ProfileAccessLimits) = UpdateProfileRequest(name = "Kid")
+            .withAccessLimits(limits, loaded, requestsAllowedSupported = true).toProfileUpdate().toJsonObject()
+        assertEquals(JsonPrimitive(false), supportedPatch(blocked)["requests_allowed"])
+        // Unchanged: left out, so a stale form can't undo a block made elsewhere since it opened.
+        assertFalse(supportedPatch(loaded).containsKey("requests_allowed"))
+    }
 }

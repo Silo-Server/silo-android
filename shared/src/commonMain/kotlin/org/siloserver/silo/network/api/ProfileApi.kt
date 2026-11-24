@@ -224,6 +224,7 @@ internal fun UpdateProfileRequest.toProfileUpdate(): ProfileUpdate = ProfileUpda
         "" -> Patch.Clear
         else -> Patch.Set(MaxPlaybackQuality(maxPlaybackQuality))
     },
+    requestsAllowed = Patch.ofOptional(requestsAllowed),
 )
 
 private fun clearable(value: String?): Patch<String> = when (value) {
@@ -254,6 +255,7 @@ internal fun ProfileV2.toProfile(): Profile = Profile(
     libraryRestrictionsEnabled = libraryRestrictionsEnabled,
     allowedLibraryIds = allowedLibraryIds.mapNotNull { it.toIntOrNull() },
     maxPlaybackQuality = maxPlaybackQuality.wire,
+    requestsAllowed = requestsAllowed,
     createdAt = createdAt,
     updatedAt = updatedAt,
 )
@@ -263,6 +265,7 @@ private data class ProfileCollectionV2(
     val items: List<ProfileV2>,
     /** How many profiles the account may have; absent when the server did not say. */
     @SerialName("max_profiles") val maxProfiles: Int? = null,
+    @SerialName("requests_allowed_supported") val requestsAllowedSupported: Boolean = false,
 ) {
-    fun toResponse() = ProfilesResponse(items.map { it.toProfile() }, maxProfiles)
+    fun toResponse() = ProfilesResponse(items.map { it.toProfile() }, maxProfiles, requestsAllowedSupported)
 }

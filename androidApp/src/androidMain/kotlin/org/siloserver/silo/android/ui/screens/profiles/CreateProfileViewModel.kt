@@ -9,6 +9,7 @@ import org.siloserver.silo.model.profile.CreateProfileRequest
 import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.withAccessLimits
 import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.model.profile.ProfilesResponse
 import org.siloserver.silo.model.profile.hasProfileNamed
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.ProfileRepository
@@ -30,6 +31,11 @@ data class CreateProfileUiState(
     val language: String? = null,
     val subtitleLanguage: String? = null,
     val subtitleMode: String? = null,
+    /**
+     * The server takes `requests_allowed`, so the form shows the switch and
+     * sends it. Null until the household list has been read.
+     */
+    val requestsAllowedSupported: Boolean? = null,
     val isLoading: Boolean = false,
     val error: UiText? = null,
     val createSuccess: Boolean = false,
@@ -56,12 +62,18 @@ class CreateProfileViewModel(
     private var existingProfiles: List<Profile> = emptyList()
 
     init {
-        viewModelScope.launch {
-            (profileRepository.listProfiles() as? ApiResult.Success)?.let {
-                existingProfiles = it.data
-            }
-        }
+        viewModelScope.launch { loadHousehold() }
         loadLibraries()
+    }
+
+    /** Reads the household; on success it also records whether the server takes `requests_allowed`. */
+    private suspend fun loadHousehold(): ApiResult<ProfilesResponse> {
+        val result = profileRepository.listHousehold()
+        if (result is ApiResult.Success) {
+            existingProfiles = result.data.profiles
+            _uiState.update { it.copy(requestsAllowedSupported = result.data.requestsAllowedSupported) }
+        }
+        return result
     }
 
     fun loadLibraries() {
@@ -86,6 +98,10 @@ class CreateProfileViewModel(
 
     fun onContentRatingSelected(rating: String?) {
         _uiState.update { it.copy(access = it.access.withContentRating(rating)) }
+    }
+
+    fun onRequestsAllowedToggled(allowed: Boolean) {
+        _uiState.update { it.copy(access = it.access.withRequestsAllowed(allowed)) }
     }
 
     fun onLibraryRestrictionsToggled(enabled: Boolean) {
@@ -143,6 +159,28 @@ class CreateProfileViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
+            // Without the support answer a Child Profile would be created with
+            // requests allowed, the server's default.
+            val requestsAllowedSupported = current.requestsAllowedSupported ?: run {
+                val household = loadHousehold()
+                if (household !is ApiResult.Success) {
+                    // Worded as a failed create below: the server's explanation
+                    // when it refused, else the network error.
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = if (household is ApiResult.Error) {
+                                household.errorText(CommonR.string.newProfile_error_createFailed)
+                            } else {
+                                UiText.Res(CommonR.string.profiles_error_network)
+                            },
+                        )
+                    }
+                    return@launch
+                }
+                household.data.requestsAllowedSupported
+            }
+
             val request = CreateProfileRequest(
                 name = current.name,
                 avatar = current.selectedAvatar,
@@ -150,7 +188,7 @@ class CreateProfileViewModel(
                 language = current.language,
                 subtitleLanguage = current.subtitleLanguage,
                 subtitleMode = current.subtitleMode,
-            ).withAccessLimits(current.access)
+            ).withAccessLimits(current.access, requestsAllowedSupported)
 
             when (val result = profileRepository.createProfile(request)) {
                 is ApiResult.Success -> {

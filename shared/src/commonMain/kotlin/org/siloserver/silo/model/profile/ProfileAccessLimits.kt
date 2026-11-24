@@ -16,8 +16,13 @@ const val DEFAULT_CHILD_CONTENT_RATING = "PG"
  * restricted so the manager picks at least one) for the limits the user hasn't
  * set yet in this form, and turning it off clears them.
  *
- * [ratingTouched] and [librariesTouched] are form state, never sent: they
- * record a choice made in this form, which Child then leaves alone.
+ * [requestsAllowed] follows the web Kids preset: Child turns requests off,
+ * since request discovery browses titles outside the library, where parental
+ * controls reach only partly.
+ *
+ * [ratingTouched], [librariesTouched] and [requestsTouched] are form state,
+ * never sent: they record a choice made in this form, which Child then leaves
+ * alone.
  */
 data class ProfileAccessLimits(
     val isChild: Boolean = false,
@@ -26,6 +31,8 @@ data class ProfileAccessLimits(
     val allowedLibraryIds: Set<Int> = emptySet(),
     val ratingTouched: Boolean = false,
     val librariesTouched: Boolean = false,
+    val requestsAllowed: Boolean = true,
+    val requestsTouched: Boolean = false,
 ) {
     fun withChild(child: Boolean): ProfileAccessLimits {
         if (!child) return ProfileAccessLimits()
@@ -36,8 +43,12 @@ data class ProfileAccessLimits(
             maxContentRating = if (fillRating) DEFAULT_CHILD_CONTENT_RATING else maxContentRating,
             libraryRestrictionsEnabled = libraryRestrictionsEnabled || fillLibraries,
             allowedLibraryIds = if (fillLibraries) emptySet() else allowedLibraryIds,
+            requestsAllowed = requestsAllowed && requestsTouched,
         )
     }
+
+    fun withRequestsAllowed(allowed: Boolean): ProfileAccessLimits =
+        copy(requestsAllowed = allowed, requestsTouched = true)
 
     /** A null [rating] is no ceiling. */
     fun withContentRating(rating: String?): ProfileAccessLimits =
@@ -75,6 +86,7 @@ data class ProfileAccessLimits(
             maxContentRating = profile.maxContentRating,
             libraryRestrictionsEnabled = profile.libraryRestrictionsEnabled,
             allowedLibraryIds = profile.allowedLibraryIds.orEmpty().toSet(),
+            requestsAllowed = profile.requestsAllowed,
         )
     }
 }
@@ -82,14 +94,22 @@ data class ProfileAccessLimits(
 /** Form error shown while [ProfileAccessLimits.needsLibrary] holds. */
 val CHOOSE_A_LIBRARY_TEXT: UiText = UiText.Key(SharedString.ProfileChooseLibrary)
 
-/** A new profile's access members. Create omits what it doesn't set. */
-fun CreateProfileRequest.withAccessLimits(limits: ProfileAccessLimits): CreateProfileRequest {
+/**
+ * A new profile's access members. Create omits what it doesn't set.
+ * `requests_allowed` goes only to a server that reports
+ * [ProfilesResponse.requestsAllowedSupported]; older servers reject it.
+ */
+fun CreateProfileRequest.withAccessLimits(
+    limits: ProfileAccessLimits,
+    requestsAllowedSupported: Boolean = false,
+): CreateProfileRequest {
     val restricted = limits.libraryRestrictionsEnabled
     return copy(
         isChild = true.takeIf { limits.isChild },
         maxContentRating = limits.maxContentRating,
         libraryRestrictionsEnabled = true.takeIf { restricted },
         allowedLibraryIds = limits.allowedLibraryIds.sorted().takeIf { restricted },
+        requestsAllowed = limits.requestsAllowed.takeIf { requestsAllowedSupported },
     )
 }
 
@@ -101,11 +121,16 @@ fun CreateProfileRequest.withAccessLimits(limits: ProfileAccessLimits): CreatePr
  *
  * A changed allowlist keeps only [assignable] libraries when that list is
  * known, so a library deleted since the profile was saved doesn't fail the save.
+ * `requests_allowed` is sent only when it differs from [loaded], so a save
+ * from a form opened before someone else blocked the profile doesn't lift
+ * the block, and never to a server that doesn't report
+ * [ProfilesResponse.requestsAllowedSupported].
  */
 fun UpdateProfileRequest.withAccessLimits(
     limits: ProfileAccessLimits,
     loaded: ProfileAccessLimits,
     assignable: Set<Int>? = null,
+    requestsAllowedSupported: Boolean = false,
 ): UpdateProfileRequest {
     val ratingChanged = limits.maxContentRating != loaded.maxContentRating
     val restrictionsChanged = limits.libraryRestrictionsEnabled != loaded.libraryRestrictionsEnabled
@@ -121,6 +146,9 @@ fun UpdateProfileRequest.withAccessLimits(
         maxContentRating = if (ratingChanged) limits.maxContentRating ?: "" else null,
         libraryRestrictionsEnabled = limits.libraryRestrictionsEnabled.takeIf { restrictionsChanged },
         allowedLibraryIds = allowlist.takeIf { allowlistChanged },
+        requestsAllowed = limits.requestsAllowed.takeIf {
+            requestsAllowedSupported && it != loaded.requestsAllowed
+        },
     )
 }
 
