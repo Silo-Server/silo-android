@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +41,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -3722,8 +3724,11 @@ private fun TvPlayerNextUpOverlay(
                                 TvDialogActionRow(
                                     title = stringResource(CommonR.string.upNext_playNow),
                                     onClick = onPlayNow,
+                                    // Grows with the label so a long translation
+                                    // stays on one line.
                                     modifier = Modifier
-                                        .width(220.dp)
+                                        .widthIn(min = 220.dp)
+                                        .width(IntrinsicSize.Max)
                                         .focusRequester(primaryFocus),
                                 )
                                 if (countdownSeconds != null) {
