@@ -289,6 +289,8 @@ fun MediaRow(
                             seriesTitle = item.seriesTitle,
                             seasonNumber = item.seasonNumber,
                             episodeNumber = item.episodeNumber,
+                            episodeLabels = item.episodeLabels,
+                            airDate = item.airDate,
                             progress = rowItem.progress,
                             remainingMinutes = rowItem.remainingMinutes,
                             onClick = { openDetail(item) },

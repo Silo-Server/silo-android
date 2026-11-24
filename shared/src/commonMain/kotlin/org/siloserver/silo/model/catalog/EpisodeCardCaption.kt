@@ -5,25 +5,27 @@ import org.siloserver.silo.common.i18n.UiText
 
 /**
  * Text for the caption under an episode card, the same on the Apple and web
- * clients: "S01E02 · Pilot", then the air date and runtime. Each app formats the
+ * clients: "S01E02 · Pilot", then the air date and runtime. Codes come from
+ * [EpisodeLabel]. Each app formats the
  * air date with its own calendar-date formatter and passes the result in.
  */
 object EpisodeCardCaption {
     /**
-     * "S01E02", zero-padded so codes line up across a rail. A code is
-     * technical, so its numbers stay ASCII in every language (D78).
+     * "S01E02 · Pilot", or the code alone when the episode has no title. For a
+     * date-labeled series ([episodeLabels] `air_date`, sports) the title leads
+     * on its own, since the air date is on the metadata line below; an
+     * untitled episode shows its air date, or its code when undated.
      */
-    private fun code(seasonNumber: Int, episodeNumber: Int): UiText = UiText.Key(
-        SharedString.EpisodeTag,
-        listOf(UiText.Raw(codeNumber(seasonNumber)), UiText.Raw(codeNumber(episodeNumber))),
-    )
-
-    private fun codeNumber(value: Int): String = value.toString().padStart(2, '0')
-
-    /** "S01E02 · Pilot", or the code alone when the episode has no title. */
-    fun title(episode: EpisodeListItem): UiText {
-        val code = code(episode.seasonNumber, episode.episodeNumber)
+    fun title(episode: EpisodeListItem, episodeLabels: String? = null): UiText {
         val title = episode.title?.trim().orEmpty()
+        if (EpisodeLabel.labelsByAirDate(episodeLabels)) {
+            return if (title.isEmpty()) {
+                EpisodeLabel.text(episode.seasonNumber, episode.episodeNumber, episodeLabels, episode.airDate)
+            } else {
+                UiText.Raw(title)
+            }
+        }
+        val code = EpisodeLabel.code(episode.seasonNumber, episode.episodeNumber)
         return if (title.isEmpty()) code else UiText.Key(SharedString.EpisodeCardTitle, listOf(code, title))
     }
 

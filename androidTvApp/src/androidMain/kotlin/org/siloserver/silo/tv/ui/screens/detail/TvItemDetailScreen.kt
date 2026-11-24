@@ -176,6 +176,8 @@ import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.common.audiobook.AudiobookText
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
 
 internal data class TvSeriesDetailRedirect(
     val seriesContentId: String,
@@ -812,7 +814,7 @@ private fun TvDetailContent(
     } else {
         movieDirectorCredit(detail).takeIf { activeSeriesEpisode == null }
     }
-    val heroSourceTokens = activeSeriesEpisode?.let { TvDetailMetadata.seriesEpisodeSourceTokens(resources, it) }
+    val heroSourceTokens = activeSeriesEpisode?.let { TvDetailMetadata.seriesEpisodeSourceTokens(resources, it, detail.episodeLabels) }
         ?: TvDetailMetadata.sourceTokens(resources, detail)
     val activeSeriesSelectedVersion = activeSeriesPlaybackDetail?.let { playbackDetail ->
         selectTvDetailDisplayVersion(
@@ -1983,7 +1985,9 @@ private fun HeroActionRow(
                 listOfNotNull(
                     detail.seriesTitle,
                     // Sent to the server for the party: English data.
-                    detail.seasonNumber?.let { season -> detail.episodeNumber?.let { "S${season}E$it" } },
+                    detail.seasonNumber?.let { season ->
+                        detail.episodeNumber?.let { EpisodeLabel.englishText(season, it, detail.episodeLabels, detail.airDate, EpisodeCodeStyle.Plain) }
+                    },
                 ).joinToString(" · ")
             } else {
                 detail.year.takeIf { it > 0 }?.toString()
@@ -1999,7 +2003,10 @@ private fun HeroActionRow(
             // The party item is sent to the server and shown to every
             // member, so its fallback text stays English data.
             title = nextUp.title?.takeIf { it.isNotBlank() } ?: "Episode ${nextUp.episodeNumber}",
-            subtitle = "${detail.title} · S${nextUp.seasonNumber}E${nextUp.episodeNumber}",
+            subtitle = "${detail.title} · " +
+                EpisodeLabel.englishText(
+                    nextUp.seasonNumber, nextUp.episodeNumber, detail.episodeLabels, nextUp.airDate, EpisodeCodeStyle.Plain,
+                ),
             posterUrl = nextUp.stillUrl ?: detail.posterUrl,
             fileId = selectedFileId,
             libraryId = libraryId,
@@ -2086,6 +2093,7 @@ private fun HeroActionRow(
                             nextUp = nextUp,
                             hasResume = hasResume,
                             resumePosition = resumePosition,
+                            episodeLabels = detail.episodeLabels,
                         )
                     },
                     onClick = {
@@ -2108,7 +2116,13 @@ private fun HeroActionRow(
                     // Android's half-scale canvas maps that to 170dp, keeping
                     // every circular action on a fixed x-position as episode
                     // titles and progress state change.
-                    modifier = if (detail.type == "series") Modifier.width(170.dp) else Modifier,
+                    // A date-labeled series (sports) reads "Play Nov 20, 2026", which
+                    // outgrows that slot, so its pill grows from the same minimum.
+                    modifier = when {
+                        detail.type != "series" -> Modifier
+                        EpisodeLabel.labelsByAirDate(detail.episodeLabels) -> Modifier.widthIn(min = 170.dp)
+                        else -> Modifier.width(170.dp)
+                    },
                     focusRequester = playFocus,
                 )
 
@@ -2559,6 +2573,7 @@ private fun EpisodesSection(
                     val renderEpisodeRail: @Composable (List<EpisodeListItem>) -> Unit = { episodes ->
                         TvDetailEpisodeRail(
                             episodes = episodes,
+                            episodeLabels = detail.episodeLabels,
                             currentContentId = currentEpisodeRailContentId(
                                 detail = detail,
                                 state = state,
@@ -3085,7 +3100,18 @@ private fun playButtonLabel(
     nextUp: EpisodeListItem?,
     hasResume: Boolean,
     resumePosition: Double?,
+    episodeLabels: String? = null,
 ): String {
+    // A date-labeled series (sports): "Play Nov 20, 2026"; resuming reads a plain
+    // "Resume", since the catalog's "Resume %s" names a time, not a date.
+    val airDate = nextUp?.let { EpisodeLabel.airDate(episodeLabels, it.airDate) }
+    if (isSeriesOrSeason && airDate != null) {
+        return if (hasResume) {
+            resources.getString(CommonR.string.detail_resume)
+        } else {
+            resources.getString(CommonR.string.detail_playEpisodeCode, airDate.text(resources))
+        }
+    }
     if (isSeriesOrSeason && nextUp != null) {
         val season = LocaleFormat.codeNumber(nextUp.seasonNumber)
         val episode = LocaleFormat.codeNumber(nextUp.episodeNumber)

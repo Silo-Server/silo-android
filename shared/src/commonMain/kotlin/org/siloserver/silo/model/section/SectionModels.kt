@@ -14,6 +14,10 @@ data class SectionItem(
     @SerialName("series_title") val seriesTitle: String? = null,
     @SerialName("season_number") val seasonNumber: Int? = null,
     @SerialName("episode_number") val episodeNumber: Int? = null,
+    /** The series' episode labels: "air_date" when its numbers are synthetic (sports); absent shows numbers. */
+    @SerialName("episode_labels") val episodeLabels: String? = null,
+    /** An episode card's air date, YYYY-MM-DD, sent when [episodeLabels] is air_date. */
+    @SerialName("air_date") val airDate: String? = null,
     val year: Int = 0,
     val genres: List<String> = emptyList(),
     val status: String? = null,

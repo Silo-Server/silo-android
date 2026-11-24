@@ -99,6 +99,9 @@ data class BrowseItem(
     @SerialName("series_title") val seriesTitle: String? = null,
     @SerialName("season_number") val seasonNumber: Int? = null,
     @SerialName("episode_number") val episodeNumber: Int? = null,
+    /** The series' episode labels: "air_date" when its numbers are synthetic (sports); absent shows numbers. */
+    @SerialName("episode_labels") val episodeLabels: String? = null,
+    @SerialName("air_date") val airDate: String? = null,
     @SerialName("item_source") val itemSource: String? = null,
     @SerialName("position_seconds") val positionSeconds: Double? = null,
     @SerialName("duration_seconds") val durationSeconds: Double? = null,
@@ -263,6 +266,8 @@ data class ItemDetail(
     @SerialName("episode_number") val episodeNumber: Int? = null,
     @SerialName("episode_count") val episodeCount: Int? = null,
     @SerialName("air_date") val airDate: String? = null,
+    /** The series' episode labels: "air_date" when its numbers are synthetic (sports); absent shows numbers. */
+    @SerialName("episode_labels") val episodeLabels: String? = null,
     @SerialName("is_specials") val isSpecials: Boolean? = null,
     @SerialName("user_data") val userData: LeafItemUserData? = null,
     /** The current user's personal star rating (1-5), when set. */
@@ -717,6 +722,9 @@ data class WatchDetail(
     @SerialName("series_title") val seriesTitle: String? = null,
     @SerialName("season_number") val seasonNumber: Int? = null,
     @SerialName("episode_number") val episodeNumber: Int? = null,
+    /** The series' `episode_labels` for an episode; "air_date" (sports) labels it by [airDate]. */
+    @SerialName("episode_labels") val episodeLabels: String? = null,
+    @SerialName("air_date") val airDate: String? = null,
     @SerialName("effective_subtitle_language") val effectiveSubtitleLanguage: String? = null,
     @SerialName("effective_subtitle_mode") val effectiveSubtitleMode: String? = null,
     @SerialName("effective_show_forced_subtitles") val effectiveShowForcedSubtitles: Boolean? = null,

@@ -61,6 +61,9 @@ import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.common.ui.components.WatchProgressBar
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
+import org.siloserver.silo.common.i18n.text
 
 /** Episode details and controls beside the mounted player's preview pane. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -441,16 +444,18 @@ private fun CountdownRing(
     }
 }
 
-/** "S2·E4 — Title" under an On Deck card's title. */
+/** "S2·E4 — Title" under an On Deck card's title; the air date leads for a date-labeled series. */
 @Composable
 private fun onDeckEpisodeText(line: PlayerViewModel.OnDeckEpisodeLine): String {
-    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.codeNumber(line.season), LocaleFormat.codeNumber(line.episode))
+    val code = EpisodeLabel.text(line.season, line.episode, line.episodeLabels, line.airDate, EpisodeCodeStyle.Dotted).text()
     return code + (line.title?.let { " — $it" } ?: "")
 }
 
-/** "S2·E4 — Title", the next episode's line on the card. */
+/** "S2·E4 — Title", the next episode's line on the card; the air date leads for a date-labeled series. */
 @Composable
 private fun nextEpisodeLabel(episode: PlayerViewModel.NextEpisodeInfo): String {
-    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.codeNumber(episode.seasonNumber), LocaleFormat.codeNumber(episode.episodeNumber))
+    val code = EpisodeLabel.text(
+        episode.seasonNumber, episode.episodeNumber, episode.episodeLabels, episode.airDate, EpisodeCodeStyle.Dotted,
+    ).text()
     return code + (episode.title?.let { " — $it" } ?: "")
 }

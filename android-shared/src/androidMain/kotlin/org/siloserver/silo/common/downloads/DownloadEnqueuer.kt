@@ -25,6 +25,8 @@ import org.siloserver.silo.repository.ProfileRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
 
 /**
  * Thin Android-side helper that combines the cross-platform
@@ -117,11 +119,7 @@ class DownloadEnqueuer(
             Log.i(TAG, "startEpisode: fileId=$fileId already queued/downloading — skipping duplicate")
             return alreadyActive()
         }
-        // Unknown numbers leave the S/E label out rather than print "S0E0".
-        val episodeCode = if (seasonNumber != null && episodeNumber != null) episodeTag(seasonNumber, episodeNumber) else null
         val shownEpisodeTitle = episodeTitle?.takeIf { it.isNotBlank() }
-        val displayTitle = listOfNotNull(seriesTitle, episodeCode).joinToString(" ") +
-            (shownEpisodeTitle?.let { " · $it" } ?: "")
         val record = when (val r = repository.create(
             downloadRequest(
                 contentId = seriesContentId,
@@ -136,6 +134,15 @@ class DownloadEnqueuer(
             is ApiResult.NetworkError -> { Log.w(TAG, "startEpisode: network error", r.exception); return ApiResult.NetworkError(r.exception) }
         }
         val episodeDetail = (catalogRepository.getItemDetail(episodeContentId) as? ApiResult.Success)?.data
+        // Unknown numbers leave the S/E label out rather than print "S0E0".
+        // A date-labeled series (sports) stores the air date instead.
+        val episodeCode = if (seasonNumber != null && episodeNumber != null) {
+            episodeTag(seasonNumber, episodeNumber, episodeDetail?.episodeLabels, episodeDetail?.airDate)
+        } else {
+            null
+        }
+        val displayTitle = listOfNotNull(seriesTitle, episodeCode).joinToString(" ") +
+            (shownEpisodeTitle?.let { " · $it" } ?: "")
         val version = episodeDetail?.versionFor(record.mediaFileId)
         val sidecar = DownloadSidecar(
             record = record,
@@ -213,7 +220,7 @@ class DownloadEnqueuer(
                 record = record,
                 title = seriesTitle,
                 subtitle = ep?.let {
-                    episodeTag(it.seasonNumber, it.episodeNumber) +
+                    episodeTag(it.seasonNumber, it.episodeNumber, seriesDetail?.episodeLabels, it.airDate) +
                         (it.title?.takeIf { t -> t.isNotBlank() }?.let { t -> " · $t" } ?: "")
                 } ?: UNKNOWN_EPISODE_SUBTITLE,
                 posterUrl = posterUrl,
@@ -229,7 +236,7 @@ class DownloadEnqueuer(
                 mediaType = DownloadMediaType.TvShow.wire,
                 updatedAtMs = System.currentTimeMillis(),
             )
-            val displayTitle = "$seriesTitle ${ep?.let { episodeTag(it.seasonNumber, it.episodeNumber) } ?: ""}".trim()
+            val displayTitle = "$seriesTitle ${ep?.let { episodeTag(it.seasonNumber, it.episodeNumber, seriesDetail?.episodeLabels, it.airDate) } ?: ""}".trim()
             finalizeAndEnqueue(record, sidecar, displayTitle, authority)
         }
         return batchOutcome(created.skipped)
@@ -493,9 +500,11 @@ class DownloadEnqueuer(
             seasonNumber = detail?.seasonNumber,
             episodeNumber = detail?.episodeNumber,
             subtitle = detail?.let { d ->
+                val season = d.seasonNumber
+                val episode = d.episodeNumber
                 when {
-                    d.seriesTitle != null && d.seasonNumber != null && d.episodeNumber != null ->
-                        "${d.seriesTitle} · ${episodeTag(d.seasonNumber, d.episodeNumber)}"
+                    d.seriesTitle != null && season != null && episode != null ->
+                        "${d.seriesTitle} · ${episodeTag(season, episode, d.episodeLabels, d.airDate)}"
                     d.year > 0 -> "${d.year}"
                     else -> null
                 }
@@ -575,10 +584,13 @@ class DownloadEnqueuer(
         clientError(409, ALREADY_ACTIVE_ERROR, R.string.downloads_error_alreadyActive, "Already downloading")
 
     /**
-     * The compact "S2E5" tag. It is stored with the download (title, subtitle,
-     * worker input), so it stays English like the rest of the stored text.
+     * The compact "S2E5" tag, or the air date ("Nov 20, 2026") for a
+     * date-labeled series. It is stored with the download (title, subtitle,
+     * worker input), so it stays English like the rest of the stored text, and
+     * records saved before the server sent `episode_labels` keep their numbers.
      */
-    private fun episodeTag(season: Int?, episode: Int?): String = "S${season}E${episode}"
+    private fun episodeTag(season: Int, episode: Int, episodeLabels: String?, airDate: String?): String =
+        EpisodeLabel.englishText(season, episode, episodeLabels, airDate, EpisodeCodeStyle.Plain)
 
     /**
      * An error this class writes: [message] in the app language for the screen

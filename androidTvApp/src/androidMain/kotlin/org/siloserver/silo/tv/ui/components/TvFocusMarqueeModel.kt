@@ -14,6 +14,7 @@ import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.LocaleInteger
 import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.model.catalog.EpisodeLabel
 import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.OverlaySummary
@@ -160,7 +161,7 @@ data class TvMarqueeContent(
 
             val meta = mutableListOf<TvHeroFactToken>()
             if (isEpisode) {
-                episodeToken(item.seasonNumber, item.episodeNumber)?.let { meta += it }
+                episodeToken(item.seasonNumber, item.episodeNumber, item.episodeLabels, item.airDate)?.let { meta += it }
                 if (item.title.isNotBlank()) meta += TvHeroFactToken.TextToken(item.title, truncates = true)
             } else {
                 if (item.year > 0) meta += TvHeroFactToken.NumberToken(LocaleInteger(item.year))
@@ -220,8 +221,8 @@ data class TvMarqueeContent(
             )
         }
 
-        private fun episodeToken(season: Int?, episode: Int?): TvHeroFactToken? = when {
-            season != null && episode != null -> tvEpisodeTagToken(season, episode)
+        private fun episodeToken(season: Int?, episode: Int?, episodeLabels: String?, airDate: String?): TvHeroFactToken? = when {
+            season != null && episode != null -> tvEpisodeTagToken(season, episode, episodeLabels, airDate)
             season == 0 -> TvHeroFactToken.ResToken(CommonR.string.detail_specials)
             season != null -> TvHeroFactToken.ResToken(CommonR.string.home_seasonOnly, listOf(LocaleInteger(season)))
             episode != null -> TvHeroFactToken.ResToken(CommonR.string.home_episodeOnly, listOf(LocaleInteger(episode)))
@@ -336,7 +337,12 @@ data class TvMarqueeEnrichment(
                 backdropUrl = detail.backdropUrl?.takeIf { it.isNotBlank() },
                 backdropThumbhash = detail.backdropThumbhash,
                 backdropIsEpisodeStill = detail.backdropIsEpisodeStill,
-                airDate = detail.airDate?.takeIf { airDateText(it) != null },
+                // A date-labeled game's date already leads the meta row; a
+                // series card's row has no date, so it keeps "Aired …".
+                airDate = detail.airDate?.takeIf {
+                    airDateText(it) != null &&
+                        (!detail.type.equals("episode", ignoreCase = true) || EpisodeLabel.airDate(detail.episodeLabels, it) == null)
+                },
             )
         }
 

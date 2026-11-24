@@ -64,7 +64,7 @@ private data class TvMediaRowItemModel(
     /** With [shelfEpisodeTag], the line under the shelf title. */
     val shelfSubtitle: String?,
     /** The episode tag that leads the subtitle on a progress row ("S01E02 • Title"). */
-    val shelfEpisodeTag: TvHeroFactToken.ResToken?,
+    val shelfEpisodeTag: TvHeroFactToken?,
     val overlay: OverlayData,
     val contentType: String,
     /** Spoiler protection: blur this card's still (an unstarted episode). */
@@ -204,7 +204,7 @@ fun TvMediaRow(
                 backdropThumbhash = item.bestBackdropThumbhash(),
                 shelfTitle = item.shelfTitle(showProgress = showProgress),
                 shelfSubtitle = item.shelfSubtitle(showProgress = showProgress),
-                shelfEpisodeTag = if (showProgress) tvEpisodeTagToken(item.seasonNumber, item.episodeNumber) else null,
+                shelfEpisodeTag = if (showProgress) tvEpisodeTagToken(item.seasonNumber, item.episodeNumber, item.episodeLabels, item.airDate) else null,
                 overlay = OverlayDataExtractor.fromSectionItem(item),
                 contentType = "${cardLayout.name}:${style.name}:${item.type}",
                 // Protect the selected still while preserving series fallback art.
@@ -440,7 +440,7 @@ fun TvMediaRow(
                         imageThumbhash = rowItem.backdropThumbhash,
                         subtitle = rowItem.shelfEpisodeTag
                             ?.let { tag ->
-                                listOfNotNull(tag.resolved(), rowItem.shelfSubtitle?.let { bidiIsolated(it, isRightToLeftText()) })
+                                listOfNotNull(tag.tagText(), rowItem.shelfSubtitle?.let { bidiIsolated(it, isRightToLeftText()) })
                                     .joinToString(" • ")
                             }
                             ?: rowItem.shelfSubtitle,
@@ -464,6 +464,8 @@ fun TvMediaRow(
                             seriesTitle = item.seriesTitle,
                             seasonNumber = item.seasonNumber,
                             episodeNumber = item.episodeNumber,
+                            episodeLabels = item.episodeLabels,
+                            airDate = item.airDate,
                             mediaType = item.type,
                             progress = rowItem.progress,
                             year = item.year.takeIf { it > 0 },

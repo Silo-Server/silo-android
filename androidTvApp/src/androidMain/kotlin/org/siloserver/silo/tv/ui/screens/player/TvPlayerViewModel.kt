@@ -828,6 +828,10 @@ data class NextEpisodeState(
     val stillIsEpisodeStill: Boolean? = null,
     val overview: String? = null,
     val seriesTitle: String? = null,
+    /** The series' `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers. */
+    val episodeLabels: String? = null,
+    /** The episode's air date, YYYY-MM-DD. */
+    val airDate: String? = null,
     val runtimeMinutes: Int = 0,
     /** Not started by this profile; spoiler protection may hide [overview]. */
     val isUnwatched: Boolean = true,
@@ -1431,6 +1435,10 @@ class TvPlayerViewModel(
         val seriesId: String? = null,
         val seasonNumber: Int? = null,
         val episodeNumber: Int? = null,
+        /** The playing episode's series `episode_labels` from /watch; "air_date" (sports) labels it by [episodeAirDate]. */
+        val episodeLabels: String? = null,
+        /** The playing episode's air date from /watch, YYYY-MM-DD. */
+        val episodeAirDate: String? = null,
         val nextEpisode: NextEpisodeState? = null,
         // Up Next's On Deck row: other items in progress (tvOS parity).
         val onDeckItems: List<TvOnDeckItem> = emptyList(),
@@ -3095,6 +3103,8 @@ class TvPlayerViewModel(
                                 seriesId = result.seriesId,
                                 seasonNumber = result.seasonNumber,
                                 episodeNumber = result.episodeNumber,
+                                episodeLabels = result.episodeLabels,
+                                episodeAirDate = result.airDate,
                                 // An in-place successor remains covered by the
                                 // outgoing card until this exact mount renders.
                                 nextEpisode = it.nextEpisode.takeIf { preservesNextUp },
@@ -5398,6 +5408,8 @@ class TvPlayerViewModel(
                 stillIsEpisodeStill = next.stillIsEpisodeStill,
                 overview = next.overview,
                 seriesTitle = state.seriesTitle,
+                episodeLabels = state.episodeLabels,
+                airDate = next.airDate,
                 runtimeMinutes = next.runtime,
                 isUnwatched = org.siloserver.silo.model.settings.EpisodeSpoilers.isUnwatched(next.userData),
             )
@@ -5816,6 +5828,8 @@ class TvPlayerViewModel(
                 stillUrl = pick.stillUrl,
                 overview = pick.overview,
                 seriesTitle = pick.seriesTitle,
+                episodeLabels = pick.episodeLabels,
+                airDate = pick.airDate,
                 runtimeMinutes = pick.runtimeMinutes,
                 isUnwatched = pick.isUnwatched,
                 isEpisode = pick.isEpisode,

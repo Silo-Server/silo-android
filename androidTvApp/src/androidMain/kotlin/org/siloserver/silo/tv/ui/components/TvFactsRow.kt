@@ -28,6 +28,8 @@ import org.siloserver.silo.common.ui.WholeTokenRow
 import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.tv.ui.theme.SuccessGreen
 import java.util.Locale
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Tokens for a hero facts row, mirroring tvOS `TVHeroFactToken`.
@@ -51,6 +53,9 @@ sealed class TvHeroFactToken {
         val givesWayFirst: Boolean = false,
     ) : TvHeroFactToken()
     data class ResToken(@StringRes val id: Int, val args: List<Any> = emptyList()) : TvHeroFactToken()
+
+    /** Shared-module text (a sports episode's air date), resolved when drawn. */
+    data class UiTextToken(val text: UiText) : TvHeroFactToken()
 
     /** A number such as a release year, written in the app's digits when drawn (D77). */
     data class NumberToken(val value: LocaleInteger) : TvHeroFactToken()
@@ -134,6 +139,12 @@ private fun FactToken(token: TvHeroFactToken, style: TextStyle) {
         )
         is TvHeroFactToken.ResToken -> Text(
             text = token.resolved(),
+            style = style,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        is TvHeroFactToken.UiTextToken -> Text(
+            text = token.text.text(),
             style = style,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

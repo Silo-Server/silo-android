@@ -72,6 +72,9 @@ import kotlin.math.abs
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.ui.components.WatchProgressBar
+import androidx.compose.runtime.staticCompositionLocalOf
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
 
 /**
  * PR #212's phone episode carousel: a 240dp card settles in the centre and,
@@ -173,6 +176,9 @@ private fun centeredItemIndex(state: LazyListState): Int? {
     }?.index
 }
 
+/** The shown series' `episode_labels`, provided by [SeasonEpisodePager]; "air_date" labels its episodes by date. */
+internal val LocalEpisodeLabels = staticCompositionLocalOf<String?> { null }
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EpisodeRailCard(
@@ -265,11 +271,13 @@ private fun EpisodeRailCard(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.PlayArrow,
-                        contentDescription = stringResource(
-                            CommonR.string.detail_playSeasonEpisode,
-                            LocaleFormat.integer(episode.seasonNumber),
-                            LocaleFormat.integer(episode.episodeNumber),
-                        ),
+                        contentDescription = EpisodeLabel.airDate(LocalEpisodeLabels.current, episode.airDate)
+                            ?.let { stringResource(CommonR.string.detail_playEpisodeCode, it.text()) }
+                            ?: stringResource(
+                                CommonR.string.detail_playSeasonEpisode,
+                                LocaleFormat.integer(episode.seasonNumber),
+                                LocaleFormat.integer(episode.episodeNumber),
+                            ),
                         tint = Color.Black,
                         modifier = Modifier.size(24.dp),
                     )
@@ -302,7 +310,7 @@ private fun EpisodeRailCard(
                 )
             }
             Text(
-                text = EpisodeCardCaption.title(episode).text(),
+                text = EpisodeCardCaption.title(episode, LocalEpisodeLabels.current).text(),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = DetailPrimaryText,
@@ -423,5 +431,6 @@ private fun EpisodeSkeletonLine(width: Dp, height: Dp) {
     )
 }
 
-internal fun episodeNumberText(resources: Resources, episode: EpisodeListItem): String =
-    episodeCode(resources, episode.seasonNumber, episode.episodeNumber)
+internal fun episodeNumberText(resources: Resources, episode: EpisodeListItem, episodeLabels: String? = null): String =
+    EpisodeLabel.text(episode.seasonNumber, episode.episodeNumber, episodeLabels, episode.airDate, EpisodeCodeStyle.Dotted)
+        .text(resources)

@@ -211,6 +211,7 @@ import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.network.isTimeout
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.model.catalog.EpisodeLabel
 
 /**
  * ViewModel for the video player screen.
@@ -267,18 +268,22 @@ private fun ApiResult<*>.subtitleToolsError(@StringRes fallback: Int): PlayerMes
 
 /**
  * An episode's line in the media notification, "Series - S01E02", kept in
- * parts so the season and episode tag is translated where it is shown.
+ * parts so the season and episode tag is translated where it is shown. A
+ * date-labeled series ([episodeLabels] `air_date`, sports) shows the
+ * episode's [airDate] in place of the tag.
  */
-data class MobileEpisodeSubtitle(val seriesTitle: String, val season: Int, val episode: Int)
+data class MobileEpisodeSubtitle(
+    val seriesTitle: String,
+    val season: Int,
+    val episode: Int,
+    val episodeLabels: String? = null,
+    val airDate: String? = null,
+)
 
 /** [PlayerViewModel.PlayerUiState.subtitle] for display: the episode line in the app language, else as stored. */
 @Composable
 internal fun PlayerViewModel.PlayerUiState.displaySubtitle(): String = subtitleEpisode?.let {
-    it.seriesTitle + " - " + stringResource(
-        CommonR.string.catalog_episodeTag,
-        LocaleFormat.codeNumber(it.season, minDigits = 2),
-        LocaleFormat.codeNumber(it.episode, minDigits = 2),
-    )
+    it.seriesTitle + " - " + EpisodeLabel.text(it.season, it.episode, it.episodeLabels, it.airDate).text()
 } ?: subtitleYear?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: subtitle
 
 /** For logs and the debug test hook: the message in English, as before the catalog (the resource id without one). */
@@ -525,7 +530,14 @@ class PlayerViewModel(
         val year: Int? = null,
     )
 
-    data class OnDeckEpisodeLine(val season: Int, val episode: Int, val title: String?)
+    /** A date-labeled series ([episodeLabels] `air_date`, sports) shows [airDate] in place of the numbers. */
+    data class OnDeckEpisodeLine(
+        val season: Int,
+        val episode: Int,
+        val title: String?,
+        val episodeLabels: String? = null,
+        val airDate: String? = null,
+    )
 
     data class NextEpisodeInfo(
         val contentId: String,
@@ -536,6 +548,10 @@ class PlayerViewModel(
         val stillThumbhash: String?,
         val runtimeMinutes: Int,
         val seriesTitle: String? = null,
+        /** The series' `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers. */
+        val episodeLabels: String? = null,
+        /** The episode's air date, YYYY-MM-DD. */
+        val airDate: String? = null,
         val overview: String? = null,
         /** Not started by this profile; spoiler protection may hide [overview]. */
         val isUnwatched: Boolean = true,
@@ -584,6 +600,10 @@ class PlayerViewModel(
         val subtitle: String = "",
         /** Set when [subtitle] is an episode line; [displaySubtitle] shows it translated. */
         val subtitleEpisode: MobileEpisodeSubtitle? = null,
+        /** The playing episode's series `episode_labels` from /watch; "air_date" (sports) labels it by [episodeAirDate]. */
+        val episodeLabels: String? = null,
+        /** The playing episode's air date from /watch, YYYY-MM-DD. */
+        val episodeAirDate: String? = null,
         /** Set when [subtitle] is a title's year; [displaySubtitle] writes it in the app's digits (D77). */
         val subtitleYear: Int? = null,
         val seriesTitle: String? = null,
@@ -2213,6 +2233,8 @@ class PlayerViewModel(
                 contentType = watchDetail?.type ?: playbackState.contentType,
                 subtitle = watchDetail?.let { detail -> buildSubtitle(detail) } ?: playbackState.subtitle.orEmpty(),
                 subtitleEpisode = watchDetail?.let(::episodeSubtitle),
+                episodeLabels = watchDetail?.episodeLabels,
+                episodeAirDate = watchDetail?.airDate,
                 subtitleYear = watchDetail?.let(::subtitleYear),
                 artworkUrl = playbackState.artworkUrl,
                 sessionId = playbackState.sessionId
@@ -6230,6 +6252,8 @@ class PlayerViewModel(
                 stillThumbhash = next.stillThumbhash,
                 runtimeMinutes = next.runtime,
                 seriesTitle = state.seriesTitle,
+                episodeLabels = state.episodeLabels,
+                airDate = next.airDate,
                 overview = next.overview,
                 isUnwatched = org.siloserver.silo.model.settings.EpisodeSpoilers.isUnwatched(next.userData),
             )
@@ -6514,6 +6538,8 @@ class PlayerViewModel(
                 stillThumbhash = pick.stillThumbhash,
                 runtimeMinutes = pick.runtimeMinutes,
                 seriesTitle = pick.seriesTitle,
+                episodeLabels = pick.episodeLabels,
+                airDate = pick.airDate,
                 overview = pick.overview,
                 isUnwatched = pick.isUnwatched,
                 isEpisode = pick.isEpisode,
@@ -6999,7 +7025,7 @@ class PlayerViewModel(
         val series = watchDetail.seriesTitle ?: return null
         val season = watchDetail.seasonNumber ?: return null
         val episode = watchDetail.episodeNumber ?: return null
-        return MobileEpisodeSubtitle(series, season, episode)
+        return MobileEpisodeSubtitle(series, season, episode, watchDetail.episodeLabels, watchDetail.airDate)
     }
 
     /** English, for state and logs; [displaySubtitle] shows the episode line translated. */
@@ -7165,6 +7191,8 @@ class PlayerViewModel(
                 title = title,
                 subtitle = subtitle,
                 subtitleEpisode = watchDetail?.let(::episodeSubtitle),
+                episodeLabels = watchDetail?.episodeLabels,
+                episodeAirDate = watchDetail?.airDate,
                 // A movie's stored download subtitle is its year as digits.
                 subtitleYear = if (watchDetail != null) subtitleYear(watchDetail) else sidecar.year?.takeIf { subtitle == it.toString() },
                 contentType = watchDetail?.type,
