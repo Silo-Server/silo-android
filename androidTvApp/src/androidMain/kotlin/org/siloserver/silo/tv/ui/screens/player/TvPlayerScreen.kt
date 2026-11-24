@@ -202,6 +202,8 @@ private const val CLEAN_SEEK_HOLD_THRESHOLD_MS = 300L
 private const val CLEAN_QUICK_SKIP_CAPTURE_MS = 200L
 /** How long after a pill answered Back in the key bridge the BackHandler still treats it as that press. */
 private const val PILL_BACK_PRESS_WINDOW_MS = 1_000L
+/** The same, for a press the bridge has not yet seen released: a long hold, bounded. */
+private const val PILL_BACK_PRESS_HELD_MS = 10_000L
 
 private enum class TvIdleOverlayFocusTarget {
     Scrubber,
@@ -1119,14 +1121,20 @@ fun TvPlayerScreen(
         }
     }
 
-    // The downTime of the last Back press a pill answered in the key bridge.
-    // Where the system also delivers that press to the BackHandler below, the
-    // pill is already gone by then, so the handler has to recognise the press
-    // instead of acting on it again (hiding the controls or leaving).
-    val pillAnsweredBackPress = remember { longArrayOf(-1L) }
+    // The last Back press a pill answered in the key bridge: [0] its downTime,
+    // [1] the eventTime of its latest key event the bridge saw, [2] 1 until
+    // the bridge sees it released. Where the system also delivers that press
+    // to the BackHandler below, the pill is already gone by then, so the
+    // handler has to recognise the press instead of acting on it again
+    // (hiding the controls or leaving). The handler runs on release, which
+    // can reach it before the bridge, so a press held past the window still
+    // counts while the bridge has not seen it end.
+    val pillAnsweredBackPress = remember { longArrayOf(-1L, -1L, 0L) }
     fun consumePillAnsweredBackPress(): Boolean {
-        val downTime = pillAnsweredBackPress[0]
-        if (downTime < 0 || SystemClock.uptimeMillis() - downTime > PILL_BACK_PRESS_WINDOW_MS) return false
+        if (pillAnsweredBackPress[0] < 0) return false
+        val sinceLastEvent = SystemClock.uptimeMillis() - pillAnsweredBackPress[1]
+        val window = if (pillAnsweredBackPress[2] == 1L) PILL_BACK_PRESS_HELD_MS else PILL_BACK_PRESS_WINDOW_MS
+        if (sinceLastEvent > window) return false
         pillAnsweredBackPress[0] = -1L
         return true
     }
@@ -1202,6 +1210,10 @@ fun TvPlayerScreen(
                         "quickSubs=$latestShowQuickSubtitlePicker cleanSeek=$cleanSeekRate"
                 }
                 if (event.downTime == pillBackDownTime) {
+                    if (event.downTime == pillAnsweredBackPress[0]) {
+                        pillAnsweredBackPress[1] = event.eventTime
+                        if (event.action == KeyEvent.ACTION_UP) pillAnsweredBackPress[2] = 0L
+                    }
                     if (event.action == KeyEvent.ACTION_UP) pillBackDownTime = -1L
                     return@handler true
                 }
@@ -1392,6 +1404,8 @@ fun TvPlayerScreen(
                     timedSkipPillDismiss()
                     pillBackDownTime = event.downTime
                     pillAnsweredBackPress[0] = event.downTime
+                    pillAnsweredBackPress[1] = event.eventTime
+                    pillAnsweredBackPress[2] = 1L
                 }
                 return@handler true
             }
@@ -1410,6 +1424,8 @@ fun TvPlayerScreen(
                 if (viewModel.onBufferingBack()) {
                     pillBackDownTime = event.downTime
                     pillAnsweredBackPress[0] = event.downTime
+                    pillAnsweredBackPress[1] = event.eventTime
+                    pillAnsweredBackPress[2] = 1L
                     return@handler true
                 }
             }
