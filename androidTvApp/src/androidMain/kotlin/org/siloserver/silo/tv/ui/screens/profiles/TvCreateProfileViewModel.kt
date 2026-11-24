@@ -185,11 +185,16 @@ class TvCreateProfileViewModel(
             val requestsAllowedSupported = current.requestsAllowedSupported ?: run {
                 val household = loadHousehold()
                 if (household !is ApiResult.Success) {
-                    // The server's explanation when it refused, else the network error.
+                    // Worded as a failed create below: the server's explanation
+                    // when it refused, else the network error.
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = household.errorText(CommonR.string.newProfile_error_createFailed),
+                            error = if (household is ApiResult.Error) {
+                                household.errorText(CommonR.string.newProfile_error_createFailed)
+                            } else {
+                                UiText.Res(CommonR.string.profiles_error_network)
+                            },
                         )
                     }
                     return@launch
