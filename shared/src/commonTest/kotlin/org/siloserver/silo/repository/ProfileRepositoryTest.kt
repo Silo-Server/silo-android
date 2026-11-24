@@ -6,6 +6,8 @@ import org.siloserver.silo.model.notifications.NotificationListResponse
 import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.UnreadCountResponse
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransition
 import org.siloserver.silo.network.IdentityTransitionKind
@@ -142,5 +144,39 @@ class ProfileRepositoryTest {
             ),
             transitions.map(IdentityTransition::phase),
         )
+    }
+
+    @Test
+    fun `a fenced clear leaves an identity that replaced its scope`() = runTest {
+        val barrier = DefaultIdentityTransitionBarrier()
+        val impl = TokenManagerImpl(barrier)
+        val tokens = object : TokenManager by impl {
+            override suspend fun snapshotCurrentScope() = AuthScopeSnapshot(
+                serverId = "server",
+                profileId = impl.getProfileId(),
+                serverUrl = "",
+                profileToken = impl.getProfileToken(),
+                identityGeneration = barrier.generation.value,
+                isIdentityGenerationStamped = true,
+            )
+        }
+        val profileRepo = ProfileRepository(
+            profileApi = ProfileApi(noOpClient, ApiV2Gate.Unrestricted),
+            tokenManager = tokens,
+            identityTransitions = barrier,
+        )
+
+        profileRepo.selectProfile("profile-a", "proof-a")
+        val reopened = tokens.snapshotCurrentScope()
+        profileRepo.selectProfile("profile-b")
+
+        val generationBeforeRejectedClear = barrier.generation.value
+        assertEquals(ProfileCommitResult.ScopeChanged, profileRepo.clearProfile(expectedScope = reopened))
+        assertEquals("profile-b", tokens.getProfileId())
+        // A rejected clear is not an identity change: no transition, so no gates.
+        assertEquals(generationBeforeRejectedClear, barrier.generation.value)
+
+        assertEquals(ProfileCommitResult.Committed, profileRepo.clearProfile(expectedScope = tokens.snapshotCurrentScope()))
+        assertEquals(null, tokens.getProfileId())
     }
 }

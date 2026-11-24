@@ -11,11 +11,15 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.foundation.layout.Box
@@ -36,7 +40,9 @@ import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.tv.profiles.noAccountOpenButAnotherSignedIn
 import org.siloserver.silo.tv.profiles.onlyOpenTileIsActive
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.repository.ProfileCommitResult
 import org.siloserver.silo.repository.ProfilePromptAction
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.ProfileVerificationRecovery
@@ -103,13 +109,47 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.tv.ui.screens.cast.TvSiloCastStandbyView
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
 import org.siloserver.silo.common.player.playbackDisplayId
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.qualifier.named
 
 private const val RETURN_TO_MANAGE_SERVERS_KEY = "return_to_manage_servers"
+
+/** The shell page a cancelled Switch Profile reopens Main on. */
+private const val RESTORE_SHELL_ROUTE_KEY = "restore_shell_route"
+
+/** What Back on Switch Profile's picker reopens (silo-apple #1200). */
+private data class TvProfileSwitchReturn(
+    val profileId: String,
+    val profileToken: String?,
+    /** The scope the switch's own clear left; any transition since voids the return. */
+    val clearedScope: AuthScopeSnapshot,
+    val shellRoute: String?,
+    val pickerEntryId: String,
+)
+
+/**
+ * Where Switch Profile's picker is, from the clear to the reopen. Back on that
+ * picker is handled in every state, so a press during the clear or the reopen
+ * never reaches the system and closes Silo.
+ */
+private sealed interface TvProfileSwitchState {
+    val pickerEntryId: String
+
+    /** Still closing the profile. A Back pressed meanwhile runs once the way back exists. */
+    data class Closing(override val pickerEntryId: String, val backPressed: Boolean = false) : TvProfileSwitchState
+
+    data class Ready(val way: TvProfileSwitchReturn) : TvProfileSwitchState {
+        override val pickerEntryId get() = way.pickerEntryId
+    }
+
+    /** Back is reopening the profile; further presses wait for it. */
+    data class Reopening(override val pickerEntryId: String) : TvProfileSwitchState
+}
 
 /**
  * The crash prompt must never cover a diagnostics surface — the viewer is
@@ -553,6 +593,118 @@ fun TvAppNavigation(
     /** The profile menu's Add Profile in progress; a second press waits for it. */
     val addProfileJob = remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
+    // Switch Profile's way back: Back on the picker it opened reopens the
+    // profile it closed, with the proof it already had, on the page it was
+    // opened from. Held in memory only, so the token never reaches saved
+    // state, and tied to that picker entry: sign-out, Change Account, a server
+    // switch and session expiry all replace the picker, so Back there can't
+    // use it, and entering any profile drops it.
+    var switchState by remember { mutableStateOf<TvProfileSwitchState?>(null) }
+    // Bumped whenever the way back stops being wanted, which also stops a
+    // switch or a Back still in flight from publishing or finishing one.
+    var switchReturnRevision by remember { mutableIntStateOf(0) }
+    // A cancelled switch is entering Main and restoring its page. Main starts
+    // on Home, where Back closes Silo, so Back waits until the page is showing.
+    var reenteringMain by remember { mutableStateOf(false) }
+    fun dropSwitchReturn() {
+        switchReturnRevision++
+        switchState = null
+        reenteringMain = false
+    }
+    // A picker found after Silo left the foreground needs a profile choice,
+    // and its PIN, again.
+    LifecycleStartEffect(Unit) {
+        onStopOrDispose { dropSwitchReturn() }
+    }
+    /** Switch Profile in progress; a second press waits for it. */
+    val switchProfileJob = remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    // Entering a profile from the picker: a tile chosen, or a cancelled switch.
+    fun enterChosenProfile(restoreShellRoute: String? = null) {
+        dropSwitchReturn()
+        // A chosen profile ends any away interval (silo-apple
+        // `remember`), which lets Watch Next and held links through.
+        profileLaunchPreferences.clearBackgroundedAt()
+        navController.navigate(TvRoute.Main.route) {
+            popUpTo(TvRoute.ProfileSelection.route) { inclusive = true }
+        }
+        if (restoreShellRoute != null) {
+            navController.currentBackStackEntry?.savedStateHandle?.set(RESTORE_SHELL_ROUTE_KEY, restoreShellRoute)
+        }
+        // Re-seed for the newly selected profile so the launcher row
+        // reflects this profile's continue-watching / next-up rather
+        // than whatever was last synced.
+        watchNextSeeder.seedNow()
+        watchNextSeeder.enqueuePeriodic()
+        // The switch-profile paths cleared the seek intervals; the
+        // identity flow only reloads when the profile id changes, so
+        // re-selecting the same profile needs this.
+        scope.launch {
+            seekIntervalStore.hydrateIfNeeded()
+            // Same for spoiler protection, which must be back on
+            // before the new session's rows show episode stills.
+            episodeSpoilerStore.hydrateIfNeeded()
+            titleArtStore.hydrateIfNeeded()
+        }
+    }
+
+    fun cancelProfileSwitch(back: TvProfileSwitchReturn) {
+        // A second Back waits for this reopen instead of starting another or
+        // leaving the app.
+        val reopening = TvProfileSwitchState.Reopening(back.pickerEntryId)
+        switchState = reopening
+        val revision = switchReturnRevision
+        scope.launch {
+            // Runs to its end even if this screen is torn down part-way, so a
+            // reopen that is no longer wanted is always closed again.
+            val reopened = withContext(NonCancellable) {
+                // Fenced to the switch's own clear: a profile chosen, an account
+                // switched or a cast identity installed since makes this ScopeChanged.
+                val result = profileRepository.selectProfile(back.profileId, back.profileToken, back.clearedScope)
+                if (result != ProfileCommitResult.Committed) return@withContext false
+                // The live identity must still be this commit's own: the one
+                // transition after the switch's clear. A cast session or a tile
+                // chosen since (even this same profile) owns it now, so neither
+                // enter nor clear it.
+                val now = tokenManager.snapshotCurrentScope()
+                if (tokenManager.hasTemporaryScope() || now == null ||
+                    now.serverId != back.clearedScope.serverId || now.profileId != back.profileId ||
+                    now.identityGeneration != back.clearedScope.identityGeneration + 1
+                ) {
+                    return@withContext false
+                }
+                val stillWanted = revision == switchReturnRevision &&
+                    navController.currentBackStackEntry?.id == back.pickerEntryId
+                // Silo left the foreground, or the picker went, while the profile
+                // reopened: close it again rather than skip its PIN later, fenced
+                // so the undo can't reach an identity that replaced this one.
+                if (!stillWanted) activeProfileReset.clearActiveProfile(expectedScope = now)
+                stillWanted
+            }
+            // One that failed leaves Back to the system, as on the launch picker.
+            if (switchState == reopening) switchState = null
+            if (!reopened) return@launch
+            enterChosenProfile(restoreShellRoute = back.shellRoute)
+            // Main clears it once the page it restores is showing.
+            if (back.shellRoute != null) reenteringMain = true
+            // The switch cleared these too, and Main's overlay key can still
+            // name this profile from before the clear, so it won't reload them.
+            launch {
+                overlayPrefsStore.hydrateIfNeeded()
+                cardPresentationStore.hydrateIfNeeded()
+            }
+        }
+    }
+
+    // Back on Switch Profile's picker, whatever state the switch is in.
+    fun onSwitchPickerBack() {
+        when (val state = switchState) {
+            is TvProfileSwitchState.Closing -> switchState = state.copy(backPressed = true)
+            is TvProfileSwitchState.Ready -> cancelProfileSwitch(state.way)
+            is TvProfileSwitchState.Reopening, null -> Unit
+        }
+    }
+
     // Android can restore Silo's previous back stack over the start route
     // MainTvActivity chose: after a configuration change while Silo was away,
     // or after its process was killed in the background. When Profile
@@ -943,6 +1095,18 @@ fun TvAppNavigation(
     LaunchedEffect(currentEntry?.destination?.route) {
         DiagnosticsLifecycleLogger.route(currentEntry?.destination?.route)
     }
+    // Main left before it reported its page: nothing will clear the hold.
+    LaunchedEffect(currentEntry?.id) {
+        if (currentEntry?.destination?.route != TvRoute.Main.route) reenteringMain = false
+    }
+    // Leaving Main drops its Back handlers a few frames before the picker
+    // registers its own; a Back in between would reach the system and close
+    // Silo. Registered once, before any screen's, so it only takes Back when
+    // no screen does. It also holds Back while a cancelled switch re-enters
+    // Main, until Main reports the restored page is showing.
+    BackHandler(enabled = reenteringMain || (switchState != null && switchState?.pickerEntryId == currentEntry?.id)) {
+        if (!reenteringMain) onSwitchPickerBack()
+    }
     val overlaySessionKey by produceState<String?>(
         initialValue = null,
         currentEntry?.destination?.route,
@@ -1243,8 +1407,12 @@ fun TvAppNavigation(
             }
         }
 
-        composable(TvRoute.ProfileSelection.route) {
+        composable(TvRoute.ProfileSelection.route) { pickerEntry ->
             TvProfileSelectionScreen(
+                onCancelSwitch = if (switchState?.pickerEntryId == pickerEntry.id) ::onSwitchPickerBack else null,
+                // A profile edited or deleted here may no longer match the proof
+                // the switch kept, so the way back goes once Manage starts.
+                onManageModeStarted = ::dropSwitchReturn,
                 onProfileSelected = onProfileSelected@{
                     // A tile whose session the server already revoked expires
                     // while it is being chosen: the expiry routes to sign-in,
@@ -1253,27 +1421,7 @@ fun TvAppNavigation(
                     if (navController.currentBackStackEntry?.destination?.route != TvRoute.ProfileSelection.route) {
                         return@onProfileSelected
                     }
-                    // A chosen profile ends any away interval (silo-apple
-                    // `remember`), which lets Watch Next and held links through.
-                    profileLaunchPreferences.clearBackgroundedAt()
-                    navController.navigate(TvRoute.Main.route) {
-                        popUpTo(TvRoute.ProfileSelection.route) { inclusive = true }
-                    }
-                    // Re-seed for the newly selected profile so the launcher row
-                    // reflects this profile's continue-watching / next-up rather
-                    // than whatever was last synced.
-                    watchNextSeeder.seedNow()
-                    watchNextSeeder.enqueuePeriodic()
-                    // The switch-profile paths cleared the seek intervals; the
-                    // identity flow only reloads when the profile id changes, so
-                    // re-selecting the same profile needs this.
-                    scope.launch {
-                        seekIntervalStore.hydrateIfNeeded()
-                        // Same for spoiler protection, which must be back on
-                        // before the new session's rows show episode stills.
-                        episodeSpoilerStore.hydrateIfNeeded()
-                        titleArtStore.hydrateIfNeeded()
-                    }
+                    enterChosenProfile()
                 },
                 onAddProfile = {
                     navController.navigate(TvRoute.CreateProfile.route) { launchSingleTop = true }
@@ -1395,6 +1543,11 @@ fun TvAppNavigation(
             val returnToManageServers =
                 mainEntry.savedStateHandle.get<Boolean>(RETURN_TO_MANAGE_SERVERS_KEY) == true
             TvMainShell(
+                restoreRoute = mainEntry.savedStateHandle.get<String>(RESTORE_SHELL_ROUTE_KEY),
+                onRestoreRouteConsumed = {
+                    mainEntry.savedStateHandle.remove<String>(RESTORE_SHELL_ROUTE_KEY)
+                    reenteringMain = false
+                },
                 returnToManageServers = returnToManageServers,
                 onManageServersReturnFocusConsumed = {
                     mainEntry.savedStateHandle.remove<Boolean>(RETURN_TO_MANAGE_SERVERS_KEY)
@@ -1474,8 +1627,18 @@ fun TvAppNavigation(
                         }
                     }
                 },
-                onSwitchProfile = {
-                    scope.launch {
+                onSwitchProfile = onSwitchProfile@{ shellRoute ->
+                    // A second press would stack a second picker and void the
+                    // first one's way back.
+                    if (switchProfileJob.value?.isActive == true) return@onSwitchProfile
+                    // Read before the work below starts, so leaving the
+                    // foreground first also counts.
+                    val revision = switchReturnRevision
+                    switchProfileJob.value = scope.launch {
+                        // Only this TV's own profile can come back: a phone's
+                        // temporary cast identity is not ours to reopen.
+                        val closing = tokenManager.snapshotCurrentScope()
+                            ?.takeIf { !it.profileId.isNullOrBlank() && !tokenManager.hasTemporaryScope() }
                         // Leave the main shell before clearing profile-scoped
                         // state. Clearing first briefly recomposed Home with
                         // default overlay pills behind Settings before the
@@ -1483,7 +1646,48 @@ fun TvAppNavigation(
                         navController.navigate(TvRoute.ProfileSelection.route) {
                             popUpTo(TvRoute.Main.route) { inclusive = true }
                         }
-                        activeProfileReset.clearActiveProfile()
+                        val pickerEntryId = navController.currentBackStackEntry?.id
+                        val closingState = pickerEntryId?.let { TvProfileSwitchState.Closing(it) }
+                        switchState = closingState
+                        var way: TvProfileSwitchReturn? = null
+                        try {
+                            activeProfileReset.clearActiveProfile()
+                            val cleared = tokenManager.snapshotCurrentScope()
+                            val closingProfileId = closing?.profileId
+                            // Only when that clear was the one identity change since
+                            // the capture does the return name the profile it closed.
+                            if (closing != null && closingProfileId != null && cleared != null && pickerEntryId != null &&
+                                revision == switchReturnRevision &&
+                                cleared.serverId == closing.serverId && cleared.profileId == null &&
+                                cleared.identityGeneration == closing.identityGeneration + 1
+                            ) {
+                                way = TvProfileSwitchReturn(
+                                    profileId = closingProfileId,
+                                    profileToken = closing.profileToken,
+                                    clearedScope = cleared,
+                                    shellRoute = shellRoute,
+                                    pickerEntryId = pickerEntryId,
+                                )
+                            }
+                        } finally {
+                            // Straight from Closing to Ready, with no frame where
+                            // Back on this picker goes to the system. Anything that
+                            // dropped the way back meanwhile already left Closing.
+                            val state = switchState
+                            if (closingState != null && state is TvProfileSwitchState.Closing &&
+                                state.pickerEntryId == closingState.pickerEntryId
+                            ) {
+                                val ready = way
+                                switchState = ready?.let { TvProfileSwitchState.Ready(it) }
+                                // Only while the picker is still showing: a screen
+                                // opened over it since takes Back for itself.
+                                if (ready != null && state.backPressed &&
+                                    navController.currentBackStackEntry?.id == ready.pickerEntryId
+                                ) {
+                                    cancelProfileSwitch(ready)
+                                }
+                            }
+                        }
                     }
                 },
                 onPairDevice = {
