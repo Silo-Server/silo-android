@@ -41,7 +41,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -58,46 +57,37 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import kotlinx.coroutines.launch
-import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.R as CommonR
-import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.common.i18n.stringResourceWithNames
-import org.siloserver.silo.model.section.ResolvedSection
-import org.siloserver.silo.tv.data.preferences.TvHomeSectionPreferences
+import org.siloserver.silo.model.section.ProfileSectionSetting
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
-import org.siloserver.silo.tv.ui.screens.home.normalizeTvHomeSections
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
-import org.siloserver.silo.viewmodel.HomeViewModel
+import org.siloserver.silo.viewmodel.HomeSectionsEditorViewModel
 
-/** Full-screen, remote-first Home row editor matching the tvOS settings flow. */
+/**
+ * Full-screen, remote-first Home row editor matching the tvOS settings flow.
+ * The rows are the active profile's server layout, so a change applies to
+ * this profile on every device and shows in the admin's Home sections card.
+ */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 internal fun TvHomeSectionsEditor(
     onDismiss: () -> Unit,
-    viewModel: HomeViewModel = koinViewModel(),
-    preferences: TvHomeSectionPreferences = koinInject(),
+    viewModel: HomeSectionsEditorViewModel = koinViewModel(),
 ) {
-    val homeState by viewModel.uiState.collectAsState()
-    val preferenceState by preferences.state.collectAsState()
-    val sections = remember(homeState.sections) {
-        homeState.sections.normalizeTvHomeSections()
-    }
-    val arrangedSections = remember(sections, preferenceState.layout) {
-        TvHomeSectionPreferences.arrange(
-            sections = sections,
-            layout = preferenceState.layout,
-            includingHidden = true,
-        )
-    }
-    val rowFocusRequesters = remember(sections.map { it.id }) {
-        sections.associate { section ->
-            section.id to HomeSectionRowFocusRequesters(
+    val state by viewModel.state.collectAsState()
+    val rows = state.rows
+    // Keyed by the set of rows, not their order, so a move keeps the
+    // requesters the focus restoration below is aiming at.
+    val rowFocusRequesters = remember(rows.map { it.id }.sorted()) {
+        rows.associate { row ->
+            row.id to HomeSectionRowFocusRequesters(
                 moveUp = FocusRequester(),
                 moveDown = FocusRequester(),
             )
@@ -116,47 +106,34 @@ internal fun TvHomeSectionsEditor(
         onDismiss()
     }
 
-    fun move(section: ResolvedSection, offset: Int) {
-        val ids = arrangedSections.map { it.id }.toMutableList()
-        val index = ids.indexOf(section.id)
+    fun move(row: ProfileSectionSetting, offset: Int) {
+        val index = rows.indexOfFirst { it.id == row.id }
         val target = index + offset
-        if (index < 0 || target !in ids.indices) return
-        ids[index] = ids[target]
-        ids[target] = section.id
+        if (index < 0 || target !in rows.indices) return
+        val lastIndex = rows.lastIndex
+        viewModel.move(row.id, offset)
 
         scope.launch {
-            preferences.setOrder(ids)
-            val requesters = rowFocusRequesters[section.id] ?: return@launch
+            val requesters = rowFocusRequesters[row.id] ?: return@launch
             val (requester, direction) = when (target) {
                 0 -> requesters.moveDown to 1
-                ids.lastIndex -> requesters.moveUp to -1
+                lastIndex -> requesters.moveUp to -1
                 else -> if (offset < 0) requesters.moveUp to -1 else requesters.moveDown to 1
             }
             requestFocusUntilObserved(
                 maxAttempts = TvFrameRelocationMaxAttempts,
                 awaitAttempt = { withFrameNanos { } },
                 requestFocus = requester::requestFocus,
-                isFocused = { focusedMoveControl == (section.id to direction) },
+                isFocused = { focusedMoveControl == (row.id to direction) },
             )
         }
     }
 
     BackHandler(onBack = ::close)
 
-    // The editor lists Home's rows, so realtime and language updates reach
-    // them while it is open, as they do on Home itself.
-    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
-        viewModel.onShown()
-        onPauseOrDispose { viewModel.onHidden() }
-    }
-
-    LaunchedEffect(preferences, viewModel) {
-        preferences.refresh()
-        // The shell normally already owns populated Home state. A direct
-        // Settings entry can still arrive before that first load completes,
-        // so explicitly retry only while there is nothing useful to edit.
-        if (homeState.sections.isEmpty()) viewModel.loadSections()
-    }
+    // Re-read on every open: another device or the admin may have changed
+    // the layout since the editor was last shown.
+    LaunchedEffect(viewModel) { viewModel.load() }
 
     LaunchedEffect(Unit) {
         requestFocusUntilObserved(
@@ -243,7 +220,7 @@ internal fun TvHomeSectionsEditor(
                         HomeSectionsControlButton(
                             label = if (isEditing) stringResource(CommonR.string.settings_homeSections_doneEditing) else stringResource(CommonR.string.settings_homeSections_edit),
                             onClick = { isEditing = !isEditing },
-                            enabled = arrangedSections.size >= 2,
+                            enabled = rows.size >= 2,
                         )
                         HomeSectionsControlButton(
                             label = stringResource(CommonR.string.common_done),
@@ -254,13 +231,13 @@ internal fun TvHomeSectionsEditor(
                 }
 
                 when {
-                    arrangedSections.isEmpty() && homeState.isLoading -> {
+                    rows.isEmpty() && state.isLoading -> {
                         HomeSectionsMessage(stringResource(CommonR.string.settings_homeSections_loading))
                     }
-                    arrangedSections.isEmpty() && homeState.error != null -> {
+                    rows.isEmpty() && state.loadError != null -> {
                         HomeSectionsMessage(stringResource(CommonR.string.settings_homeSections_loadFailed))
                     }
-                    arrangedSections.isEmpty() -> {
+                    rows.isEmpty() -> {
                         HomeSectionsMessage(stringResource(CommonR.string.settings_homeSections_empty))
                     }
                     else -> {
@@ -269,15 +246,15 @@ internal fun TvHomeSectionsEditor(
                             contentPadding = PaddingValues(bottom = 4.dp),
                             verticalArrangement = Arrangement.spacedBy(5.dp),
                         ) {
-                            items(arrangedSections, key = { it.id }) { section ->
-                                val visible = section.id !in preferenceState.layout.hiddenSectionIds
-                                val index = arrangedSections.indexOfFirst { it.id == section.id }
+                            items(rows, key = { it.id }) { section ->
+                                val visible = !section.hidden
+                                val index = rows.indexOfFirst { it.id == section.id }
                                 HomeSectionEditorRow(
                                     section = section,
                                     visible = visible,
                                     editing = isEditing,
                                     canMoveUp = index > 0,
-                                    canMoveDown = index in 0 until arrangedSections.lastIndex,
+                                    canMoveDown = index in 0 until rows.lastIndex,
                                     focusRequesters = rowFocusRequesters.getValue(section.id),
                                     onMoveFocusChanged = { direction, focused ->
                                         val control = section.id to direction
@@ -289,24 +266,27 @@ internal fun TvHomeSectionsEditor(
                                     onMoveUp = { move(section, -1) },
                                     onMoveDown = { move(section, 1) },
                                     onToggleVisibility = {
-                                        scope.launch {
-                                            preferences.setVisible(section.id, visible = !visible)
-                                        }
+                                        viewModel.setHidden(section.id, hidden = visible)
                                     },
                                 )
                             }
                         }
+                        val saveError = state.saveError
                         Text(
-                            text = if (isEditing) {
-                                stringResource(CommonR.string.settings_homeSections_moveFooter)
-                            } else {
-                                stringResource(CommonR.string.settings_homeSections_visibilityFooter)
+                            text = when {
+                                saveError != null -> stringResource(CommonR.string.settings_homeSections_saveFailed)
+                                isEditing -> stringResource(CommonR.string.settings_homeSections_moveFooter)
+                                else -> stringResource(CommonR.string.settings_homeSections_visibilityFooter)
                             },
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontSize = 14.sp,
                                 lineHeight = 18.sp,
                             ),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (saveError != null) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                         )
                     }
                 }
@@ -351,7 +331,7 @@ private fun HomeSectionsMessage(message: String) {
 
 @Composable
 private fun HomeSectionEditorRow(
-    section: ResolvedSection,
+    section: ProfileSectionSetting,
     visible: Boolean,
     editing: Boolean,
     canMoveUp: Boolean,
@@ -389,12 +369,9 @@ private fun HomeSectionEditorRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = if (section.isCollectionRow) {
-                        val count = section.collections.size
-                        pluralStringResource(CommonR.plurals.home_editor_collectionCount, count, count, LocaleFormat.integer(count))
-                    } else {
-                        pluralStringResource(CommonR.plurals.rowPage_item, section.items.size, section.items.size)
-                    },
+                    text = stringResource(
+                        if (visible) CommonR.string.home_editor_rowShown else CommonR.string.home_editor_rowHidden,
+                    ),
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

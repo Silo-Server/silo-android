@@ -7,6 +7,7 @@ import android.view.View
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import org.siloserver.silo.model.section.ProfileSectionSetting
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.apiv2.Problem
 import org.siloserver.silo.network.apiv2.ProblemText
@@ -107,6 +108,17 @@ fun sectionTitle(section: ResolvedSection): String {
     val context = LocalContext.current
     val rtl = isRightToLeftText()
     return context.sectionTitle(section, rtl)
+}
+
+/** [ProfileSectionSetting.title] in the Home Sections editors, translated as [sectionTitle] does. */
+@Composable
+fun sectionTitle(setting: ProfileSectionSetting): String {
+    LocalConfiguration.current // recompose on a language change
+    val context = LocalContext.current
+    val rtl = isRightToLeftText()
+    return ServerText.sectionTitle(setting.title, setting.titleKey, setting.titleArgs, rtl) { key ->
+        ServerText.id(context, key)?.let(context.resources::getString)
+    }
 }
 
 /** [ResolvedSection.title] for code outside composition; see [sectionTitle]. */

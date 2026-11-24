@@ -148,26 +148,16 @@ fun HomeScreen(
         viewModel.onShown(refreshOnResume = true)
         onPauseOrDispose { viewModel.onHidden() }
     }
-    val sectionPreferences: HomeSectionPreferencesStore = koinInject()
-    val preferenceRevision by sectionPreferences.revision.collectAsState()
     val serverRegistry: ServerRegistry = koinInject()
     val activeServerId by serverRegistry.activeServerId.collectAsState()
     val activeEntry by serverRegistry.activeEntry.collectAsState()
     val sections = state.sections
     val profileScopeId = activeEntry?.profileId ?: activeProfile?.id
     val activeAccountId = activeEntry?.accountId
-    val populatedServerSections = remember(sections) { sections.filter { it.hasCards } }
     // No hero billboard on phone (matches iOS): a `featured` section is just
-    // another row, rendered in the order the server configured it.
-    val regularSections = remember(
-        sections,
-        preferenceRevision,
-        activeServerId,
-        activeAccountId,
-        profileScopeId,
-    ) {
-        sectionPreferences.arrangedSections(sections, profileId = profileScopeId)
-    }
+    // another row. The server already orders and hides rows for this
+    // profile, so Home shows its populated rows exactly in that order.
+    val regularSections = remember(sections) { sections.filter { it.hasCards } }
     val context = LocalContext.current
     val catalogRepository: CatalogRepository = koinInject()
     val catalogLanguage: CatalogLanguageRevision = koinInject()
@@ -322,19 +312,10 @@ fun HomeScreen(
                 message = state.error?.text() ?: stringResource(CommonR.string.status_errorGeneric),
                 onRetry = { viewModel.loadSections() },
             )
-            regularSections.isEmpty() -> {
-                if (populatedServerSections.isNotEmpty()) {
-                    EmptyStateView(
-                        title = stringResource(CommonR.string.home_hiddenSections),
-                        subtitle = stringResource(CommonR.string.home_hiddenSectionsBody),
-                    )
-                } else {
-                    EmptyStateView(
-                        title = stringResource(CommonR.string.home_empty),
-                        subtitle = stringResource(CommonR.string.home_emptyBody),
-                    )
-                }
-            }
+            regularSections.isEmpty() -> EmptyStateView(
+                title = stringResource(CommonR.string.home_empty),
+                subtitle = stringResource(CommonR.string.home_emptyBody),
+            )
             else -> PullToRefreshBox(
                 isRefreshing = state.isRefreshing,
                 onRefresh = { viewModel.refresh() },

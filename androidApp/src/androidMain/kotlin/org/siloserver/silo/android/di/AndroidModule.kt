@@ -503,7 +503,7 @@ val androidModule = module {
             trickplayManifests = get(),
         )
     }
-    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get(), startShown = false) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get(), startShown = false, homeLayoutChanges = get()) }
     viewModel { MainHeaderViewModel(get()) }
     viewModel {
         LibrariesViewModel(
@@ -522,12 +522,7 @@ val androidModule = module {
             serverRegistry = get(),
         )
     }
-    single {
-        org.siloserver.silo.android.ui.screens.home.HomeSectionPreferencesStore(
-            context = get(),
-            serverRegistry = get(),
-        )
-    }
+    viewModel { org.siloserver.silo.viewmodel.HomeSectionsEditorViewModel(get()) }
     viewModel { params ->
         BrowseViewModel(
             get(),

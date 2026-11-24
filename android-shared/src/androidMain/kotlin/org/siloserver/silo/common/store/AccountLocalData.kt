@@ -231,6 +231,7 @@ class AccountLocalData(
         const val DATASTORE_SUFFIX = ".preferences_pb"
 
         const val BROWSE_PREFS = "browse_prefs"
+        /** No longer written (Home row order moved to the server); kept so older installs are cleaned up. */
         const val HOME_SECTIONS_PREFS = "home_section_preferences"
         const val ONBOARDING_PREFS = "onboarding_tour"
         const val SERIES_AUTO_RESET_PREFS = "series_track_auto_resets"
@@ -254,7 +255,9 @@ class AccountLocalData(
         /**
          * Per-(account, profile) DataStore files: `FILE_BASE` of
          * AndroidPlayerSettingsStore, AudiobookSettingsStore and the TV app's
-         * TvHomeSectionPreferences, TvLibraryScopeStore, TvLibrarySelectionStore.
+         * TvLibraryScopeStore, TvLibrarySelectionStore. `tv_home_sections` is
+         * no longer written (Home row order moved to the server); it stays
+         * listed so older installs' files are still cleaned up.
          */
         val DATASTORE_BASES = listOf(
             "silo_player_settings",

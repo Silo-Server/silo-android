@@ -113,7 +113,7 @@ fun SettingsInterfaceScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
         item(key = "home") {
             SettingsSection(
                 title = stringResource(CommonR.string.settings_interface_home),
-                footer = stringResource(CommonR.string.settings_interface_homeFooter),
+                footer = stringResource(CommonR.string.settings_interface_homeProfileFooter),
             ) {
                 SettingsNavigationRow(
                     label = stringResource(CommonR.string.settings_homeSections_title),

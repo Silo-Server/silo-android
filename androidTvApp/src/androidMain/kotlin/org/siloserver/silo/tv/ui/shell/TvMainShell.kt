@@ -1368,10 +1368,6 @@ fun TvMainShell(
                         onExploreSection = openHomeSection,
                         onCollectionClick = openHomeCollection,
                         homeCollectionLibraryIds = homeCollectionLibraryIds,
-                        onOpenSettings = {
-                            navigateToRoute(TvMainRoute.Settings.route)
-                            moveFocusToContent(TvMainRoute.Settings.route)
-                        },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
                         detailReturnFocusRequest = homeDetailReturnFocusState.requestId,
@@ -1398,10 +1394,6 @@ fun TvMainShell(
                         onExploreSection = openHomeSection,
                         onCollectionClick = openHomeCollection,
                         homeCollectionLibraryIds = homeCollectionLibraryIds,
-                        onOpenSettings = {
-                            navigateToRoute(TvMainRoute.Settings.route)
-                            moveFocusToContent(TvMainRoute.Settings.route)
-                        },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
                         detailReturnFocusRequest = homeDetailReturnFocusState.requestId,
@@ -1613,7 +1605,6 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Settings.route) {
                     TvSettingsScreen(
-                        homeSectionsViewModel = homeViewModel,
                         onManageServers = onManageServers,
                         onOpenDiagnosticsReport = onOpenDiagnosticsReport,
                         initialManageServersFocus = returnToManageServers,

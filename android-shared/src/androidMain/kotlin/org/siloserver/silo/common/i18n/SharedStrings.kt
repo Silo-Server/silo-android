@@ -44,6 +44,8 @@ internal val SharedString.resId: Int
         SharedString.PinNetworkError -> R.string.pin_error_network
         SharedString.HomeLoadFailed -> R.string.home_error_loadFailed
         SharedString.HomeSignedOut -> R.string.home_error_signedOut
+        SharedString.HomeEditorLoadFailed -> R.string.home_editor_loadFailed
+        SharedString.HomeEditorSaveFailed -> R.string.home_editor_saveFailed
         SharedString.CalendarLoadFailed -> R.string.calendar_error_loadFailed
         SharedString.CalendarSignedOut -> R.string.calendar_error_signedOut
         SharedString.BoxSetLoadFailed -> R.string.boxSets_error_loadFailed

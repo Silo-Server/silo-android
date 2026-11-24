@@ -49,6 +49,8 @@ enum class SharedString(val key: String) {
     // Load errors.
     HomeLoadFailed("home.error.loadFailed"),
     HomeSignedOut("home.error.signedOut"),
+    HomeEditorLoadFailed("home.editor.loadFailed"),
+    HomeEditorSaveFailed("home.editor.saveFailed"),
     CalendarLoadFailed("calendar.error.loadFailed"),
     CalendarSignedOut("calendar.error.signedOut"),
     BoxSetLoadFailed("boxSets.error.loadFailed"),
