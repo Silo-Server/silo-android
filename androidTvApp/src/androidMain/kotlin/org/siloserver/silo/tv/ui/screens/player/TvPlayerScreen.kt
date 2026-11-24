@@ -1469,13 +1469,15 @@ fun TvPlayerScreen(
 
             // The recap and credits pill takes root Select only while its timer
             // runs. After it, OK is normal Select again: it shows the controls
-            // (the unmapped-key branch below) and skips nothing.
+            // (the unmapped-key branch below) and skips nothing. A press that
+            // lands as the timer runs out, before the screen has recomposed,
+            // finds no pill to act on and falls through to that branch too.
             if (latestSegmentSkipState.isTimed && !playerState.showControls &&
                 !playerState.isScrubbing && cleanSeekRate == 0 &&
                 event.keyCode in setOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)
             ) {
-                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) handleSegmentPromptSelect()
-                return@handler true
+                val initialPress = event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
+                if (!initialPress || handleSegmentPromptSelect()) return@handler true
             }
 
             // The buffering pill, below the segment-skip pills that outrank
