@@ -37,11 +37,14 @@ import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 
 /**
- * The phone's intro-skip pill — the same state machine and copy the TV renders,
- * with pointer rules instead of focus rules.
+ * The phone's skip pill — the same state machine and copy the TV renders,
+ * with pointer rules instead of focus rules. It draws the intro pill and, with
+ * [skipLabel], the recap and credits pill.
  *
  *  - [IntroAutoSkipState.Hidden]: takes no space (caller can leave the slot composed).
- *  - [IntroAutoSkipState.Asking]: "Skip Intro"; tap seeks past the intro.
+ *  - [IntroAutoSkipState.Asking]: [skipLabel]; tap seeks past the range.
+ *  - [IntroAutoSkipState.Returned]: the same action without a fill, back while
+ *    the controls are up after the timer ran out.
  *  - [IntroAutoSkipState.Skipped]: a small "Intro skipped" caption over a
  *    "Watch Intro" button; tap plays it after all.
  *
@@ -62,6 +65,8 @@ fun IntroAutoSkipBanner(
     countdownRun: Int = 0,
     /** False while the timer is frozen by a pause — the fill holds where it is. */
     timerRunning: Boolean = true,
+    /** The `ask` action's label: "Skip Intro" unless the pill skips a recap or credits. */
+    skipLabel: String = stringResource(CommonR.string.introSkip_pill_skip),
 ) {
     val fill = rememberNoticeCountdownFill(state.secondsRemainingOrNull, totalSeconds, countdownRun, timerRunning)
 
@@ -71,6 +76,7 @@ fun IntroAutoSkipBanner(
         IntroAutoSkipState.Hidden -> 0
         is IntroAutoSkipState.Asking -> 1
         is IntroAutoSkipState.Skipped -> 2
+        IntroAutoSkipState.Returned -> 3
     }
     AnimatedContent(
         targetState = slot,
@@ -87,9 +93,15 @@ fun IntroAutoSkipBanner(
                 Spacer(Modifier.size(0.dp))
             }
             1 -> IntroPromptPill(
-                label = stringResource(CommonR.string.introSkip_pill_skip),
+                label = skipLabel,
                 icon = Icons.Filled.SkipNext,
                 progress = fill.floatValue,
+                onClick = onSelect,
+            )
+            3 -> IntroPromptPill(
+                label = skipLabel,
+                icon = Icons.Filled.SkipNext,
+                progress = 0f,
                 onClick = onSelect,
             )
             else -> IntroPromptPill(
@@ -163,10 +175,4 @@ private fun IntroPromptPill(
             }
         }
     }
-}
-
-/** Manual recap/credits action uses the intro pill's existing visual treatment. */
-@Composable
-fun MarkerSkipPill(label: String, onClick: () -> Unit) {
-    IntroPromptPill(label = label, icon = Icons.Filled.SkipNext, progress = 0f, onClick = onClick)
 }

@@ -72,6 +72,10 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -169,9 +173,23 @@ fun PlayerControls(
     // composable stays test-friendly and decoupled from the Cast SDK. The
     // modifier dresses it as a player disc.
     castSlot: @Composable (Modifier) -> Unit = {},
+    // Tabletop only: how far the time row and seek bar rise from the bottom of
+    // these controls, so a skip pill can sit above them. The lower pane spaces
+    // its rows to fit, so this is measured, not a constant.
+    onTabletopPillClearanceChanged: (Dp) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var isScrubbing by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val latestClearanceReport by rememberUpdatedState(onTabletopPillClearanceChanged)
+    // [controls, bottom cluster]; either callback may land first, so each reports once both are known.
+    val clearanceCoordinates = remember { arrayOfNulls<LayoutCoordinates>(2) }
+    fun reportTabletopPillClearance() {
+        val controls = clearanceCoordinates[0]?.takeIf { it.isAttached } ?: return
+        val cluster = clearanceCoordinates[1]?.takeIf { it.isAttached } ?: return
+        val clusterTop = controls.localPositionOf(cluster, Offset.Zero).y
+        latestClearanceReport(with(density) { (controls.size.height - clusterTop).coerceAtLeast(0f).toDp() })
+    }
     val chromeAlpha by animateFloatAsState(
         targetValue = if (isScrubbing) 0.12f else 1f,
         animationSpec = tween(180),
@@ -186,7 +204,17 @@ fun PlayerControls(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .playerScrim(boost = scrimBoost),
+            .playerScrim(boost = scrimBoost)
+            .then(
+                if (tabletopMode) {
+                    Modifier.onGloballyPositioned {
+                        clearanceCoordinates[0] = it
+                        reportTabletopPillClearance()
+                    }
+                } else {
+                    Modifier
+                },
+            ),
     ) {
         val contentModifier = if (tabletopMode) {
             Modifier
@@ -211,7 +239,6 @@ fun PlayerControls(
             // Pixel 9 Pro that is a 68dp "status bar" on top and a 36dp
             // "navigation bar" underneath, which dropped the toolbar a quarter
             // of the way down the screen and lifted the seek bar off the bottom.
-            val density = LocalDensity.current
             val layoutDirection = LocalLayoutDirection.current
             val safeDrawing = WindowInsets.safeDrawing
             val horizontalInset = with(density) {
@@ -301,7 +328,14 @@ fun PlayerControls(
                 ) {
                     topBar()
                     transport()
-                    bottom()
+                    Box(
+                        modifier = Modifier.onGloballyPositioned {
+                            clearanceCoordinates[1] = it
+                            reportTabletopPillClearance()
+                        },
+                    ) {
+                        bottom()
+                    }
                     TabletopUtilityRow(
                         playbackSpeed = playbackSpeed,
                         playbackSpeedEnabled = playbackSpeedEnabled,
