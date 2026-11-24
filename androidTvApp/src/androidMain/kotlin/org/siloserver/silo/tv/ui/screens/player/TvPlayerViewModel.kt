@@ -1909,6 +1909,9 @@ class TvPlayerViewModel(
     // so the Up-Next overlay couldn't arm its countdown. Carries the "video has
     // ended" flag forward so the countdown re-arms once nextEpisode resolves.
     private var pendingApproachingEndVideoEnded: Boolean? = null
+    // Playback reached STATE_ENDED and no seek has moved it since. The overlay's
+    // nextUpVideoEnded outlives a seek back, so closing at the end reads this.
+    private var endedSinceSeek = false
     // The running shuffle this player plays picks from; null outside a shuffle.
     private var shufflePlayback: org.siloserver.silo.playback.ShufflePlayback? =
         launchArgs.shuffleId?.takeIf { it.isNotBlank() }?.let { id -> shuffleFeatureStore?.playback(id) }
@@ -2061,14 +2064,7 @@ class TvPlayerViewModel(
                 val state = _uiState.value
                 if (enabled || roomId != null || shufflePlayback != null || nextUpOpenedByViewer) return@collect
                 if (!state.showNextUp || state.isNextUpTransitioning) return@collect
-                if (!state.isAtEndOfPlayback()) {
-                    dismissNextUp()
-                    return@collect
-                }
-                nextUpCountdownJob?.cancel()
-                nextUpCountdownJob = null
-                _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
-                _closeAtEndRequests.tryEmit(Unit)
+                if (state.isAtEndOfPlayback()) closeAtEndWithNextUpOff() else dismissNextUp()
             }
         }
     }
@@ -4440,6 +4436,7 @@ class TvPlayerViewModel(
     /** Coalesces rapid remote/button skips into one route-aware seek. */
     fun onSkipBy(deltaSeconds: Double): Double {
         resetPassOutStreak()
+        endedSinceSeek = false
         val state = _uiState.value
         val nowMs = SystemClock.elapsedRealtime()
         if (quickSkipAccumulator.pending == null) {
@@ -4513,6 +4510,7 @@ class TvPlayerViewModel(
      * reanchor. A missing plan timeline falls through to a raw player seek.
      */
     private fun executeSeekTarget(targetSourceSec: Double) {
+        endedSinceSeek = false
         val state = _uiState.value
         if (transportMountGate.suppressPositionReports &&
             (state.sessionId == null || state.playbackPlan == null)
@@ -5000,6 +4998,7 @@ class TvPlayerViewModel(
         autoAdvanceHandled = false
         reachedCreditsOrEnd = false
         pendingApproachingEndVideoEnded = null
+        endedSinceSeek = false
         episodeSelectionHandoffSlot.invalidate()
         _uiState.update { it.copy(contentId = newContentId, nextEpisode = null) }
     }
@@ -5458,10 +5457,10 @@ class TvPlayerViewModel(
                 pendingApproachingEndVideoEnded?.let { videoEnded ->
                     if (shufflePlayback == null && !nextUpEnabled.value) {
                         pendingApproachingEndVideoEnded = null
-                        // The end already showed the overlay on its own: close instead.
-                        if (videoEnded && !nextUpOpenedByViewer) {
-                            _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
-                            _closeAtEndRequests.tryEmit(Unit)
+                        // The end already showed the overlay on its own: close
+                        // instead, unless a seek has since moved playback off it.
+                        if (videoEnded && !nextUpOpenedByViewer && _uiState.value.isAtEndOfPlayback()) {
+                            closeAtEndWithNextUpOff()
                         }
                     } else {
                         commitApproachingEnd(nextState, videoEnded)
@@ -5498,7 +5497,10 @@ class TvPlayerViewModel(
         // a hand-opened Up Next also sets. The before-end prompt can open while
         // the story is still playing, so only the end counts here; the closing
         // credits are recorded where playback crosses them.
-        if (videoEnded) reachedCreditsOrEnd = true
+        if (videoEnded) {
+            reachedCreditsOrEnd = true
+            endedSinceSeek = true
+        }
         if (shufflePlayback != null) {
             // A multi-part pick plays its later parts before the shuffle moves on.
             shuffleNextPartFileId?.let { fileId ->
@@ -5515,14 +5517,13 @@ class TvPlayerViewModel(
             // overlay the viewer opened stays up, without a countdown; one that
             // opened on its own before Off arrived closes with the player.
             if (videoEnded) {
-                // A countdown left from before Off arrived must not advance.
-                nextUpCountdownJob?.cancel()
-                nextUpCountdownJob = null
                 if (_uiState.value.showNextUp && nextUpOpenedByViewer) {
+                    // A countdown left from before Off arrived must not advance.
+                    nextUpCountdownJob?.cancel()
+                    nextUpCountdownJob = null
                     _uiState.update { it.copy(nextUpVideoEnded = true, nextUpCountdownSeconds = null) }
                 } else {
-                    _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
-                    _closeAtEndRequests.tryEmit(Unit)
+                    closeAtEndWithNextUpOff()
                 }
             }
             return
@@ -5692,8 +5693,7 @@ class TvPlayerViewModel(
                 // the player instead of starting the next episode.
                 if (shufflePlayback == null && !nextUpEnabled.value) {
                     nextUpCountdownJob = null
-                    _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
-                    _closeAtEndRequests.tryEmit(Unit)
+                    closeAtEndWithNextUpOff()
                     return@launch
                 }
                 // Automatic countdown-expiry advance: increment the pass-out streak
@@ -5808,6 +5808,7 @@ class TvPlayerViewModel(
             autoAdvanceHandled = false
             reachedCreditsOrEnd = false
             pendingApproachingEndVideoEnded = null
+            endedSinceSeek = false
             shuffleNextPartFileId = null
             shuffleRefreshedForPostRoll = false
             episodeSelectionHandoffSlot.replace(handoff)
@@ -6014,12 +6015,25 @@ class TvPlayerViewModel(
     }
 
     /**
-     * The stream ended and is still at its end: nextUpVideoEnded outlives a
-     * seek back, so the position must be at the duration too, unless the
-     * plan gave no duration to compare with.
+     * The stream ended and no seek has moved it since. The position check also
+     * catches a seek that bypassed this ViewModel, when the plan gave a duration.
      */
     private fun UiState.isAtEndOfPlayback(): Boolean =
-        nextUpVideoEnded && (duration <= 0.0 || duration - position <= END_POSITION_TOLERANCE_SECONDS)
+        nextUpVideoEnded && endedSinceSeek &&
+            (duration <= 0.0 || duration - position <= END_POSITION_TOLERANCE_SECONDS)
+
+    /**
+     * Next Up off at the end: drop any overlay or countdown left from before
+     * Off arrived and ask the screen to leave the player.
+     */
+    private fun closeAtEndWithNextUpOff() {
+        nextUpCountdownJob?.cancel()
+        nextUpCountdownJob = null
+        // A later end sets it again; a stale one must not close resumed playback.
+        pendingApproachingEndVideoEnded = null
+        _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
+        _closeAtEndRequests.tryEmit(Unit)
+    }
 
     /** Up-Next "Keep Watching" — dismiss the overlay and stay on the current episode. */
     fun dismissNextUp() {

@@ -577,6 +577,36 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun nextUpTurnedOffAfterASeekBackFromTheFinishedCardKeepsPlaying() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val nextUpEnabled = MutableStateFlow(true)
+        val fixture = playerViewModel(starter, backgroundScope, nextUpEnabled = nextUpEnabled)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val closes = mutableListOf<Unit>()
+            backgroundScope.launch { viewModel.closeAtEndRequests.collect { closes += it } }
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            // No duration to compare the position with: only the seek says playback left the end.
+            assertEquals(0.0, viewModel.uiState.value.duration)
+            viewModel.onApproachingEnd(videoEnded = true)
+            runCurrent()
+            assertTrue(viewModel.uiState.value.showUpNext)
+
+            viewModel.remoteSeek(30.0)
+            nextUpEnabled.value = false
+            runCurrent()
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertTrue(closes.isEmpty())
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun nextUpTurnedOffBeforeTheEndClearsTheCardAndClosesAtTheEnd() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val nextUpEnabled = MutableStateFlow(true)
