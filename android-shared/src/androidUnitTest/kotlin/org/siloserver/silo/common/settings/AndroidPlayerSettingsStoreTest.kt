@@ -1602,6 +1602,8 @@ class AndroidPlayerSettingsStoreTest {
         assertFalse(PlaybackSettingsKeys.NextUpEnabled in api.requestedKeys)
         assertFalse(store.nextUpEnabledSupportedFlow.first())
         assertTrue(store.nextUpEnabledFlow.first())
+        // That server holds no device row for it, so the picker isn't pinned to this device.
+        assertFalse(PlaybackSettingsKeys.NextUpEnabled in store.deviceOverrideKeysFlow.first())
 
         // The server upgrades to a contract with the setting.
         keys = keys + PlaybackSettingsKeys.NextUpEnabled

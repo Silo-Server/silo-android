@@ -1139,7 +1139,21 @@ class AndroidPlayerSettingsStore(
                 // from the response is one this server's contract does not
                 // know (older revision); the local value is kept rather than
                 // guessed at.
-                val entry = effective[key] ?: continue
+                val entry = effective[key]
+                if (entry == null) {
+                    // A server whose manifest lacks a manifest-detected key
+                    // holds no row for this device, so the marker a local
+                    // write left (Show Next Up's time choice writes
+                    // next_up_enabled too) would pin its picker to this
+                    // device. The unconfirmed mark stays, so the write is
+                    // still sent once the server stores the key.
+                    if (key in PlaybackSettingsKeys.ManifestDetectedKeys &&
+                        contractRevision?.stores(scope.serverUrl, key) == false
+                    ) {
+                        overrides -= key
+                    }
+                    continue
+                }
                 if (key in unconfirmed) {
                     if (entry.scope == SettingScope.PROFILE_DEVICE.wire) {
                         unconfirmed -= key
