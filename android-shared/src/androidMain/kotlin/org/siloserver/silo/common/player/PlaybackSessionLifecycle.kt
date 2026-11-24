@@ -8,12 +8,14 @@ import org.siloserver.silo.common.R
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackSessionRecording
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackSessionRecorder
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.personal.SyncProgressItem
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.HealthApi
+import org.siloserver.silo.playback.ADMIN_ENDED_PLAYBACK_NOTICE
 import org.siloserver.silo.repository.PersonalDataRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -77,12 +79,13 @@ class PlaybackSessionLifecycle(
     val missingSessionEvents: SharedFlow<MissingSessionRenewal> = _missingSessionEvents.asSharedFlow()
 
     /**
-     * Session ids the server ended for good (410 `playback_session_ended`):
-     * an administrator stopped the session while this player could not be told
-     * over its control socket. The owner leaves playback instead of renewing.
+     * Sessions the server ended for good, with why ([PlaybackServerEnd]): an
+     * administrator stopped the session while this player could not be told
+     * over its control socket, or it stayed paused past the server's limit.
+     * The owner leaves playback instead of renewing.
      */
-    private val _sessionEndedEvents = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val sessionEndedEvents: SharedFlow<String> = _sessionEndedEvents.asSharedFlow()
+    private val _sessionEndedEvents = MutableSharedFlow<PlaybackSessionEnded>(extraBufferCapacity = 1)
+    val sessionEndedEvents: SharedFlow<PlaybackSessionEnded> = _sessionEndedEvents.asSharedFlow()
 
     /**
      * Mutex protects the small set of mutable transitions we make from
@@ -713,12 +716,15 @@ class PlaybackSessionLifecycle(
                 // params. Left unguarded, a late answer about episode A does
                 // all of that to episode B.
                 if (!ownsProgressReply(sess.sessionId)) continue
-                if (result.isPlaybackSessionEnded()) {
-                    Log.i(TAG, "reportProgress: the server ended this session; leaving playback")
+                // Before the sequenced branch: an ended session must leave,
+                // never turn into "progress pending" or a renewal.
+                val serverEnd = result.playbackServerEnd()
+                if (serverEnd != null) {
+                    Log.i(TAG, "reportProgress: the server ended this session ($serverEnd); leaving playback")
                     // Worded to survive the hosted scanner, which withholds a
                     // message where "server" precedes a host-like token.
-                    DiagnosticsPlaybackLogger.sessionEvent("session ended remotely (http 410)")
-                    _sessionEndedEvents.tryEmit(sess.sessionId)
+                    DiagnosticsPlaybackLogger.sessionEvent("session ended remotely (http 410 ${serverEnd.problemCode})")
+                    _sessionEndedEvents.tryEmit(PlaybackSessionEnded(sess.sessionId, serverEnd))
                     continue
                 }
                 if (sessionManager.isSequenced(sess.sessionId)) {
@@ -1077,9 +1083,36 @@ data class StartParams(
 )
 
 /**
- * Whether the server ended the playback session for good: 410
- * `playback_session_ended`, its answer once an administrator stopped a player
- * that could not be told directly. Renewing would undo that stop.
+ * Why the server ended a playback session for good. Each is a 410 problem
+ * [problemCode] that progress and replans answer once the session is over;
+ * renewing would undo the stop.
  */
-fun ApiResult<*>.isPlaybackSessionEnded(): Boolean =
-    this is ApiResult.Error && code == 410 && error == "playback_session_ended"
+enum class PlaybackServerEnd(val problemCode: String) {
+    /** An administrator stopped a player that could not be told directly. */
+    ADMIN("playback_session_ended"),
+
+    /**
+     * The session stayed paused past the server's limit. Only an attempt that
+     * advertised `paused_timeout_v1` gets this answer; others get [ADMIN]'s.
+     */
+    PAUSED_TIMEOUT("playback_session_paused_timeout"),
+    ;
+
+    /** The notice the player shows as it leaves. */
+    val exitNotice: UiText
+        get() = when (this) {
+            ADMIN -> UiText.Raw(ADMIN_ENDED_PLAYBACK_NOTICE)
+            PAUSED_TIMEOUT -> UiText.Res(R.string.player_notice_pausedTimeout)
+        }
+}
+
+/** A session [PlaybackSessionLifecycle] learned the server ended, and why. */
+data class PlaybackSessionEnded(val sessionId: String, val end: PlaybackServerEnd)
+
+/** Why the server ended the playback session for good, or null when this answer does not say it did. */
+fun ApiResult<*>.playbackServerEnd(): PlaybackServerEnd? =
+    (this as? ApiResult.Error)?.takeIf { it.code == 410 }
+        ?.let { error -> PlaybackServerEnd.entries.firstOrNull { it.problemCode == error.error } }
+
+/** Whether the server ended the playback session for good ([playbackServerEnd]). */
+fun ApiResult<*>.isPlaybackSessionEnded(): Boolean = playbackServerEnd() != null

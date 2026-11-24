@@ -73,6 +73,8 @@ import org.siloserver.silo.watchtogether.roomTransportAuthorized
 import org.siloserver.silo.playback.statusLabelFor
 import org.siloserver.silo.playback.timingActionsFor
 import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
 
 /** How long a failed AI subtitle job stays on screen when its sheet was closed. */
 private const val AI_FAILURE_NOTICE_MS = 8_000L
@@ -946,7 +948,9 @@ internal fun playerEyebrow(state: PlayerViewModel.PlayerUiState): String {
     val series = state.seriesTitle?.takeIf { it.isNotBlank() }
     if (series != null) {
         val code = if (state.seasonNumber != null && state.episodeNumber != null) {
-            stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.codeNumber(state.seasonNumber), LocaleFormat.codeNumber(state.episodeNumber))
+            EpisodeLabel.text(
+                state.seasonNumber, state.episodeNumber, state.episodeLabels, state.episodeAirDate, EpisodeCodeStyle.Colon,
+            ).text()
         } else {
             null
         }

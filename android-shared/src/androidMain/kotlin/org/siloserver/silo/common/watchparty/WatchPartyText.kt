@@ -7,6 +7,8 @@ import org.siloserver.silo.common.R
 import org.siloserver.silo.watchtogether.WatchPartyPresence
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.common.i18n.text
 
 /*
  * Watch Party text both apps build the same way. Each is resolved in
@@ -45,15 +47,22 @@ fun watchPartyRuntimeText(minutes: Int): String =
         stringResource(R.string.overlays_runtimeMinutes, LocaleFormat.integer(minutes))
     }
 
-/** "S1 · E2". */
+/** "S1 · E2", or the air date for a date-labeled series ([episodeLabels] `air_date`, sports). */
 @Composable
-fun watchPartyEpisodeLine(season: Int, episode: Int): String =
-    stringResource(R.string.watchParty_episodes_line, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
+fun watchPartyEpisodeLine(season: Int, episode: Int, episodeLabels: String? = null, airDate: String? = null): String =
+    EpisodeLabel.airDate(episodeLabels, airDate)?.text()
+        ?: stringResource(R.string.watchParty_episodes_line, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
 
-/** "S1:E2", the staged episode's short code. */
+/**
+ * "S1:E2", the staged episode's short code, or its air date ("Nov 20, 2026")
+ * when its series is date-labeled ([episodeLabels] `air_date`, sports). The
+ * code keeps its own catalog key: some languages word it apart from the
+ * player's "S1:E2".
+ */
 @Composable
-fun watchPartyEpisodeCode(season: Int, episode: Int): String =
-    stringResource(R.string.watchParty_facts_episodeCode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
+fun watchPartyEpisodeCode(season: Int, episode: Int, episodeLabels: String? = null, airDate: String? = null): String =
+    EpisodeLabel.airDate(episodeLabels, airDate)?.text()
+        ?: stringResource(R.string.watchParty_facts_episodeCode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
 
 /** A member's watch state on the picker's confirmation page: "Watched", "In progress · Watchlist", "No viewing history". */
 @Composable

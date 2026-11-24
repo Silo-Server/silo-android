@@ -16,6 +16,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.text
 
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [28])
@@ -383,12 +384,17 @@ class TvFocusMarqueeModelTest {
 
     /** A catalog-string token as the plain text token it shows as, in English. */
     private fun TvHeroFactToken.inEnglish(): TvHeroFactToken =
-        if (this is TvHeroFactToken.ResToken) TvHeroFactToken.TextToken(englishText()) else this
+        when (this) {
+            is TvHeroFactToken.ResToken -> TvHeroFactToken.TextToken(englishText())
+            is TvHeroFactToken.UiTextToken -> TvHeroFactToken.TextToken(text.text(resources))
+            else -> this
+        }
 
     private fun TvMarqueeContent.metaText(): List<String> = metaParts.map { token ->
         when (token) {
             is TvHeroFactToken.TextToken -> token.value
             is TvHeroFactToken.ResToken -> token.englishText()
+            is TvHeroFactToken.UiTextToken -> token.text.text(resources)
             is TvHeroFactToken.NumberToken -> token.value.value.toString()
             is TvHeroFactToken.ExternalRating -> "${token.rating.name} ${token.rating.display}"
             is TvHeroFactToken.Rating -> token.value

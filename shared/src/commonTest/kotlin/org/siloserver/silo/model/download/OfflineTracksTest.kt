@@ -145,6 +145,34 @@ class OfflineTracksTest {
     }
 
     @Test
+    fun endCreditsStartIsTheLastCreditsInTheFilesEndWindow() {
+        fun endCredits(episodeId: String?, vararg starts: Double): Double? = decodeOfflineManifestEndCreditsStart(
+            """
+            {"episode_id": ${episodeId?.let { "\"$it\"" } ?: "null"}, "duration_seconds": 1304,
+             "marker_segments": [${starts.joinToString { """{"kind": "credits", "start_seconds": $it, "end_seconds": ${it + 20}}""" }}]}
+            """.trimIndent(),
+        )
+
+        // An episode's window is its last 450 s, from 854 s; the last credits in it win.
+        assertEquals(1080.0, endCredits("ep-1", 300.0, 900.0, 1080.0))
+        // Credits placed before the window never finish the title early.
+        assertNull(endCredits("ep-1", 300.0))
+        // Anything not linked to an episode uses the movie window, its last 25% from 978 s.
+        assertNull(endCredits(null, 900.0))
+        assertEquals(1080.0, endCredits(null, 1080.0))
+        // The singular credits field stands in when the manifest has no segments.
+        assertEquals(1080.0, decodeOfflineManifestEndCreditsStart("""{"episode_id": "ep-1", "duration_seconds": 1304, "credits": {"start": 1080, "end": 1290}}"""))
+    }
+
+    @Test
+    fun unreadableMarkersCostNeitherTheTracksNorTheCreditsDecode() {
+        val body = """{"audio_tracks": [{"index": 0, "codec": "aac"}], "duration_seconds": 1304, "marker_segments": [{"kind": "credits"}]}"""
+
+        assertEquals(1, decodeOfflineManifestTracks(body)?.audioTracks?.size)
+        assertNull(decodeOfflineManifestEndCreditsStart(body))
+    }
+
+    @Test
     fun findsSavedSidecarsWhoseStoredSubtitleWasRetimed() {
         val manifest = requireNotNull(
             decodeOfflineManifestTracks(

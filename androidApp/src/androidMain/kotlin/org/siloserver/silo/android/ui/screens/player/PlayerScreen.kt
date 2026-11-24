@@ -659,14 +659,14 @@ fun PlayerScreen(
     }
     // A remote "stop"/"terminate" command tears the screen down like a back
     // press. In a party it ends only this device's engagement; the room goes
-    // on (a host's leave starts the two-minute grace). An administrator's stop
-    // also says why, once: a 410 for the same stop arriving after the command
+    // on (a host's leave starts the two-minute grace). An administrator's stop,
+    // or the server's end of a session paused too long, also says why, once: a 410 for the same stop arriving after the command
     // finds the exit already under way. The screen's context keeps the toast
     // on the display the player is on; text toasts outlive the activity.
     LaunchedEffect(Unit) {
         viewModel.remoteStopRequests.collect { notice ->
             if (notice != null && !exitRequested) {
-                Toast.makeText(context, notice, Toast.LENGTH_LONG).show()
+                Toast.makeText(context, notice.text(context), Toast.LENGTH_LONG).show()
             }
             watchParty?.leave()
             exitPlayer()

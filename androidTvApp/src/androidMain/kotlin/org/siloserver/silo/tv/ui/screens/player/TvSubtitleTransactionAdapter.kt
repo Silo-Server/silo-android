@@ -17,6 +17,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import androidx.annotation.StringRes
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.player.PlaybackQualityPair
+import org.siloserver.silo.common.player.PlaybackServerEnd
+import org.siloserver.silo.common.player.playbackServerEnd
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackTrackSelectionWriteCoordinator
@@ -2604,6 +2606,13 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
      * the session's quality and cap.
      */
     private val inPlayerQuality: suspend (String?) -> PlaybackQualityPair? = { null },
+    /**
+     * Called with the session a stage or commit was about when the server
+     * answers it 410 `playback_session_paused_timeout`: that session is over,
+     * so the player leaves if it still plays it. The failed transaction still
+     * settles as a failure.
+     */
+    private val onPausedTimeout: (sessionId: String) -> Unit = {},
 ) : TvSubtitleStagedReplanPort {
     override suspend fun stage(request: TvSubtitleStageRequest): ApiResult<TvStagedSubtitleCandidate> {
         val input = when (val mapped = request.toManagerStageInput()) {
@@ -2656,9 +2665,13 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
                     ),
                 )
             }
-            is ApiResult.Error -> result
+            is ApiResult.Error -> result.alsoLeaveOnPausedTimeout(request.sessionId)
             is ApiResult.NetworkError -> result
         }
+    }
+
+    private fun ApiResult.Error.alsoLeaveOnPausedTimeout(sessionId: String): ApiResult.Error = also {
+        if (playbackServerEnd() == PlaybackServerEnd.PAUSED_TIMEOUT) onPausedTimeout(sessionId)
     }
 
     override suspend fun commit(
@@ -2685,7 +2698,7 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
                     outputRouteGeneration = candidate.outputRouteGeneration,
                 ),
             )
-            is ApiResult.Error -> result
+            is ApiResult.Error -> result.alsoLeaveOnPausedTimeout(candidate.sessionId)
             is ApiResult.NetworkError -> result
         }
     }

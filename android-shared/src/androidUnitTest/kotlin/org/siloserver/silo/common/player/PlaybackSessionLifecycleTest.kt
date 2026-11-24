@@ -89,34 +89,49 @@ class PlaybackSessionLifecycleTest {
     }
 
     @Test fun `a session the server ended is handed to the owner to leave, not renewed`() = runTest {
-        val ended = ApiResult.Error(410, "playback_session_ended", "An administrator ended this playback session")
-        for (sequenced in listOf(true, false)) {
+        // Both are checked before the sequenced branch, which would otherwise
+        // count them as failed ticks and show "progress pending".
+        val answers = mapOf(
+            PlaybackServerEnd.ADMIN to
+                ApiResult.Error(410, "playback_session_ended", "An administrator ended this playback session"),
+            PlaybackServerEnd.PAUSED_TIMEOUT to
+                ApiResult.Error(410, "playback_session_paused_timeout", "Playback stopped because it was paused for too long."),
+        )
+        for ((end, answer) in answers) for (sequenced in listOf(true, false)) {
             val manager = object : FakeSessionManager() {
                 override fun isSequenced(sessionId: String) = sequenced
-            }.apply { progressDefault = ended }
+            }.apply { progressDefault = answer }
             val lifecycle = newLifecycle(manager)
-            val endedIds = mutableListOf<String>()
+            val ended = mutableListOf<PlaybackSessionEnded>()
             val renewals = mutableListOf<String>()
             val collectors = listOf(
-                backgroundScope.launch { lifecycle.sessionEndedEvents.collect { endedIds += it } },
+                backgroundScope.launch { lifecycle.sessionEndedEvents.collect { ended += it } },
                 backgroundScope.launch { lifecycle.missingSessionEvents.collect { renewals += it.staleSessionId } },
             )
             lifecycle.adoptActiveSession(defaultStartParams(), makeSession("ended-$sequenced"))
-            lifecycle.reportOwnedPosition(10.0, 100.0, false)
-            advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
-            assertEquals(listOf("ended-$sequenced"), endedIds, "sequenced=$sequenced")
-            assertTrue(renewals.isEmpty(), "sequenced=$sequenced")
-            assertNull(lifecycle.notice.value)
+            lifecycle.reportOwnedPosition(10.0, 100.0, true)
+            // Three ticks: as many failures as the sequenced branch takes to warn.
+            advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS * 3 + 100)
+            val case = "end=$end sequenced=$sequenced"
+            assertEquals(PlaybackSessionEnded("ended-$sequenced", end), ended.firstOrNull(), case)
+            assertTrue(ended.all { it.end == end }, case)
+            assertTrue(renewals.isEmpty(), case)
+            assertNull(lifecycle.notice.value, case)
             collectors.forEach { it.cancel() }
             lifecycle.stop()
         }
     }
 
-    @Test fun `only a 410 playback_session_ended counts as a session the server ended`() {
-        assertTrue(ApiResult.Error(410, "playback_session_ended", "").isPlaybackSessionEnded())
-        assertFalse(ApiResult.Error(404, "not_found", "").isPlaybackSessionEnded())
-        assertFalse(ApiResult.Error(410, "gone", "").isPlaybackSessionEnded())
-        assertFalse(ApiResult.Success(Unit).isPlaybackSessionEnded())
+    @Test fun `only a 410 naming an end counts as a session the server ended`() {
+        assertEquals(PlaybackServerEnd.ADMIN, ApiResult.Error(410, "playback_session_ended", "").playbackServerEnd())
+        assertEquals(
+            PlaybackServerEnd.PAUSED_TIMEOUT,
+            ApiResult.Error(410, "playback_session_paused_timeout", "").playbackServerEnd(),
+        )
+        assertNull(ApiResult.Error(404, "playback_session_paused_timeout", "").playbackServerEnd())
+        assertNull(ApiResult.Error(404, "not_found", "").playbackServerEnd())
+        assertNull(ApiResult.Error(410, "gone", "").playbackServerEnd())
+        assertNull(ApiResult.Success(Unit).playbackServerEnd())
     }
 
     @Test fun `sequenced progress warns only after consecutive failures and clears on success`() = runTest {

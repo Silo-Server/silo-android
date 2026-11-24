@@ -5,6 +5,7 @@ package org.siloserver.silo.tv.ui.screens.player
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.playback.SubtitleSyncNotice
 import android.app.Activity
 import android.content.ComponentName
@@ -191,6 +192,9 @@ import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import org.siloserver.silo.tv.ui.components.bidiIsolated
 import org.siloserver.silo.common.i18n.isRightToLeftText
 import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
+import org.siloserver.silo.common.i18n.text
 
 private const val CONTROLS_AUTO_HIDE_MS = 5_000L
 // Pre-revision-9 relative seeks: 10s back, 30s forward, matching tvOS
@@ -624,12 +628,13 @@ fun TvPlayerScreen(
         if (staleCastLaunch) latestOnStaleCastLaunch { exitPlayer(false) {} }
     }
     // A remote "stop"/"terminate" command tears the screen down like a Back press.
-    // An administrator's stop also says why, once: a 410 for the same stop
-    // arriving after the command finds the exit already under way.
+    // An administrator's stop, or the server's end of a session paused too
+    // long, also says why, once: a 410 for the same stop arriving after the
+    // command finds the exit already under way.
     LaunchedEffect(Unit) {
         viewModel.remoteStopRequests.collect { notice ->
             if (notice != null && !exitRequested) {
-                Toast.makeText(context, notice, Toast.LENGTH_LONG).show()
+                Toast.makeText(context, notice.text(context), Toast.LENGTH_LONG).show()
             }
             stopPlaybackAndExit()
         }
@@ -2542,6 +2547,8 @@ fun TvPlayerScreen(
                             durationSec = clock.duration,
                             seasonNumber = state.seasonNumber,
                             episodeNumber = state.episodeNumber,
+                            episodeLabels = state.episodeLabels,
+                            airDate = state.episodeAirDate,
                             audioTracks = state.audioTracks,
                             videoQualities = state.videoQualities,
                             videoQualityPreference = state.videoQualityPreference,
@@ -3352,7 +3359,7 @@ internal fun tvPlayerEyebrow(state: TvPlayerViewModel.UiState): String? {
     if (series != null) {
         val code = state.seasonNumber?.let { season ->
             state.episodeNumber?.let {
-                stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(it))
+                EpisodeLabel.text(season, it, state.episodeLabels, state.episodeAirDate, EpisodeCodeStyle.Colon).text()
             }
         }
         return listOfNotNull(series, code).joinToString(" · ")
@@ -3664,11 +3671,13 @@ private fun TvPlayerNextUpOverlay(
                                 }
                                 if (nextEpisode.isEpisode) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     androidx.tv.material3.Text(
-                                        text = stringResource(
-                                            CommonR.string.upNext_episodeCode,
-                                            LocaleFormat.codeNumber(nextEpisode.seasonNumber),
-                                            LocaleFormat.codeNumber(nextEpisode.episodeNumber),
-                                        ),
+                                        text = EpisodeLabel.text(
+                                            nextEpisode.seasonNumber,
+                                            nextEpisode.episodeNumber,
+                                            nextEpisode.episodeLabels,
+                                            nextEpisode.airDate,
+                                            EpisodeCodeStyle.Dotted,
+                                        ).text(),
                                         color = Color.White.copy(alpha = 0.62f),
                                         style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
                                     )
@@ -4181,16 +4190,18 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
     subtitleAppearance: SubtitleAppearance,
     volumeState: SiloCastVolumeState,
 ): SiloCastPlaybackState {
+    // tvOS shape: "Series · S1 · E2", so remotes read the same for either TV.
+    // A date-labeled series (sports) sends the air date for both numbers.
+    val code = if (seasonNumber != null && episodeNumber != null) {
+        listOf(EpisodeLabel.englishText(seasonNumber, episodeNumber, episodeLabels, episodeAirDate, EpisodeCodeStyle.Spaced))
+    } else {
+        listOfNotNull(seasonNumber?.let { "S$it" }, episodeNumber?.let { "E$it" })
+    }
     return SiloCastPlaybackState(
         contentId = contentId,
         sessionId = sessionId,
         title = title,
-        // tvOS shape: "Series · S1 · E2", so remotes read the same for either TV.
-        subtitle = listOfNotNull(
-            seriesTitle?.takeIf { it.isNotBlank() },
-            seasonNumber?.let { "S$it" },
-            episodeNumber?.let { "E$it" },
-        ).joinToString(" · ").ifBlank { null },
+        subtitle = (listOfNotNull(seriesTitle?.takeIf { it.isNotBlank() }) + code).joinToString(" · ").ifBlank { null },
         isPlaying = isPlaying && !isPaused,
         isLoading = isLoading,
         isBuffering = isBuffering,
@@ -4671,7 +4682,7 @@ private fun tvOnDeckSubtitle(item: TvOnDeckItem): String? {
     val season = item.seasonNumber
     val episode = item.episodeNumber
     if (season == null || episode == null) return item.year?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: item.subtitle
-    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
+    val code = EpisodeLabel.text(season, episode, item.episodeLabels, item.airDate, EpisodeCodeStyle.Dotted).text()
     return code + (item.subtitle?.let { " — ${bidiIsolated(it, isRightToLeftText())}" } ?: "")
 }
 

@@ -41,7 +41,13 @@ internal fun List<ResolvedSection>.toOnDeckItems(contentId: String, seriesId: St
                 year = item.year.takeIf { it > 0 && (item.seasonNumber == null || item.episodeNumber == null) },
                 episodeLine = item.seasonNumber?.let { season ->
                     item.episodeNumber?.let { episode ->
-                        PlayerViewModel.OnDeckEpisodeLine(season, episode, item.title.takeIf { it.isNotBlank() })
+                        PlayerViewModel.OnDeckEpisodeLine(
+                            season,
+                            episode,
+                            item.title.takeIf { it.isNotBlank() },
+                            item.episodeLabels,
+                            item.airDate,
+                        )
                     }
                 },
             )

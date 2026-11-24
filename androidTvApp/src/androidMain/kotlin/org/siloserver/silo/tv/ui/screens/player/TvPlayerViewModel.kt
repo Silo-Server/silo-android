@@ -24,7 +24,9 @@ import org.siloserver.silo.tv.data.preferences.PlaybackQuality
 import org.siloserver.silo.common.player.PlaybackAnalyticsListener
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
-import org.siloserver.silo.common.player.isPlaybackSessionEnded
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.player.PlaybackServerEnd
+import org.siloserver.silo.common.player.playbackServerEnd
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.PlaybackNetworkTier
 import org.siloserver.silo.common.player.inPlayerQualityPair
@@ -146,7 +148,6 @@ import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.model.playback.videoQualityPreference
 import org.siloserver.silo.model.playback.deliveredAs
 import org.siloserver.silo.model.playback.playsAs
-import org.siloserver.silo.playback.ADMIN_ENDED_PLAYBACK_NOTICE
 import org.siloserver.silo.playback.PlaybackMarkersUpdate
 import org.siloserver.silo.playback.PlaybackSubtitleReady
 import org.siloserver.silo.playback.PlaybackSubtitleTimingChanged
@@ -827,6 +828,10 @@ data class NextEpisodeState(
     val stillIsEpisodeStill: Boolean? = null,
     val overview: String? = null,
     val seriesTitle: String? = null,
+    /** The series' `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers. */
+    val episodeLabels: String? = null,
+    /** The episode's air date, YYYY-MM-DD. */
+    val airDate: String? = null,
     val runtimeMinutes: Int = 0,
     /** Not started by this profile; spoiler protection may hide [overview]. */
     val isUnwatched: Boolean = true,
@@ -1430,6 +1435,10 @@ class TvPlayerViewModel(
         val seriesId: String? = null,
         val seasonNumber: Int? = null,
         val episodeNumber: Int? = null,
+        /** The playing episode's series `episode_labels` from /watch; "air_date" (sports) labels it by [episodeAirDate]. */
+        val episodeLabels: String? = null,
+        /** The playing episode's air date from /watch, YYYY-MM-DD. */
+        val episodeAirDate: String? = null,
         val nextEpisode: NextEpisodeState? = null,
         // Up Next's On Deck row: other items in progress (tvOS parity).
         val onDeckItems: List<TvOnDeckItem> = emptyList(),
@@ -1576,7 +1585,15 @@ class TvPlayerViewModel(
         stagedPort = PlaybackSessionManagerTvSubtitleStagedReplanPort(
             playbackSessionManager,
             sessionLifecycle,
-        ) { preference -> playerSettingsStore.inPlayerQualityPair(preference, tier = PlaybackNetworkTier.UNMETERED) },
+            inPlayerQuality = { preference ->
+                playerSettingsStore.inPlayerQualityPair(preference, tier = PlaybackNetworkTier.UNMETERED)
+            },
+            onPausedTimeout = { sessionId ->
+                // A late answer about a session this player moved on from
+                // must not end the playback that replaced it.
+                if (_uiState.value.sessionId == sessionId) leaveServerEndedSession(PlaybackServerEnd.PAUSED_TIMEOUT)
+            },
+        ),
         settlementScope = TvSubtitleSettlementOwner.scope,
         persistencePort = object : TvSubtitlePersistencePort {
             override suspend fun persist(
@@ -1864,9 +1881,9 @@ class TvPlayerViewModel(
     /** Screen leaves the player the way Back does: playback ended with Next Up off. */
     val closeAtEndRequests: SharedFlow<Unit> = _closeAtEndRequests
 
-    private val _remoteStopRequests = MutableSharedFlow<String?>(extraBufferCapacity = 1)
+    private val _remoteStopRequests = MutableSharedFlow<UiText?>(extraBufferCapacity = 1)
     /** Screen collects this and runs its teardown/exit, showing the notice when there is one. */
-    val remoteStopRequests: SharedFlow<String?> = _remoteStopRequests
+    val remoteStopRequests: SharedFlow<UiText?> = _remoteStopRequests
 
     private var remoteMessageCounter = 0L
     private val _remoteMessage = MutableStateFlow<RemoteMessage?>(null)
@@ -2183,8 +2200,8 @@ class TvPlayerViewModel(
             }
         }
         viewModelScope.launch {
-            sessionLifecycle.sessionEndedEvents.collect { endedSessionId ->
-                if (_uiState.value.sessionId == endedSessionId) leaveServerEndedSession()
+            sessionLifecycle.sessionEndedEvents.collect { ended ->
+                if (_uiState.value.sessionId == ended.sessionId) leaveServerEndedSession(ended.end)
             }
         }
         viewModelScope.launch {
@@ -3093,6 +3110,8 @@ class TvPlayerViewModel(
                                 seriesId = result.seriesId,
                                 seasonNumber = result.seasonNumber,
                                 episodeNumber = result.episodeNumber,
+                                episodeLabels = result.episodeLabels,
+                                episodeAirDate = result.airDate,
                                 // An in-place successor remains covered by the
                                 // outgoing card until this exact mount renders.
                                 nextEpisode = it.nextEpisode.takeIf { preservesNextUp },
@@ -3720,8 +3739,9 @@ class TvPlayerViewModel(
                 }
                 is ApiResult.Error -> {
                     cancelPendingCatalogSubtitle()
-                    if (result.isPlaybackSessionEnded()) {
-                        leaveServerEndedSession()
+                    val serverEnd = result.playbackServerEnd()
+                    if (serverEnd != null) {
+                        leaveServerEndedSession(serverEnd)
                     } else {
                         onReplanRequestFailed(classification, notice, result.message)
                     }
@@ -4666,7 +4686,10 @@ class TvPlayerViewModel(
                     }
                     is ApiResult.Error -> {
                         if (!isCurrentSeekRecovery(request)) return
-                        if (result.error == "seek_reanchor_not_supported") {
+                        if (result.playbackServerEnd() == PlaybackServerEnd.PAUSED_TIMEOUT) {
+                            // The session is over; a pinned recovery would get the same answer.
+                            leaveServerEndedSession(PlaybackServerEnd.PAUSED_TIMEOUT)
+                        } else if (result.error == "seek_reanchor_not_supported") {
                             handleSeekRecoveryFailure(
                                 request,
                                 TvPlayerErrors.SEEK_UNSUPPORTED,
@@ -4739,6 +4762,10 @@ class TvPlayerViewModel(
             }
             is ApiResult.Error -> {
                 if (!isCurrentSeekRecovery(request)) return
+                if (result.playbackServerEnd() == PlaybackServerEnd.PAUSED_TIMEOUT) {
+                    leaveServerEndedSession(PlaybackServerEnd.PAUSED_TIMEOUT)
+                    return
+                }
                 val message = if (result.error == "seek_reanchor_not_supported") {
                     TvPlayerErrors.SEEK_UNSUPPORTED
                 } else {
@@ -5153,16 +5180,17 @@ class TvPlayerViewModel(
     fun remoteUnpause() = setPausedByViewer(false)
     fun remoteTogglePlayPause() = onPlayPause()
     fun remoteSeek(positionSeconds: Double) = seekImmediate(positionSeconds)
-    fun remoteStop(notice: String? = null) { _remoteStopRequests.tryEmit(notice) }
+    fun remoteStop(notice: String? = null) { _remoteStopRequests.tryEmit(notice?.let(UiText::Raw)) }
 
     /**
      * The server ended this session for good: an administrator stopped it
-     * while the control socket could not reach this player. Leave the way a
-     * remote stop does rather than renewing into a fresh session.
+     * while the control socket could not reach this player, or it stayed
+     * paused too long. Leave the way a remote stop does, with [end]'s notice,
+     * rather than renewing into a fresh session.
      */
-    private fun leaveServerEndedSession() {
-        Log.i(TAG, "The server ended this playback session; leaving playback")
-        remoteStop(ADMIN_ENDED_PLAYBACK_NOTICE)
+    private fun leaveServerEndedSession(end: PlaybackServerEnd) {
+        Log.i(TAG, "The server ended this playback session ($end); leaving playback")
+        _remoteStopRequests.tryEmit(end.exitNotice)
     }
     fun remoteDisplayMessage(message: String) {
         _remoteMessage.value = RemoteMessage(++remoteMessageCounter, message)
@@ -5387,6 +5415,8 @@ class TvPlayerViewModel(
                 stillIsEpisodeStill = next.stillIsEpisodeStill,
                 overview = next.overview,
                 seriesTitle = state.seriesTitle,
+                episodeLabels = state.episodeLabels,
+                airDate = next.airDate,
                 runtimeMinutes = next.runtime,
                 isUnwatched = org.siloserver.silo.model.settings.EpisodeSpoilers.isUnwatched(next.userData),
             )
@@ -5825,6 +5855,8 @@ class TvPlayerViewModel(
                 stillUrl = pick.stillUrl,
                 overview = pick.overview,
                 seriesTitle = pick.seriesTitle,
+                episodeLabels = pick.episodeLabels,
+                airDate = pick.airDate,
                 runtimeMinutes = pick.runtimeMinutes,
                 isUnwatched = pick.isUnwatched,
                 isEpisode = pick.isEpisode,

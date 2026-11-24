@@ -24,6 +24,8 @@ data class FinalPlaybackPosition(
     val runStartedAtMs: Long? = null,
     /** When the position was taken, so a write that runs late is not sent as newer. */
     val eventTimeMs: Long = System.currentTimeMillis(),
+    /** A downloaded run's position at or past its end credits; see `UserItemStatePort.recordPosition`. */
+    val reachedEndCredits: Boolean = false,
 )
 
 /**

@@ -290,6 +290,9 @@ internal val SharedString.resId: Int
         SharedString.BoxSetPlay -> R.string.boxSets_play
         SharedString.CollectionsUngrouped -> R.string.collections_ungrouped
         SharedString.EpisodeTag -> R.string.catalog_episodeTag
+        SharedString.EpisodeCodeDotted -> R.string.detail_episodeCode
+        SharedString.EpisodeCodeColon -> R.string.player_eyebrow_episode
+        SharedString.EpisodeCodeSpaced -> R.string.catalog_episodeCaption
         SharedString.EpisodeCardTitle -> R.string.detail_episodeCard_title
         SharedString.EpisodeCardMetadata -> R.string.detail_episodeCard_metadata
         SharedString.RuntimeHoursMinutes -> R.string.catalog_runtimeHoursMinutes
