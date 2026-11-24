@@ -677,6 +677,12 @@ fun TvPlayerScreen(
     // The recap and credits pill as displayed: behind the gates above, which
     // also name its label.
     val visibleSegmentSkipState = if (manualSkipTarget != null) segmentSkipState else IntroAutoSkipState.Hidden
+    // The lower-quality offer hides the pill; its timer freezes meanwhile, so
+    // the pill shows with the time it had once the offer goes.
+    DisposableEffect(viewModel, qualityOfferVisible) {
+        viewModel.onSegmentPillCoveredChanged(qualityOfferVisible)
+        onDispose { viewModel.onSegmentPillCoveredChanged(false) }
+    }
     val latestSegmentSkipState by rememberUpdatedState(visibleSegmentSkipState)
     // The intro, recap and credits skip pills and Next Up outrank the
     // buffering pill: it hides (its timer frozen) while any of them shows.

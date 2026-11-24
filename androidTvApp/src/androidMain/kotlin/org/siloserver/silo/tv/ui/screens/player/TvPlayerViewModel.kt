@@ -1769,6 +1769,17 @@ class TvPlayerViewModel(
     val segmentSkipCountdownRun: StateFlow<Int> = segmentSkipController.countdownRun
     val segmentSkipTimerRunning: StateFlow<Boolean> = segmentSkipController.timerRunning
 
+    /**
+     * True while the screen hides the recap and credits pill behind something
+     * the ViewModel cannot see (a Watch Party's lower-quality offer), so its
+     * timer freezes there as it does under Up Next.
+     */
+    private val segmentPillCovered = MutableStateFlow(false)
+
+    fun onSegmentPillCoveredChanged(covered: Boolean) {
+        segmentPillCovered.value = covered
+    }
+
     // ---- Buffering quality (server docs/design/2026-10-17-buffering-quality.md) ----
 
     /**
@@ -3328,7 +3339,8 @@ class TvPlayerViewModel(
             controlsVisible = controlsVisible,
         )
         // The recap and credits pill freezes, or waits to start, while the
-        // intro pill or Up Next covers it, so it shows with the time it had.
+        // intro pill, Up Next or the screen's cover hides it, so it shows with
+        // the time it had.
         segmentObserveJob?.cancel()
         segmentObserveJob = segmentSkipController.observeSegmentPill(
             position = position,
@@ -3338,7 +3350,8 @@ class TvPlayerViewModel(
                 playbackActive,
                 introAutoSkipController.state,
                 _uiState.map { it.showNextUp },
-            ) { active, intro, nextUp -> active && !intro.isVisible && !nextUp },
+                segmentPillCovered,
+            ) { active, intro, nextUp, covered -> active && !intro.isVisible && !nextUp && !covered },
             controlsVisible = controlsVisible,
         )
     }
