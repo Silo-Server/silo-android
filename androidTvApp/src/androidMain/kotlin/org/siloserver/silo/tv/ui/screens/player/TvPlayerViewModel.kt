@@ -1008,6 +1008,8 @@ class TvPlayerViewModel(
         // Auto-play countdown shown on the Up-Next overlay before the next
         // episode starts (mirrors tvOS CountdownRing default).
         const val NEXT_UP_COUNTDOWN_SECONDS = 10
+        // How close to the duration the reported position counts as the end.
+        private const val END_POSITION_TOLERANCE_SECONDS = 2.0
         // A room player sample older than this cannot vouch for buffered media.
         private const val ROOM_SAMPLE_MAX_AGE_MS = 1_000L
         // How long a coordinated source fallback may take before the original
@@ -2049,6 +2051,25 @@ class TvPlayerViewModel(
     // Show Next Up: Off means no overlay, and the player closes at the end.
     private val nextUpEnabled: StateFlow<Boolean> = playerSettingsStore.nextUpEnabledFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    init {
+        // Next Up turned off while an automatic end overlay waits (no
+        // countdown, or no next episode at all): close as Off would have at
+        // the end. An overlay the viewer opened stays theirs.
+        viewModelScope.launch {
+            nextUpEnabled.collect { enabled ->
+                val state = _uiState.value
+                if (!enabled && roomId == null && shufflePlayback == null && !nextUpOpenedByViewer &&
+                    state.showNextUp && state.nextUpVideoEnded && !state.isNextUpTransitioning
+                ) {
+                    nextUpCountdownJob?.cancel()
+                    nextUpCountdownJob = null
+                    _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
+                    _closeAtEndRequests.tryEmit(Unit)
+                }
+            }
+        }
+    }
     val hdrEnabled: StateFlow<Boolean> = playerSettingsStore.hdrEnabledFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val dolbyVisionEnabled: StateFlow<Boolean> = playerSettingsStore.dolbyVisionEnabledFlow
@@ -5996,8 +6017,12 @@ class TvPlayerViewModel(
         autoAdvanceHandled = true
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
+        // nextUpVideoEnded outlives a seek back after the end, so the position
+        // has to still be at the end too.
+        val state = _uiState.value
         val endedWithNextUpOff = roomId == null && shufflePlayback == null &&
-            !nextUpEnabled.value && _uiState.value.nextUpVideoEnded
+            !nextUpEnabled.value && state.nextUpVideoEnded &&
+            state.duration > 0.0 && state.duration - state.position <= END_POSITION_TOLERANCE_SECONDS
         _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
         // With Next Up off, the overlay the viewer kept up at the end was all
         // that held the player open: leaving it leaves the player.

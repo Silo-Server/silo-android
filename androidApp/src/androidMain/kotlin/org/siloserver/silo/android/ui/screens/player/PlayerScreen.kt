@@ -695,7 +695,8 @@ fun PlayerScreen(
     // first; the exit saves the last reported one. In picture-in-picture,
     // leaving the route would fill the window with the screen behind the
     // player, so the ended frame stays until picture-in-picture ends. Playback
-    // resumed from its controls meanwhile keeps the player; its next end asks again.
+    // restarted from its controls meanwhile (playing or paused partway) keeps
+    // the player; its next end asks again.
     LaunchedEffect(Unit) {
         viewModel.closeAtEndRequests.collect {
             mediaController?.takeIf { it.mediaItemCount > 0 }?.let { controller ->
@@ -703,7 +704,12 @@ fun PlayerScreen(
             }
             if (pictureInPictureCoordinator.isInPictureInPictureMode.value) {
                 pictureInPictureCoordinator.isInPictureInPictureMode.first { !it }
-                if (mediaController?.isPlaying == true) return@collect
+                val controller = mediaController
+                if (controller != null && controller.mediaItemCount > 0 &&
+                    (controller.playbackState == Player.STATE_READY || controller.playbackState == Player.STATE_BUFFERING)
+                ) {
+                    return@collect
+                }
             }
             exitPlayer()
         }

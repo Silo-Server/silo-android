@@ -1123,6 +1123,22 @@ class PlayerViewModel(
     private val nextUpTransitionGate = NextUpTransitionGate()
     // The running shuffle this player plays picks from; null outside a shuffle.
     private var shufflePlayback: org.siloserver.silo.playback.ShufflePlayback? = null
+
+    init {
+        // Next Up turned off while the automatic end card waits (no
+        // countdown, or no next episode at all): that card was all that
+        // held the player open, so close as Off would have at the end.
+        viewModelScope.launch {
+            nextUpEnabled.collect { enabled ->
+                val state = _uiState.value
+                if (!enabled && shufflePlayback == null && !remoteTransportSuppressed &&
+                    state.showUpNext && state.upNextVideoEnded && !state.isNextUpTransitioning
+                ) {
+                    closeAtEndWithNextUpOff()
+                }
+            }
+        }
+    }
     // The later part of a multi-part pick that plays before the shuffle moves on.
     private var shuffleNextPartFileId: Int? = null
     // Once per item: the server re-checks the next pick when the card opens.
