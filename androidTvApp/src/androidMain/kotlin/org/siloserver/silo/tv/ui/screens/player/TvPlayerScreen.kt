@@ -2870,8 +2870,11 @@ fun TvPlayerScreen(
             introSkipTimerRunning = introSkipTimerRunning,
             introSkipTotalSeconds = viewModel.introSkipTotalSeconds,
             // The scrubber commits its seek on focus loss, so the prompt must
-            // not take focus out from under an active scrub.
-            introBannerMayTakeFocus = !state.isScrubbing && cleanSeekRate == 0,
+            // not take focus out from under an active scrub. Nor from the quick
+            // subtitle picker: it draws in this window, so the pills still
+            // compose while it is open, and a pill that appeared focused then
+            // would take the picker's OK.
+            introBannerMayTakeFocus = !state.isScrubbing && cleanSeekRate == 0 && !showQuickSubtitlePicker,
             videoActive = videoActive,
             // The session request, the player's own buffering, and an outage
             // the player can't see all wait the same way. An error screen
