@@ -5435,6 +5435,11 @@ class TvPlayerViewModel(
                 pendingApproachingEndVideoEnded?.let { videoEnded ->
                     if (shufflePlayback == null && !nextUpEnabled.value) {
                         pendingApproachingEndVideoEnded = null
+                        // The end already showed the overlay on its own: close instead.
+                        if (videoEnded && !nextUpOpenedByViewer) {
+                            _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
+                            _closeAtEndRequests.tryEmit(Unit)
+                        }
                     } else {
                         commitApproachingEnd(nextState, videoEnded)
                     }

@@ -6282,6 +6282,8 @@ class PlayerViewModel(
                 pendingApproachingEndVideoEnded?.let { videoEnded ->
                     if (shufflePlayback == null && !nextUpEnabled.value) {
                         pendingApproachingEndVideoEnded = null
+                        // The end already showed the finished card: close instead.
+                        if (videoEnded) closeAtEndWithNextUpOff()
                     } else {
                         commitApproachingEnd(info, videoEnded)
                     }
@@ -6319,7 +6321,7 @@ class PlayerViewModel(
         } else if (!nextUpEnabled.value) {
             // Next Up off: nothing before the end, and the player closes at the
             // end. A shuffle still moves on; the viewer asked for one.
-            if (videoEnded) _closeAtEndRequests.tryEmit(Unit)
+            if (videoEnded) closeAtEndWithNextUpOff()
             return
         }
         if (autoAdvanceHandled) {
@@ -6350,6 +6352,18 @@ class PlayerViewModel(
             return
         }
         commitApproachingEnd(next, videoEnded)
+    }
+
+    /**
+     * Next Up off at the end: drop any card or countdown left from before Off
+     * arrived (picture-in-picture can keep the player open a while) and ask
+     * the screen to leave the player.
+     */
+    private fun closeAtEndWithNextUpOff() {
+        upNextCountdownJob?.cancel()
+        upNextCountdownJob = null
+        _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
+        _closeAtEndRequests.tryEmit(Unit)
     }
 
     private fun commitApproachingEnd(next: NextEpisodeInfo, videoEnded: Boolean) {
@@ -6416,8 +6430,7 @@ class PlayerViewModel(
                 // the player instead of starting the next episode.
                 if (shufflePlayback == null && !nextUpEnabled.value) {
                     upNextCountdownJob = null
-                    _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
-                    _closeAtEndRequests.tryEmit(Unit)
+                    closeAtEndWithNextUpOff()
                     return@launch
                 }
                 // Unattended countdown-expiry advance: increment the pass-out streak
