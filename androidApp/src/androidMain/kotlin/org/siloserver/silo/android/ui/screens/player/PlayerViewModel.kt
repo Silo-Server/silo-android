@@ -1803,6 +1803,11 @@ class PlayerViewModel(
         handOffStagedPicks = false
         if (room != null) beginRoomLoad(room)
         // A fresh load resets any in-flight intro countdown / cancellation memory.
+        // The previous item's observers stop first: they would keep feeding
+        // its ranges to the controllers while the load runs, and a download
+        // starts no intro observer to replace the old one.
+        introObserverJob?.cancel()
+        segmentObserverJob?.cancel()
         introAutoSkipController.reset()
         segmentSkipController.reset()
         beginBufferingQualityLoad(contentId)
