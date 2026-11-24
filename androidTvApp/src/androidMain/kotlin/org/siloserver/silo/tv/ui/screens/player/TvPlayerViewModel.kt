@@ -5991,7 +5991,12 @@ class TvPlayerViewModel(
         autoAdvanceHandled = true
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
+        val endedWithNextUpOff = roomId == null && shufflePlayback == null &&
+            !nextUpEnabled.value && _uiState.value.nextUpVideoEnded
         _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
+        // With Next Up off, the overlay the viewer kept up at the end was all
+        // that held the player open: leaving it leaves the player.
+        if (endedWithNextUpOff) _closeAtEndRequests.tryEmit(Unit)
     }
 
     /**
