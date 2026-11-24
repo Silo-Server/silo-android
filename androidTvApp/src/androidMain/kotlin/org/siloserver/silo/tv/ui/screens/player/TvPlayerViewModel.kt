@@ -2061,7 +2061,7 @@ class TvPlayerViewModel(
                 val state = _uiState.value
                 if (enabled || roomId != null || shufflePlayback != null || nextUpOpenedByViewer) return@collect
                 if (!state.showNextUp || state.isNextUpTransitioning) return@collect
-                if (!state.nextUpVideoEnded) {
+                if (!state.isAtEndOfPlayback()) {
                     dismissNextUp()
                     return@collect
                 }
@@ -6013,18 +6013,22 @@ class TvPlayerViewModel(
         }
     }
 
+    /**
+     * The stream ended and is still at its end: nextUpVideoEnded outlives a
+     * seek back, so the position must be at the duration too, unless the
+     * plan gave no duration to compare with.
+     */
+    private fun UiState.isAtEndOfPlayback(): Boolean =
+        nextUpVideoEnded && (duration <= 0.0 || duration - position <= END_POSITION_TOLERANCE_SECONDS)
+
     /** Up-Next "Keep Watching" — dismiss the overlay and stay on the current episode. */
     fun dismissNextUp() {
         if (nextUpTransitionGate.isActive) return
         autoAdvanceHandled = true
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
-        // nextUpVideoEnded outlives a seek back after the end, so the position
-        // has to still be at the end too.
-        val state = _uiState.value
         val endedWithNextUpOff = roomId == null && shufflePlayback == null &&
-            !nextUpEnabled.value && state.nextUpVideoEnded &&
-            state.duration > 0.0 && state.duration - state.position <= END_POSITION_TOLERANCE_SECONDS
+            !nextUpEnabled.value && _uiState.value.isAtEndOfPlayback()
         _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
         // With Next Up off, the overlay the viewer kept up at the end was all
         // that held the player open: leaving it leaves the player.

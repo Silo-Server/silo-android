@@ -490,6 +490,8 @@ class PlayerViewModel(
         private const val BUFFERING_RESTORE_POLL_MS = 250L
         // Up-next auto-play countdown length (matches TV's NEXT_UP_COUNTDOWN_SECONDS).
         const val UP_NEXT_COUNTDOWN_SECONDS = 10
+        // How close to the duration the reported position counts as the end.
+        private const val END_POSITION_TOLERANCE_SECONDS = 2.0
         val SHUFFLE_CONTINUE_FAILED = CommonR.string.upNext_shuffleContinueFailed
         val SHUFFLE_PICK_FAILED = CommonR.string.upNext_pickAnotherFailed
         /** iOS resolveOnDeckItems: section pools feeding the On Deck carousel. */
@@ -1133,7 +1135,11 @@ class PlayerViewModel(
                 val state = _uiState.value
                 if (enabled || shufflePlayback != null || remoteTransportSuppressed) return@collect
                 if (!state.showUpNext || state.isNextUpTransitioning) return@collect
-                if (state.upNextVideoEnded) closeAtEndWithNextUpOff() else dismissUpNext()
+                // upNextVideoEnded outlives a seek back, so the position must be
+                // at the end too, unless the plan gave no duration.
+                val atEnd = state.upNextVideoEnded &&
+                    (state.duration <= 0.0 || state.duration - state.position <= END_POSITION_TOLERANCE_SECONDS)
+                if (atEnd) closeAtEndWithNextUpOff() else dismissUpNext()
             }
         }
     }
