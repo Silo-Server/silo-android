@@ -1008,6 +1008,8 @@ class TvPlayerViewModel(
         // Auto-play countdown shown on the Up-Next overlay before the next
         // episode starts (mirrors tvOS CountdownRing default).
         const val NEXT_UP_COUNTDOWN_SECONDS = 10
+        // How close to the duration the reported position counts as the end.
+        private const val END_POSITION_TOLERANCE_SECONDS = 2.0
         // A room player sample older than this cannot vouch for buffered media.
         private const val ROOM_SAMPLE_MAX_AGE_MS = 1_000L
         // How long a coordinated source fallback may take before the original
@@ -1877,6 +1879,10 @@ class TvPlayerViewModel(
      */
     val roomAudioTrackChanges: SharedFlow<Unit> = _roomAudioTrackChanges
 
+    private val _closeAtEndRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Screen leaves the player the way Back does: playback ended with Next Up off. */
+    val closeAtEndRequests: SharedFlow<Unit> = _closeAtEndRequests
+
     private val _remoteStopRequests = MutableSharedFlow<UiText?>(extraBufferCapacity = 1)
     /** Screen collects this and runs its teardown/exit, showing the notice when there is one. */
     val remoteStopRequests: SharedFlow<UiText?> = _remoteStopRequests
@@ -1892,6 +1898,9 @@ class TvPlayerViewModel(
     // Playback reached the closing credits or the end of this item. Unlike
     // autoAdvanceHandled, opening Up Next by hand or Keep Watching never sets it.
     private var reachedCreditsOrEnd = false
+    // The showing Up Next overlay is one the viewer opened by hand. Set by
+    // every path that shows it, so it is read only while it shows.
+    private var nextUpOpenedByViewer = false
     // The identity generation this player was launched under.
     private val launchIdentityGeneration: Long? = identityTransitions?.generation?.value
     private val nextUpTransitionGate = NextUpTransitionGate()
@@ -1900,6 +1909,9 @@ class TvPlayerViewModel(
     // so the Up-Next overlay couldn't arm its countdown. Carries the "video has
     // ended" flag forward so the countdown re-arms once nextEpisode resolves.
     private var pendingApproachingEndVideoEnded: Boolean? = null
+    // Playback reached STATE_ENDED and no seek has moved it since. The overlay's
+    // nextUpVideoEnded outlives a seek back, so closing at the end reads this.
+    private var endedSinceSeek = false
     // The running shuffle this player plays picks from; null outside a shuffle.
     private var shufflePlayback: org.siloserver.silo.playback.ShufflePlayback? =
         launchArgs.shuffleId?.takeIf { it.isNotBlank() }?.let { id -> shuffleFeatureStore?.playback(id) }
@@ -2039,6 +2051,23 @@ class TvPlayerViewModel(
     // Seconds before the end of the file to surface Up Next (0 = only at end).
     private val nextUpPromptSeconds: StateFlow<Int> = playerSettingsStore.nextUpPromptSecondsFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 30)
+    // Show Next Up: Off means no overlay, and the player closes at the end.
+    private val nextUpEnabled: StateFlow<Boolean> = playerSettingsStore.nextUpEnabledFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    init {
+        // Next Up turned off while an automatic overlay shows: one before the
+        // end goes away as Keep Watching would, and one at the end closes the
+        // player as Off would have. An overlay the viewer opened stays theirs.
+        viewModelScope.launch {
+            nextUpEnabled.collect { enabled ->
+                val state = _uiState.value
+                if (enabled || roomId != null || shufflePlayback != null || nextUpOpenedByViewer) return@collect
+                if (!state.showNextUp || state.isNextUpTransitioning) return@collect
+                if (state.isAtEndOfPlayback()) closeAtEndWithNextUpOff() else dismissNextUp()
+            }
+        }
+    }
     val hdrEnabled: StateFlow<Boolean> = playerSettingsStore.hdrEnabledFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val dolbyVisionEnabled: StateFlow<Boolean> = playerSettingsStore.dolbyVisionEnabledFlow
@@ -4337,6 +4366,15 @@ class TvPlayerViewModel(
         _uiState.update { it.copy(isBuffering = isBuffering || outageRecoveryJob?.isActive == true) }
     }
 
+    /**
+     * Media3 left STATE_ENDED (buffering or ready again): a seek moved playback
+     * off the end, including one from the system media controls that never
+     * reached this ViewModel.
+     */
+    fun onPlaybackLeftEnd() {
+        endedSinceSeek = false
+    }
+
     /** A deliberate interaction shows someone is still watching. */
     private fun resetPassOutStreak() {
         autoAdvanceCount = 0
@@ -4407,6 +4445,7 @@ class TvPlayerViewModel(
     /** Coalesces rapid remote/button skips into one route-aware seek. */
     fun onSkipBy(deltaSeconds: Double): Double {
         resetPassOutStreak()
+        endedSinceSeek = false
         val state = _uiState.value
         val nowMs = SystemClock.elapsedRealtime()
         if (quickSkipAccumulator.pending == null) {
@@ -4480,6 +4519,7 @@ class TvPlayerViewModel(
      * reanchor. A missing plan timeline falls through to a raw player seek.
      */
     private fun executeSeekTarget(targetSourceSec: Double) {
+        endedSinceSeek = false
         val state = _uiState.value
         if (transportMountGate.suppressPositionReports &&
             (state.sessionId == null || state.playbackPlan == null)
@@ -4967,6 +5007,7 @@ class TvPlayerViewModel(
         autoAdvanceHandled = false
         reachedCreditsOrEnd = false
         pendingApproachingEndVideoEnded = null
+        endedSinceSeek = false
         episodeSelectionHandoffSlot.invalidate()
         _uiState.update { it.copy(contentId = newContentId, nextEpisode = null) }
     }
@@ -5420,9 +5461,19 @@ class TvPlayerViewModel(
             // If the credits/end point already fired while we were still
             // resolving, the overlay couldn't arm — complete it now (re-arm the
             // countdown) with the strongest video-ended flag we observed.
+            // Next Up turned off while it was resolving: arm no countdown.
             if (!autoAdvanceHandled) {
                 pendingApproachingEndVideoEnded?.let { videoEnded ->
-                    commitApproachingEnd(nextState, videoEnded)
+                    if (shufflePlayback == null && !nextUpEnabled.value) {
+                        pendingApproachingEndVideoEnded = null
+                        // The end already showed the overlay on its own: close
+                        // instead, unless a seek has since moved playback off it.
+                        if (videoEnded && !nextUpOpenedByViewer && _uiState.value.isAtEndOfPlayback()) {
+                            closeAtEndWithNextUpOff()
+                        }
+                    } else {
+                        commitApproachingEnd(nextState, videoEnded)
+                    }
                 }
             }
         }
@@ -5455,7 +5506,10 @@ class TvPlayerViewModel(
         // a hand-opened Up Next also sets. The before-end prompt can open while
         // the story is still playing, so only the end counts here; the closing
         // credits are recorded where playback crosses them.
-        if (videoEnded) reachedCreditsOrEnd = true
+        if (videoEnded) {
+            reachedCreditsOrEnd = true
+            endedSinceSeek = true
+        }
         if (shufflePlayback != null) {
             // A multi-part pick plays its later parts before the shuffle moves on.
             shuffleNextPartFileId?.let { fileId ->
@@ -5466,11 +5520,28 @@ class TvPlayerViewModel(
                 shuffleRefreshedForPostRoll = true
                 refreshShuffleNext()
             }
+        } else if (!nextUpEnabled.value) {
+            // Next Up off: nothing before the end, and the player closes at the
+            // end. A shuffle still moves on; the viewer asked for one. An
+            // overlay the viewer opened stays up, without a countdown; one that
+            // opened on its own before Off arrived closes with the player.
+            if (videoEnded) {
+                if (_uiState.value.showNextUp && nextUpOpenedByViewer) {
+                    // A countdown left from before Off arrived must not advance.
+                    nextUpCountdownJob?.cancel()
+                    nextUpCountdownJob = null
+                    _uiState.update { it.copy(nextUpVideoEnded = true, nextUpCountdownSeconds = null) }
+                } else {
+                    closeAtEndWithNextUpOff()
+                }
+            }
+            return
         }
         // Playback end reopens a dismissed card without restarting its timer.
         // A card still showing keeps its existing countdown.
         if (autoAdvanceHandled) {
             if (videoEnded) {
+                nextUpOpenedByViewer = false
                 _uiState.update { it.copy(showNextUp = true, hudOpen = false, nextUpVideoEnded = true) }
             }
             return
@@ -5494,6 +5565,7 @@ class TvPlayerViewModel(
             // autoAdvanceHandled here, so a next episode that resolves moments
             // later can still arm the countdown via resolveNextEpisode.
             if (ended) {
+                nextUpOpenedByViewer = false
                 _uiState.update {
                     it.copy(
                         showNextUp = true,
@@ -5544,6 +5616,7 @@ class TvPlayerViewModel(
         if (_uiState.value.showNextUp) return
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
+        nextUpOpenedByViewer = true
         _uiState.update {
             it.copy(showNextUp = true, hudOpen = false, nextUpCountdownSeconds = null)
         }
@@ -5565,6 +5638,7 @@ class TvPlayerViewModel(
             else -> ceil((current.duration - current.position).coerceAtLeast(0.0)).toInt()
         }
 
+        nextUpOpenedByViewer = false
         _uiState.update {
             it.copy(
                 showNextUp = true,
@@ -5624,6 +5698,13 @@ class TvPlayerViewModel(
                 val playbackEnded =
                     if (startedAtEnd) wallRemaining <= 0 else _uiState.value.nextUpVideoEnded
                 if (!playbackEnded) continue
+                // Next Up turned off while this countdown ran: the end closes
+                // the player instead of starting the next episode.
+                if (shufflePlayback == null && !nextUpEnabled.value) {
+                    nextUpCountdownJob = null
+                    closeAtEndWithNextUpOff()
+                    return@launch
+                }
                 // Automatic countdown-expiry advance: increment the pass-out streak
                 // so a long unattended binge eventually trips the "still watching?"
                 // gate. An explicit Play Now (below) resets the streak instead.
@@ -5736,6 +5817,7 @@ class TvPlayerViewModel(
             autoAdvanceHandled = false
             reachedCreditsOrEnd = false
             pendingApproachingEndVideoEnded = null
+            endedSinceSeek = false
             shuffleNextPartFileId = null
             shuffleRefreshedForPostRoll = false
             episodeSelectionHandoffSlot.replace(handoff)
@@ -5941,13 +6023,39 @@ class TvPlayerViewModel(
         }
     }
 
+    /**
+     * The stream ended and no seek has moved it since, and the position is at
+     * the duration when the plan gave one.
+     */
+    private fun UiState.isAtEndOfPlayback(): Boolean =
+        nextUpVideoEnded && endedSinceSeek &&
+            (duration <= 0.0 || duration - position <= END_POSITION_TOLERANCE_SECONDS)
+
+    /**
+     * Next Up off at the end: drop any overlay or countdown left from before
+     * Off arrived and ask the screen to leave the player.
+     */
+    private fun closeAtEndWithNextUpOff() {
+        nextUpCountdownJob?.cancel()
+        nextUpCountdownJob = null
+        // A later end sets it again; a stale one must not close resumed playback.
+        pendingApproachingEndVideoEnded = null
+        _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
+        _closeAtEndRequests.tryEmit(Unit)
+    }
+
     /** Up-Next "Keep Watching" — dismiss the overlay and stay on the current episode. */
     fun dismissNextUp() {
         if (nextUpTransitionGate.isActive) return
         autoAdvanceHandled = true
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
+        val endedWithNextUpOff = roomId == null && shufflePlayback == null &&
+            !nextUpEnabled.value && _uiState.value.isAtEndOfPlayback()
         _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
+        // With Next Up off, the overlay the viewer kept up at the end was all
+        // that held the player open: leaving it leaves the player.
+        if (endedWithNextUpOff) _closeAtEndRequests.tryEmit(Unit)
     }
 
     /**

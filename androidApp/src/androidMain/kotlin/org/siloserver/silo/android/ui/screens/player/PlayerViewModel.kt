@@ -490,6 +490,8 @@ class PlayerViewModel(
         private const val BUFFERING_RESTORE_POLL_MS = 250L
         // Up-next auto-play countdown length (matches TV's NEXT_UP_COUNTDOWN_SECONDS).
         const val UP_NEXT_COUNTDOWN_SECONDS = 10
+        // How close to the duration the reported position counts as the end.
+        private const val END_POSITION_TOLERANCE_SECONDS = 2.0
         val SHUFFLE_CONTINUE_FAILED = CommonR.string.upNext_shuffleContinueFailed
         val SHUFFLE_PICK_FAILED = CommonR.string.upNext_pickAnotherFailed
         /** iOS resolveOnDeckItems: section pools feeding the On Deck carousel. */
@@ -1072,6 +1074,17 @@ class PlayerViewModel(
     // Seconds before the end of the file to surface Up Next (0 = only at end).
     private val nextUpPromptSeconds: StateFlow<Int> = playerSettingsStore.nextUpPromptSecondsFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 30)
+    // Show Next Up: Off means no card, and the player closes at the end.
+    private val nextUpEnabled: StateFlow<Boolean> = playerSettingsStore.nextUpEnabledFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    private val _closeAtEndRequests = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    /** PlayerScreen leaves the player the way Back does: playback ended with Next Up off. */
+    val closeAtEndRequests: SharedFlow<Unit> = _closeAtEndRequests.asSharedFlow()
 
     /**
      * Video relative-seek intervals every phone surface uses (buttons,
@@ -1108,10 +1121,27 @@ class PlayerViewModel(
     // End point fired before the next episode resolved — remember it (and the
     // strongest videoEnded flag seen) so resolveNextEpisode can commit the card.
     private var pendingApproachingEndVideoEnded: Boolean? = null
+    // Playback reached STATE_ENDED and no seek has moved it since. The card's
+    // upNextVideoEnded outlives a seek back, so closing at the end reads this.
+    private var endedSinceSeek = false
     private var upNextCountdownJob: Job? = null
     private val nextUpTransitionGate = NextUpTransitionGate()
     // The running shuffle this player plays picks from; null outside a shuffle.
     private var shufflePlayback: org.siloserver.silo.playback.ShufflePlayback? = null
+
+    init {
+        // Next Up turned off while a card shows: one before the end goes
+        // away as Keep Watching would, and one at the end was all that held
+        // the player open, so close as Off would have at the end.
+        viewModelScope.launch {
+            nextUpEnabled.collect { enabled ->
+                val state = _uiState.value
+                if (enabled || shufflePlayback != null || remoteTransportSuppressed) return@collect
+                if (!state.showUpNext || state.isNextUpTransitioning) return@collect
+                if (isAtEndOfPlayback(state)) closeAtEndWithNextUpOff() else dismissUpNext()
+            }
+        }
+    }
     // The later part of a multi-part pick that plays before the shuffle moves on.
     private var shuffleNextPartFileId: Int? = null
     // Once per item: the server re-checks the next pick when the card opens.
@@ -1806,6 +1836,7 @@ class PlayerViewModel(
         // AutoPlayGuard streak intentionally PERSISTS across episodes.)
         autoAdvanceHandled = false
         pendingApproachingEndVideoEnded = null
+        endedSinceSeek = false
         shuffleNextPartFileId = null
         shuffleRefreshedForPostRoll = false
         resetPlaybackRecoveryState()
@@ -3519,6 +3550,15 @@ class PlayerViewModel(
         _uiState.update { it.copy(isBuffering = isBuffering || outageRecoveryJob?.isActive == true) }
     }
 
+    /**
+     * Media3 left STATE_ENDED (buffering or ready again): a seek moved playback
+     * off the end, including one from the system media controls that never
+     * reached this ViewModel.
+     */
+    fun onPlaybackLeftEnd() {
+        endedSinceSeek = false
+    }
+
     /** Toggle play/pause — tracks user intent; PlayerScreen mirrors this to playWhenReady. */
     fun onPlayPause() {
         autoPlayGuard.recordUserAction() // deliberate interaction resets the pass-out streak
@@ -3560,6 +3600,7 @@ class PlayerViewModel(
     fun onSkipBy(deltaSeconds: Double) {
         autoPlayGuard.recordUserAction()
         pendingApproachingEndVideoEnded = null
+        endedSinceSeek = false
         if (_uiState.value.showUpNext) dismissUpNext()
         val state = _uiState.value
         val nowMs = SystemClock.elapsedRealtime()
@@ -3651,6 +3692,7 @@ class PlayerViewModel(
         immediate: Boolean = false,
         mountedSeekableSourceRange: ClosedRange<Double>? = null,
     ) {
+        endedSinceSeek = false
         val state = _uiState.value
         val mountPending = positionReportsBlockedForPendingLoad || awaitingMediaMountGeneration != null
         if (mountPending && (state.sessionId == null || state.playbackPlan == null)) {
@@ -6266,9 +6308,17 @@ class PlayerViewModel(
             // If the before-end/end point already fired while we were still
             // resolving, the card couldn't arm — commit it now with the
             // strongest video-ended flag observed.
+            // Next Up turned off while it was resolving: arm no card or countdown.
             if (!autoAdvanceHandled) {
                 pendingApproachingEndVideoEnded?.let { videoEnded ->
-                    commitApproachingEnd(info, videoEnded)
+                    if (shufflePlayback == null && !nextUpEnabled.value) {
+                        pendingApproachingEndVideoEnded = null
+                        // The end already showed the finished card: close
+                        // instead, unless a seek has since moved playback off it.
+                        if (videoEnded && isAtEndOfPlayback(_uiState.value)) closeAtEndWithNextUpOff()
+                    } else {
+                        commitApproachingEnd(info, videoEnded)
+                    }
                 }
             }
         }
@@ -6288,6 +6338,7 @@ class PlayerViewModel(
      */
     fun onApproachingEnd(videoEnded: Boolean = false) {
         if (nextUpTransitionGate.isActive) return
+        if (videoEnded) endedSinceSeek = true
         // Watch Party is authoritative — never auto-advance a room member.
         if (remoteTransportSuppressed) return
         if (shufflePlayback != null) {
@@ -6300,6 +6351,11 @@ class PlayerViewModel(
                 shuffleRefreshedForPostRoll = true
                 refreshShuffleNext()
             }
+        } else if (!nextUpEnabled.value) {
+            // Next Up off: nothing before the end, and the player closes at the
+            // end. A shuffle still moves on; the viewer asked for one.
+            if (videoEnded) closeAtEndWithNextUpOff()
+            return
         }
         if (autoAdvanceHandled) {
             if (videoEnded) {
@@ -6330,6 +6386,28 @@ class PlayerViewModel(
         }
         commitApproachingEnd(next, videoEnded)
     }
+
+    /**
+     * Next Up off at the end: drop any card or countdown left from before Off
+     * arrived (picture-in-picture can keep the player open a while) and ask
+     * the screen to leave the player.
+     */
+    private fun closeAtEndWithNextUpOff() {
+        upNextCountdownJob?.cancel()
+        upNextCountdownJob = null
+        // A later end sets it again; a stale one must not close resumed playback.
+        pendingApproachingEndVideoEnded = null
+        _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
+        _closeAtEndRequests.tryEmit(Unit)
+    }
+
+    /**
+     * The stream ended and no seek has moved it since, and the position is at
+     * the duration when the plan gave one.
+     */
+    private fun isAtEndOfPlayback(state: PlayerUiState): Boolean =
+        state.upNextVideoEnded && endedSinceSeek &&
+            (state.duration <= 0.0 || state.duration - state.position <= END_POSITION_TOLERANCE_SECONDS)
 
     private fun commitApproachingEnd(next: NextEpisodeInfo, videoEnded: Boolean) {
         autoAdvanceHandled = true
@@ -6391,6 +6469,13 @@ class PlayerViewModel(
                 val playbackEnded =
                     if (startedAtEnd) wallRemaining <= 0 else _uiState.value.upNextVideoEnded
                 if (!playbackEnded) continue
+                // Next Up turned off while this countdown ran: the end closes
+                // the player instead of starting the next episode.
+                if (shufflePlayback == null && !nextUpEnabled.value) {
+                    upNextCountdownJob = null
+                    closeAtEndWithNextUpOff()
+                    return@launch
+                }
                 // Unattended countdown-expiry advance: increment the pass-out streak
                 // so a long unattended binge eventually trips the gate. An explicit
                 // Play Now (below) resets the streak instead.

@@ -690,6 +690,30 @@ fun PlayerScreen(
     // resolves when the service binds. We hold the controller in a compose
     // state so downstream effects can re-run once it's ready.
     var mediaController by remember { mutableStateOf<MediaController?>(null) }
+    // With Next Up off, the end of playback leaves the player like Back. The
+    // position ticker stops in the background, so report the end position
+    // first; the exit saves the last reported one. In picture-in-picture,
+    // leaving the route would fill the window with the screen behind the
+    // player, so the ended frame stays until picture-in-picture ends. Playback
+    // restarted from its controls meanwhile (playing or paused partway) keeps
+    // the player; its next end asks again.
+    LaunchedEffect(Unit) {
+        viewModel.closeAtEndRequests.collect {
+            mediaController?.takeIf { it.mediaItemCount > 0 }?.let { controller ->
+                viewModel.onPositionChanged(controller.currentPosition, controller.duration)
+            }
+            if (pictureInPictureCoordinator.isInPictureInPictureMode.value) {
+                pictureInPictureCoordinator.isInPictureInPictureMode.first { !it }
+                val controller = mediaController
+                if (controller != null && controller.mediaItemCount > 0 &&
+                    (controller.playbackState == Player.STATE_READY || controller.playbackState == Player.STATE_BUFFERING)
+                ) {
+                    return@collect
+                }
+            }
+            exitPlayer()
+        }
+    }
     val playWhenReadyReconciliationGate = remember(mediaController, roomId) {
         PlayWhenReadyReconciliationGate()
     }
@@ -1336,6 +1360,9 @@ fun PlayerScreen(
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     viewModel.onBufferingChanged(playbackState == Player.STATE_BUFFERING)
+                    if (playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_READY) {
+                        viewModel.onPlaybackLeftEnd()
+                    }
                     if (watchParty != null) sampleRoomEngine(controller)
                     if (playbackState == Player.STATE_ENDED) {
                         viewModel.onPlayingChanged(false)

@@ -59,6 +59,20 @@ interface PlayerSettingsStore {
     val bufferingQualityModeSupportedFlow: Flow<Boolean>
         get() = flowOf(true)
 
+    /**
+     * `playback.next_up_enabled`: false turns Next Up off. True against a
+     * server whose manifest lacks the setting.
+     */
+    val nextUpEnabledFlow: Flow<Boolean>
+        get() = flowOf(true)
+
+    /**
+     * True once the active server's manifest is known to define
+     * `playback.next_up_enabled`: the Show Next Up picker offers Off only then.
+     */
+    val nextUpEnabledSupportedFlow: Flow<Boolean>
+        get() = flowOf(true)
+
     // Booleans
     /**
      * The deprecated boolean, projected from [introSkipModeFlow] rather than
@@ -228,6 +242,9 @@ interface PlayerSettingsStore {
     suspend fun setAudioSyncMs(value: Int)
     suspend fun setSubtitleSyncMs(value: Int)
     suspend fun setNextUpPromptSeconds(value: Int)
+
+    /** Writes `playback.next_up_enabled`; offered only while [nextUpEnabledSupportedFlow]. */
+    suspend fun setNextUpEnabled(value: Boolean) = Unit
     suspend fun setSleepTimerDefaultMinutes(value: Int)
     /** Set resume skip-back seconds (clamped 0..30; 0 = off). */
     suspend fun setResumeRewindSeconds(value: Int)

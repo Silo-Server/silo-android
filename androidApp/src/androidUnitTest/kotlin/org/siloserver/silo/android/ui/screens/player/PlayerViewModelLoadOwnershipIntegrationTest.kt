@@ -35,6 +35,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -487,6 +488,186 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun nextUpOffShowsNoCardAndClosesThePlayerAtTheEnd() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope, nextUpEnabled = flowOf(false))
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val closes = mutableListOf<Unit>()
+            backgroundScope.launch { viewModel.closeAtEndRequests.collect { closes += it } }
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            viewModel.onMediaMountApplied(viewModel.uiState.value.mediaMountGeneration)
+            viewModel.offerNextEpisode()
+
+            viewModel.onPositionChanged(1_169_500L, 1_200_000L)
+            viewModel.onPositionChanged(1_170_500L, 1_200_000L)
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertTrue(closes.isEmpty())
+
+            viewModel.onApproachingEnd(videoEnded = true)
+            runCurrent()
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertEquals(1, closes.size)
+            assertEquals(1, starter.startedRequestCount)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun nextUpTurnedOffDuringTheEndCountdownClosesInsteadOfAdvancing() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val nextUpEnabled = MutableStateFlow(true)
+        val fixture = playerViewModel(starter, backgroundScope, nextUpEnabled = nextUpEnabled)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val closes = mutableListOf<Unit>()
+            backgroundScope.launch { viewModel.closeAtEndRequests.collect { closes += it } }
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            viewModel.offerNextEpisode()
+            viewModel.onApproachingEnd(videoEnded = true)
+            assertEquals(PlayerViewModel.UP_NEXT_COUNTDOWN_SECONDS, viewModel.uiState.value.upNextCountdownSeconds)
+
+            nextUpEnabled.value = false
+            testScheduler.advanceTimeBy(30_000)
+            runCurrent()
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertEquals(1, closes.size)
+            assertEquals(1, starter.startedRequestCount)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun nextUpTurnedOffWhileTheFinishedCardWaitsClosesThePlayer() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val nextUpEnabled = MutableStateFlow(true)
+        val fixture = playerViewModel(starter, backgroundScope, nextUpEnabled = nextUpEnabled)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val closes = mutableListOf<Unit>()
+            backgroundScope.launch { viewModel.closeAtEndRequests.collect { closes += it } }
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            // No next episode: the end shows the finished card, with no countdown.
+            viewModel.onApproachingEnd(videoEnded = true)
+            runCurrent()
+            assertTrue(viewModel.uiState.value.showUpNext)
+            assertTrue(closes.isEmpty())
+
+            nextUpEnabled.value = false
+            runCurrent()
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertEquals(1, closes.size)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun nextUpTurnedOffAfterASeekBackFromTheFinishedCardKeepsPlaying() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val nextUpEnabled = MutableStateFlow(true)
+        val fixture = playerViewModel(starter, backgroundScope, nextUpEnabled = nextUpEnabled)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val closes = mutableListOf<Unit>()
+            backgroundScope.launch { viewModel.closeAtEndRequests.collect { closes += it } }
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            // No duration to compare the position with: only the seek says playback left the end.
+            assertEquals(0.0, viewModel.uiState.value.duration)
+            viewModel.onApproachingEnd(videoEnded = true)
+            runCurrent()
+            assertTrue(viewModel.uiState.value.showUpNext)
+
+            viewModel.remoteSeek(30.0)
+            nextUpEnabled.value = false
+            runCurrent()
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertTrue(closes.isEmpty())
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun nextUpTurnedOffAfterTheSystemControlsLeaveTheEndKeepsPlaying() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val nextUpEnabled = MutableStateFlow(true)
+        val fixture = playerViewModel(starter, backgroundScope, nextUpEnabled = nextUpEnabled)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val closes = mutableListOf<Unit>()
+            backgroundScope.launch { viewModel.closeAtEndRequests.collect { closes += it } }
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            viewModel.onApproachingEnd(videoEnded = true)
+            runCurrent()
+
+            // A notification or media-key seek reaches Media3 directly; only the state change reports it.
+            viewModel.onPlaybackLeftEnd()
+            nextUpEnabled.value = false
+            runCurrent()
+            assertTrue(closes.isEmpty())
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun nextUpTurnedOffBeforeTheEndClearsTheCardAndClosesAtTheEnd() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val nextUpEnabled = MutableStateFlow(true)
+        val fixture = playerViewModel(starter, backgroundScope, nextUpEnabled = nextUpEnabled)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val closes = mutableListOf<Unit>()
+            backgroundScope.launch { viewModel.closeAtEndRequests.collect { closes += it } }
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            viewModel.offerNextEpisode()
+            viewModel.onApproachingEnd()
+            assertTrue(viewModel.uiState.value.showUpNext)
+
+            nextUpEnabled.value = false
+            runCurrent()
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertNull(viewModel.uiState.value.upNextCountdownSeconds)
+            assertTrue(closes.isEmpty())
+
+            viewModel.onApproachingEnd(videoEnded = true)
+            runCurrent()
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertEquals(1, closes.size)
+            assertEquals(1, starter.startedRequestCount)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun keepWatchingSuppressesCreditsPromptButReopensNextUpAtPlaybackEnd() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)
@@ -895,6 +1076,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         network: PlaybackNetworkEvidenceProvider = PlaybackNetworkEvidenceProvider.None,
         /** The reachability probe answers; otherwise it has no server to probe. */
         serverReachable: Boolean = false,
+        nextUpEnabled: Flow<Boolean> = flowOf(true),
     ): PlayerFixture {
         val client = noOpClient()
         val tokenManager = FakeTokenManager()
@@ -930,7 +1112,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                 } else {
                     ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, scope, { null })
                 },
-                playerSettingsStore = FakePlayerSettingsStore(),
+                playerSettingsStore = FakePlayerSettingsStore(nextUpEnabled = nextUpEnabled),
                 introAutoSkipController = IntroAutoSkipController(scope),
                 sessionLifecycle = lifecycle,
                 sleepTimer = SleepTimerController(scope),
@@ -2059,7 +2241,9 @@ private class FakeServerRegistry : ServerRegistry {
 
 private class FakePlayerSettingsStore(
     private val audioLanguage: String = "",
+    nextUpEnabled: Flow<Boolean> = flowOf(true),
 ) : PlayerSettingsStore {
+    override val nextUpEnabledFlow: Flow<Boolean> = nextUpEnabled
     override val introSkipModeFlow: Flow<IntroSkipMode> = flowOf(IntroSkipMode.ASK)
     override val bufferingQualityModeFlow: Flow<BufferingQualityMode> = flowOf(BufferingQualityMode.Default)
     override val autoSkipCreditsFlow: Flow<Boolean> = flowOf(false)

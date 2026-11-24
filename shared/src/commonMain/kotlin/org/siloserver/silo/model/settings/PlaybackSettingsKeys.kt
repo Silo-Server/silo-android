@@ -51,7 +51,7 @@ object PlaybackSettingsKeys {
      * Keys some supported servers lack, detected by their presence in the
      * server's settings manifest rather than by its revision number.
      */
-    val ManifestDetectedKeys: Set<String> = setOf(BufferingQualityMode)
+    val ManifestDetectedKeys: Set<String> = setOf(BufferingQualityMode, NextUpEnabled)
     const val AutoSkipCredits = "playback.auto_skip_credits"
     const val AutoPlayNext = "playback.auto_play_next"
     // Renamed at the settings cutover: every other key carries a domain prefix
@@ -79,6 +79,14 @@ object PlaybackSettingsKeys {
     // could read the other's. The contract settles on playback.*, and
     // [RenamedLocalKeys] carries the already-written local value across.
     const val NextUpPromptSeconds = "playback.next_up_prompt_seconds"
+
+    /**
+     * False turns Next Up off: no card, no countdown, no automatic next
+     * episode; the player closes at the end. One picker writes it with
+     * [NextUpPromptSeconds] ([deviceOverrideGroup]). An older server neither
+     * stores nor answers it ([ManifestDetectedKeys]).
+     */
+    const val NextUpEnabled = "playback.next_up_enabled"
     const val DvProfile7HDR10Fallback = "player.dv_profile7_hdr10_fallback"
     const val DolbyVisionEnabled = "player.dolby_vision_enabled"
     const val MatchContentFrameRate = "player.match_frame_rate"
@@ -225,6 +233,7 @@ object PlaybackSettingsKeys {
         VideoGravity,
         OrientationMode,
         NextUpPromptSeconds,
+        NextUpEnabled,
         DvProfile7HDR10Fallback,
         DolbyVisionEnabled,
         MatchContentFrameRate,
@@ -262,6 +271,7 @@ object PlaybackSettingsKeys {
         AutoSkipCredits,
         AutoPlayNext,
         NextUpPromptSeconds,
+        NextUpEnabled,
         SubtitleAppearance,
         ThemeMusicEnabled,
         ThemeMusicLoop,
@@ -280,6 +290,7 @@ object PlaybackSettingsKeys {
     fun deviceOverrideGroup(key: String): List<String> = when (key) {
         CellularPreferredQuality, CellularMaxBitrateKbps -> listOf(CellularPreferredQuality, CellularMaxBitrateKbps)
         IntroSkipMode, AutoSkipIntro -> listOf(IntroSkipMode, AutoSkipIntro)
+        NextUpEnabled, NextUpPromptSeconds -> listOf(NextUpEnabled, NextUpPromptSeconds)
         else -> listOf(key)
     }
 
