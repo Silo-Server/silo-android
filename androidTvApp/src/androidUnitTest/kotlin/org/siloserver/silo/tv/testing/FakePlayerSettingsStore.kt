@@ -41,6 +41,7 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
     override val audioSyncMsFlow = MutableStateFlow(0)
     override val subtitleSyncMsFlow = MutableStateFlow(0)
     override val nextUpPromptSecondsFlow = MutableStateFlow(30)
+    override val nextUpEnabledFlow = MutableStateFlow(true)
     override val sleepTimerDefaultMinutesFlow = MutableStateFlow(0)
     override val resumeRewindSecondsFlow = MutableStateFlow(7)
     override val passOutThresholdFlow = MutableStateFlow(3)
