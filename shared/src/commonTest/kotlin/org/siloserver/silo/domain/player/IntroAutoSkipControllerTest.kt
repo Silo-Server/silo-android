@@ -85,9 +85,9 @@ class IntroAutoSkipControllerTest {
     /**
      * The recap and credits pill, through the entry point both players use.
      * It takes no mode: the pill follows the `ask` table whatever the intro
-     * mode is.
+     * mode is. A null [countdown] builds the controller with its default timer.
      */
-    private fun TestScope.newSegmentController(countdown: Int = 5): IntroAutoSkipController {
+    private fun TestScope.newSegmentController(countdown: Int? = 5): IntroAutoSkipController {
         setup(IntroSkipMode.ASK)
         val markers = MutableStateFlow(
             MarkerTimeline.resolve(
@@ -99,7 +99,12 @@ class IntroAutoSkipControllerTest {
             ),
         )
         val scope = CoroutineScope(UnconfinedTestDispatcher(testScheduler))
-        return IntroAutoSkipController(scope = scope, countdownSeconds = countdown).also {
+        val controller = if (countdown == null) {
+            IntroAutoSkipController(scope = scope)
+        } else {
+            IntroAutoSkipController(scope = scope, countdownSeconds = countdown)
+        }
+        return controller.also {
             it.observeSegmentPill(
                 position = position,
                 markers = markers,
@@ -877,4 +882,21 @@ class IntroAutoSkipControllerTest {
             runCurrent()
             assertEquals(IntroAutoSkipState.Asking(5), controller.state.value)
         }
+
+    @Test
+    fun `the default timer runs the pill for 10 seconds`() = runTest {
+        // INTRO_PROMPT_SECONDS: every skip pill, recap and credits included.
+        val controller = newSegmentController(countdown = null)
+        position.value = 1310.0
+        runCurrent()
+        assertEquals(IntroAutoSkipState.Asking(10), controller.state.value)
+
+        advanceTimeBy(9_000)
+        runCurrent()
+        assertEquals(IntroAutoSkipState.Asking(1), controller.state.value)
+
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(IntroAutoSkipState.Hidden, controller.state.value)
+    }
 }
