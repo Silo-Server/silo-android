@@ -773,6 +773,31 @@ class IntroAutoSkipControllerTest {
         }
 
     @Test
+    fun `recap and credits - a returned pill does not follow a paused seek into another range`() = runTest {
+        val controller = newSegmentController(countdown = 3)
+        controls.value = true
+        position.value = 15.0
+        runCurrent()
+        advanceTimeBy(3_000)
+        runCurrent()
+        assertEquals(IntroAutoSkipState.Returned, controller.state.value, "the recap, untimed")
+
+        // Paused, straight from the recap into the credits: no emission lands
+        // outside both ranges, and the credits cannot be offered until play.
+        playing.value = false
+        runCurrent()
+        position.value = 1310.0
+        runCurrent()
+        assertEquals(IntroAutoSkipState.Hidden, controller.state.value)
+        assertNull(controller.select(), "the recap's end is not a target any more")
+
+        playing.value = true
+        runCurrent()
+        assertEquals(IntroAutoSkipState.Asking(3), controller.state.value, "the credits get their own full timer")
+        assertEquals(creditsRange.end, controller.select())
+    }
+
+    @Test
     fun `recap and credits - Back while the timed pill shows resolves the range and consumes the press`() =
         runTest {
             val controller = newSegmentController()

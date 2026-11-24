@@ -332,7 +332,11 @@ class IntroAutoSkipController(
         val safeRange = range!!
         val safeKey = key!!
 
-        if (activeKey != null && activeKey != safeKey) {
+        // A different range drops the old one's offer, timed or timed out. The
+        // timed-out anchor needs its own check: expiry already cleared
+        // activeKey, and a paused seek straight into the next range would
+        // otherwise keep the returned pill aimed at the old range's end.
+        if ((activeKey != null && activeKey != safeKey) || (expiredKey != null && expiredKey != safeKey)) {
             clearExpired()
             clearPrompt()
         }
