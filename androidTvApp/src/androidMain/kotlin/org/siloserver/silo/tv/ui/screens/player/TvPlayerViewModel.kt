@@ -6734,13 +6734,11 @@ class TvPlayerViewModel(
     /**
      * The recap or credits pill's Select: resolves the range and returns its
      * end for the screen to seek to, or null when no pill is showing. The
-     * position is pre-written as [onSelectIntroPrompt] does.
+     * position is not pre-written: [seekImmediate] arms the pending-seek guard
+     * from the current position before it publishes the target, and a
+     * pre-written target would become that seek's origin.
      */
-    fun onSelectSegmentPrompt(): Double? {
-        val target = segmentSkipController.select() ?: return null
-        _uiState.update { it.copy(position = target) }
-        return target
-    }
+    fun onSelectSegmentPrompt(): Double? = segmentSkipController.select()
 
     /** Back while the timed recap or credits pill shows; true when it was taken. */
     fun onDismissSegmentPrompt(): Boolean = segmentSkipController.dismiss()
