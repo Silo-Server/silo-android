@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -509,6 +511,10 @@ fun PlayerOverlay(
             }
         }
 
+        // Tabletop: how far the seek bar's cluster rises from the bottom of the
+        // controls, so the skip pills sit above it rather than over it.
+        var tabletopPillClearance by remember { mutableStateOf<Dp?>(null) }
+
         // Transport controls (shown/hidden with animation)
         AnimatedVisibility(
             visible = controlsShown,
@@ -575,14 +581,28 @@ fun PlayerOverlay(
                 scrubThumbnail = trickplayThumbnail,
                 onScrubTarget = viewModel::showTrickplay,
                 castSlot = castSlot,
+                onTabletopPillClearanceChanged = { tabletopPillClearance = it },
             )
         }
 
-        val bottomEndSlotModifier = Modifier
-            .align(Alignment.BottomEnd)
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(bottom = 120.dp, end = 24.dp)
-            .zIndex(2f)
+        // Tabletop controls stack a utility row under the seek bar, so the
+        // fixed offset would land on the bar and the action row; there the
+        // slot sits on the measured cluster instead, which already includes
+        // the navigation inset.
+        val tabletopClearance = tabletopPillClearance?.takeIf { tabletopMode && controlsShown }
+        val bottomEndSlotModifier = if (tabletopClearance != null) {
+            Modifier
+                .align(Alignment.BottomEnd)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                .padding(bottom = tabletopClearance + 8.dp, end = 24.dp)
+                .zIndex(2f)
+        } else {
+            Modifier
+                .align(Alignment.BottomEnd)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(bottom = 120.dp, end = 24.dp)
+                .zIndex(2f)
+        }
 
         // Intro skip pill (Hidden / Asking / Skipped).
         // Shares the bottom-end slot with the Up Next card; intro and credits
