@@ -1863,6 +1863,9 @@ fun TvPlayerScreen(
                     // state which the player can't observe (server-outage
                     // probe loop runs out-of-band).
                     viewModel.onBufferingChanged(playbackState == Player.STATE_BUFFERING)
+                    if (playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_READY) {
+                        viewModel.onPlaybackLeftEnd()
+                    }
                     // F2 fallback: if the stream ends without a credits marker
                     // having fired the trigger, auto-advance / prompt now.
                     // A deliberate exit also stops the controller, which can

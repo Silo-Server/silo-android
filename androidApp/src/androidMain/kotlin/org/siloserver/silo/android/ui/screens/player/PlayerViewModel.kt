@@ -3550,6 +3550,15 @@ class PlayerViewModel(
         _uiState.update { it.copy(isBuffering = isBuffering || outageRecoveryJob?.isActive == true) }
     }
 
+    /**
+     * Media3 left STATE_ENDED (buffering or ready again): a seek moved playback
+     * off the end, including one from the system media controls that never
+     * reached this ViewModel.
+     */
+    fun onPlaybackLeftEnd() {
+        endedSinceSeek = false
+    }
+
     /** Toggle play/pause — tracks user intent; PlayerScreen mirrors this to playWhenReady. */
     fun onPlayPause() {
         autoPlayGuard.recordUserAction() // deliberate interaction resets the pass-out streak
@@ -6393,8 +6402,8 @@ class PlayerViewModel(
     }
 
     /**
-     * The stream ended and no seek has moved it since. The position check also
-     * catches a seek that bypassed this ViewModel, when the plan gave a duration.
+     * The stream ended and no seek has moved it since, and the position is at
+     * the duration when the plan gave one.
      */
     private fun isAtEndOfPlayback(state: PlayerUiState): Boolean =
         state.upNextVideoEnded && endedSinceSeek &&

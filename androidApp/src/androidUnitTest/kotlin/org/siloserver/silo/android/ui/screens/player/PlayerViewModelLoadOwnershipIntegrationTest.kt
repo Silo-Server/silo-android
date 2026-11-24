@@ -607,6 +607,33 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun nextUpTurnedOffAfterTheSystemControlsLeaveTheEndKeepsPlaying() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val nextUpEnabled = MutableStateFlow(true)
+        val fixture = playerViewModel(starter, backgroundScope, nextUpEnabled = nextUpEnabled)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val closes = mutableListOf<Unit>()
+            backgroundScope.launch { viewModel.closeAtEndRequests.collect { closes += it } }
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            viewModel.onApproachingEnd(videoEnded = true)
+            runCurrent()
+
+            // A notification or media-key seek reaches Media3 directly; only the state change reports it.
+            viewModel.onPlaybackLeftEnd()
+            nextUpEnabled.value = false
+            runCurrent()
+            assertTrue(closes.isEmpty())
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun nextUpTurnedOffBeforeTheEndClearsTheCardAndClosesAtTheEnd() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val nextUpEnabled = MutableStateFlow(true)

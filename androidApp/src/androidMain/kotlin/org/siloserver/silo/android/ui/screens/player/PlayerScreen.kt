@@ -1360,6 +1360,9 @@ fun PlayerScreen(
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     viewModel.onBufferingChanged(playbackState == Player.STATE_BUFFERING)
+                    if (playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_READY) {
+                        viewModel.onPlaybackLeftEnd()
+                    }
                     if (watchParty != null) sampleRoomEngine(controller)
                     if (playbackState == Player.STATE_ENDED) {
                         viewModel.onPlayingChanged(false)
