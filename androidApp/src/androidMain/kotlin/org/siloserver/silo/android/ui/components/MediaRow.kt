@@ -61,6 +61,7 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsKeyCollection
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.section.episodeCardLabel
 import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.overlays.OverlayData
@@ -308,8 +309,12 @@ fun MediaRow(
                         )
                     }
                     CardStyle.Poster -> {
+                        val episodeLabel = item.episodeCardLabel()
                         MediaCard(
-                            title = item.title,
+                            title = episodeLabel?.seriesTitle ?: item.title,
+                            subtitle = episodeLabel?.let { episodeCaption(item.seasonNumber, item.episodeNumber, it.episodeTitle, item.episodeLabels, item.airDate) },
+                            // An episode caption stays on one line, so a long title cannot make its card taller than the row.
+                            subtitleMaxLines = 1,
                             hideArtwork = item.type.equals("episode", ignoreCase = true) && spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item), item.posterIsEpisodeStill),
                             posterUrl = item.posterUrl,
                             posterThumbhash = item.posterThumbhash,

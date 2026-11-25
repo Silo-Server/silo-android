@@ -110,6 +110,8 @@ fun MediaCard(
     year: Int? = null,
     /** Replaces the year caption when set (e.g. the active sort's date). */
     subtitle: String? = null,
+    /** Line cap for [subtitle]; a fixed-height card ([reserveTextLines]) always takes one. */
+    subtitleMaxLines: Int = Int.MAX_VALUE,
     type: String? = null,
     userState: MediaItemUserState? = null,
     progress: Float? = null,
@@ -280,7 +282,7 @@ fun MediaCard(
                 MediaCardTitleAndCaption(title, caption, captionMaxLines = 1)
             }
         } else {
-            MediaCardTitleAndCaption(title, caption)
+            MediaCardTitleAndCaption(title, caption, captionMaxLines = if (subtitle != null) subtitleMaxLines else Int.MAX_VALUE)
         }
 
         MediaCardContextMenu(
