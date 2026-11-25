@@ -206,10 +206,8 @@ fun BackdropCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                val episodeTag = formatEpisodeTag(seasonNumber, episodeNumber, episodeLabels, airDate)
-                val subtitle = if (episodeTag != null) "$episodeTag \u2022 $title" else title
                 Text(
-                    text = subtitle,
+                    text = episodeCaption(seasonNumber, episodeNumber, title, episodeLabels, airDate).orEmpty(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -246,6 +244,26 @@ fun BackdropCard(
             isFavorite = userState?.isFavorite == true,
             isInWatchlist = userState?.inWatchlist == true,
         )
+    }
+}
+
+/**
+ * "S01E02 \u2022 Title", an episode card's line under its series title;
+ * whichever part exists when the other is missing.
+ */
+@Composable
+internal fun episodeCaption(
+    season: Int?,
+    episode: Int?,
+    title: String?,
+    episodeLabels: String? = null,
+    airDate: String? = null,
+): String? {
+    val episodeTag = formatEpisodeTag(season, episode, episodeLabels, airDate)
+    return when {
+        episodeTag == null -> title
+        title == null -> episodeTag
+        else -> "$episodeTag \u2022 $title"
     }
 }
 

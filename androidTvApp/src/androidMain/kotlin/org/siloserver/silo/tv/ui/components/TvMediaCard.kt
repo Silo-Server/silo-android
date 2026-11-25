@@ -109,6 +109,8 @@ fun TvMediaCard(
     cornerLabel: String? = null,
     /** Replaces the year line under the title. */
     caption: String? = null,
+    /** Line cap for [caption]. */
+    captionMaxLines: Int = Int.MAX_VALUE,
     /** Draws a box set's sleeves above the artwork; see [boxSetSleeves]. */
     sleeves: BoxSetSleeveColors? = null,
     /** Outlines the artwork at rest, such as the movie being viewed in its box set row. */
@@ -196,7 +198,9 @@ fun TvMediaCard(
                         hidden = hideArtwork,
                         url = posterUrl,
                         thumbhash = posterThumbhash,
-                        contentDescription = title,
+                        // The caption sits outside the focusable card, so name it here
+                        // too: two episodes of one series share a title.
+                        contentDescription = caption?.let { "$title, $it" } ?: title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                         defaultArtwork = DefaultArtworkKind.forItemType(mediaType),
@@ -296,6 +300,8 @@ fun TvMediaCard(
                     lineHeight = 18.sp,
                 ),
                 color = Color.White.copy(alpha = 0.70f),
+                maxLines = if (caption != null) captionMaxLines else Int.MAX_VALUE,
+                overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Start,
                 modifier = Modifier.fillMaxWidth(),
             )

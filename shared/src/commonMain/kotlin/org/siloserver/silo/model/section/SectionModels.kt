@@ -231,3 +231,19 @@ data class LibraryUngroupedSection(
     @SerialName("sort_order") val sortOrder: Int = Int.MAX_VALUE,
     val collections: List<LibraryCollection> = emptyList(),
 )
+
+/**
+ * What an episode's poster card prints: its series as the card title, then
+ * the episode code and [episodeTitle] as the caption ("S01E02 • Pilot"), as
+ * the web and Apple cards do. [episodeTitle] is null when it is blank or only
+ * repeats the series name.
+ */
+data class EpisodeCardLabel(val seriesTitle: String, val episodeTitle: String?)
+
+/** This item's [EpisodeCardLabel]; null unless it is an episode with a series title. */
+fun SectionItem.episodeCardLabel(): EpisodeCardLabel? {
+    if (!type.equals("episode", ignoreCase = true)) return null
+    val series = seriesTitle?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val episode = title.trim().takeIf { it.isNotEmpty() && !it.equals(series, ignoreCase = true) }
+    return EpisodeCardLabel(series, episode)
+}

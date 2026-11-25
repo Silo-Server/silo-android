@@ -33,6 +33,8 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.section.EpisodeCardLabel
+import org.siloserver.silo.model.section.episodeCardLabel
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDataExtractor
@@ -71,6 +73,8 @@ private data class TvMediaRowItemModel(
     val hidesArtwork: Boolean,
     /** The same for the poster layout, which shows the item's own poster. */
     val hidesPoster: Boolean,
+    /** The series and episode title a poster card shows for an episode. */
+    val episodeLabel: EpisodeCardLabel?,
 )
 
 /**
@@ -210,6 +214,7 @@ fun TvMediaRow(
                 // Protect the selected still while preserving series fallback art.
                 hidesArtwork = spoilerPrefs.hidesImage(unwatchedEpisode, EpisodeSpoilers.selectedImageIsStill(item)),
                 hidesPoster = spoilerPrefs.hidesImage(unwatchedEpisode, item.posterIsEpisodeStill),
+                episodeLabel = item.episodeCardLabel(),
             )
         }
     }
@@ -480,7 +485,12 @@ fun TvMediaRow(
                         )
                         TvRowStyle.Poster -> TvMediaCard(
                             hideArtwork = rowItem.hidesPoster,
-                            title = item.title,
+                            title = rowItem.episodeLabel?.seriesTitle ?: item.title,
+                            caption = rowItem.episodeLabel?.let {
+                                tvEpisodeTitleLine(item.seasonNumber, item.episodeNumber, it.episodeTitle.orEmpty(), item.episodeLabels, item.airDate)
+                            },
+                            // An episode caption stays on one line, so a long title cannot make its card taller than the row.
+                            captionMaxLines = 1,
                             posterUrl = item.posterUrl,
                             posterThumbhash = item.posterThumbhash,
                             year = item.year.takeIf { it > 0 },
