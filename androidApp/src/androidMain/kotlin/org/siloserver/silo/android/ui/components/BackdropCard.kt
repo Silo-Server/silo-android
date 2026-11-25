@@ -263,7 +263,10 @@ internal fun episodeCaption(
     return when {
         episodeTag == null -> title
         title == null -> episodeTag
-        else -> "$episodeTag \u2022 $title"
+        // Isolate (FSI…PDI) the server title so a right-to-left title keeps its
+        // punctuation at its own end after the left-to-right tag. A lone title
+        // stays bare so its own script still sets the paragraph direction.
+        else -> "$episodeTag \u2022 \u2068$title\u2069"
     }
 }
 
