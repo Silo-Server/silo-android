@@ -167,6 +167,9 @@ private fun lucideElements(iconId: OverlayIconId): List<LucideElement>? = when (
         LucideElement.P("M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"),
         LucideElement.P("M2 12h20"),
     )
+    OverlayIconId.Check -> listOf(
+        LucideElement.P("M20 6 9 17l-5-5"),
+    )
     else -> null
 }
 

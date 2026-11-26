@@ -20,6 +20,9 @@ const val OVERLAY_STYLE_MANIFEST_REVISION = 25
 /** Settings manifest revision that added the `resolution_hdr_audio` badge. */
 const val OVERLAY_COMBINED_AUDIO_MANIFEST_REVISION = 26
 
+/** Settings manifest revision that added the `availability` badge. */
+const val OVERLAY_AVAILABILITY_MANIFEST_REVISION = 29
+
 /**
  * What a server can store in `ui.card_overlays` (web `OverlayServerSupport`):
  * its settings manifest revision when known, and the ids its stored value

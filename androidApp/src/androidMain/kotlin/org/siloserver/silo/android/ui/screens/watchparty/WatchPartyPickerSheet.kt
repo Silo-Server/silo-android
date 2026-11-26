@@ -351,6 +351,7 @@ private fun BrowseItem.toSectionItem() = SectionItem(
     positionSeconds = positionSeconds,
     userState = userState,
     overlaySummary = overlaySummary,
+    availability = availability,
 )
 
 private val playableTypes = setOf("movie", "series", "episode")

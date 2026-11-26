@@ -326,6 +326,8 @@ internal val SharedString.resId: Int
         SharedString.OverlayCancelled -> R.string.overlays_cancelled
         SharedString.OverlayUpcoming -> R.string.overlays_upcoming
         SharedString.OverlayCertifiedFresh -> R.string.overlays_certifiedFresh
+        SharedString.OverlayAvailabilityComplete -> R.string.web_settings_overlays_badge_availability_value_complete
+        SharedString.OverlayAvailabilityFraction -> R.string.web_settings_overlays_badge_availability_value_fraction
     }
 
 /** The generated plurals resource for this key. */

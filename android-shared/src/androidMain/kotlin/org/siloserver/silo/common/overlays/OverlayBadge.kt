@@ -80,7 +80,7 @@ internal class ResolvedBadge(
     val id: OverlayId,
     val label: UiText,
     val paint: OverlayBadgePaint,
-    /** The accent the badge is painted with: the item's, else the registry default. */
+    /** The accent the badge is painted with: the profile color, then this item's, then the registry default. */
     val accent: OverlayColor?,
     val iconId: OverlayIconId?,
     /** Android-only: draw the icon without the label ([OverlayDef.iconOnly]). */
@@ -106,7 +106,9 @@ internal class ResolvedBadge(
             val candidateIcon = def.getIcon?.invoke(data) ?: def.iconId
             val showIcon = def.iconCapable && candidateIcon != null && (config?.showIcon ?: preset.preferIcon)
             val score = def.getScore?.invoke(data)
-            val accent = OverlayColor.parse(config?.accentColor ?: def.defaultAccent)
+            val accent = OverlayColor.parse(
+                config?.accentColor ?: def.getAccent?.invoke(data) ?: def.defaultAccent,
+            )
             val valueImageRef = config?.valueImages
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { images -> def.getValueKey?.invoke(data)?.let(images::get) }

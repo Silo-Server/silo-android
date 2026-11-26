@@ -407,16 +407,29 @@ class OverlaySchemaTest {
     }
 
     @Test
-    fun forServer_atRevision25_dropsOnlyTheRevision26Badge() {
+    fun forServer_atRevision25_dropsBadgesIntroducedLater() {
         val storable = OverlaySchema.overlayPrefsForServer(bandPrefs, OverlayServerSupport(25, emptySet()))
         val full = wire(OverlaySchema.serialize(bandPrefs))
-        val expectedItems = JsonObject(full.getValue("items").jsonObject - "resolution_hdr_audio")
+        val expectedItems = JsonObject(
+            full.getValue("items").jsonObject - "resolution_hdr_audio" - "availability",
+        )
         assertEquals(JsonObject(full + ("items" to expectedItems)), storable)
     }
 
     @Test
-    fun forServer_atRevision26_keepsEverything() {
+    fun forServer_atRevision26_dropsTheAvailabilityBadge() {
         val storable = OverlaySchema.overlayPrefsForServer(bandPrefs, OverlayServerSupport(26, emptySet()))
+        val full = wire(OverlaySchema.serialize(bandPrefs))
+        val expectedItems = JsonObject(full.getValue("items").jsonObject - "availability")
+        assertEquals(JsonObject(full + ("items" to expectedItems)), storable)
+    }
+
+    @Test
+    fun forServer_atRevision29_keepsEverything() {
+        val storable = OverlaySchema.overlayPrefsForServer(
+            bandPrefs,
+            OverlayServerSupport(OVERLAY_AVAILABILITY_MANIFEST_REVISION, emptySet()),
+        )
         assertEquals(wire(OverlaySchema.serialize(bandPrefs)), storable)
     }
 
@@ -447,6 +460,20 @@ class OverlaySchemaTest {
         assertTrue(OverlaySchema.isOverlaySupportedBy(id, OverlayServerSupport(26)))
         assertFalse(OverlaySchema.isOverlaySupportedBy(id, OverlayServerSupport(null)))
         assertTrue(OverlaySchema.isOverlaySupportedBy(id, OverlayServerSupport(null, setOf("resolution_hdr_audio"))))
+        assertFalse(OverlaySchema.isOverlaySupportedBy(OverlayId.Availability, OverlayServerSupport(28)))
+        assertTrue(
+            OverlaySchema.isOverlaySupportedBy(
+                OverlayId.Availability,
+                OverlayServerSupport(OVERLAY_AVAILABILITY_MANIFEST_REVISION),
+            ),
+        )
+        assertFalse(OverlaySchema.isOverlaySupportedBy(OverlayId.Availability, OverlayServerSupport(null)))
+        assertTrue(
+            OverlaySchema.isOverlaySupportedBy(
+                OverlayId.Availability,
+                OverlayServerSupport(null, setOf("availability")),
+            ),
+        )
         assertTrue(OverlaySchema.isOverlaySupportedBy(OverlayId.Hdr, OverlayServerSupport(null)))
         assertTrue(OverlaySchema.supportsOverlayStyles(OverlayServerSupport(OVERLAY_STYLE_MANIFEST_REVISION)))
         assertFalse(OverlaySchema.supportsOverlayStyles(OverlayServerSupport(24)))

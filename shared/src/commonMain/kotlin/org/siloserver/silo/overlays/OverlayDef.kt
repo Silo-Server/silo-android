@@ -65,4 +65,6 @@ data class OverlayDef(
     /** Value keys a settings UI suggests when assigning per-value images. */
     val valueKeySuggestions: List<String> = emptyList(),
     val getIcon: ((OverlayData) -> OverlayIconId?)? = null,
+    /** Hex accent for this item. A null result keeps [defaultAccent]. */
+    val getAccent: ((OverlayData) -> String?)? = null,
 )
