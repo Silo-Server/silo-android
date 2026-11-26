@@ -239,8 +239,14 @@ class OverlayRegistryTest {
     @Test
     fun availability_getValue_formatsFractionOrComplete() {
         val def = OverlayRegistry.def(OverlayId.Availability)!!
-        assertEquals(UiText.Raw("8/10"), def.getValue(OverlayData(availabilityHave = 8, availabilityTotal = 10)))
-        assertEquals(UiText.Raw("Complete"), def.getValue(OverlayData(availabilityHave = 10, availabilityTotal = 10)))
+        assertEquals(
+            UiText.Key(SharedString.OverlayAvailabilityFraction, listOf(8, 10)),
+            def.getValue(OverlayData(availabilityHave = 8, availabilityTotal = 10)),
+        )
+        assertEquals(
+            UiText.Key(SharedString.OverlayAvailabilityComplete),
+            def.getValue(OverlayData(availabilityHave = 10, availabilityTotal = 10)),
+        )
         assertNull(def.getValue(OverlayData(availabilityHave = 1, availabilityTotal = 0)))
         assertNull(def.getValue(OverlayData()))
         assertEquals(OverlayIconId.Check, def.getIcon?.invoke(OverlayData(availabilityHave = 3, availabilityTotal = 3)))

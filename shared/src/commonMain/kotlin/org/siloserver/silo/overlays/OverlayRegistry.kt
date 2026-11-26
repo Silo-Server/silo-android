@@ -511,8 +511,8 @@ object OverlayRegistry {
 
     private fun formatAvailability(have: Int?, total: Int?): UiText? {
         if (have == null || total == null || total <= 0) return null
-        if (have >= total) return UiText.Raw("Complete")
-        return UiText.Raw("$have/$total")
+        if (have >= total) return UiText.Key(SharedString.OverlayAvailabilityComplete)
+        return UiText.Key(SharedString.OverlayAvailabilityFraction, listOf(have, total))
     }
 
     private fun availabilityComplete(data: OverlayData): Boolean {

@@ -349,6 +349,8 @@ enum class SharedString(val key: String) {
     OverlayCancelled("overlays.cancelled"),
     OverlayUpcoming("overlays.upcoming"),
     OverlayCertifiedFresh("overlays.certifiedFresh"),
+    OverlayAvailabilityComplete("web.settings.overlays.badge.availability.value.complete"),
+    OverlayAvailabilityFraction("web.settings.overlays.badge.availability.value.fraction"),
 }
 
 /**
