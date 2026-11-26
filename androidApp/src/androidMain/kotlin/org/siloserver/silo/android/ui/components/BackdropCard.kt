@@ -52,6 +52,8 @@ import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.common.ui.components.WatchProgressBar
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Reserved height for the text block under a backdrop card: title (bodySmall)
@@ -84,6 +86,9 @@ fun BackdropCard(
     seriesTitle: String? = null,
     seasonNumber: Int? = null,
     episodeNumber: Int? = null,
+    /** The series' `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers: "Nov 15, 2026 • Title". */
+    episodeLabels: String? = null,
+    airDate: String? = null,
     progress: Float? = null,
     remainingMinutes: Int? = null,
     onClick: () -> Unit,
@@ -201,7 +206,7 @@ fun BackdropCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                val episodeTag = formatEpisodeTag(seasonNumber, episodeNumber)
+                val episodeTag = formatEpisodeTag(seasonNumber, episodeNumber, episodeLabels, airDate)
                 val subtitle = if (episodeTag != null) "$episodeTag \u2022 $title" else title
                 Text(
                     text = subtitle,
@@ -244,13 +249,16 @@ fun BackdropCard(
     }
 }
 
-/** "S01E02", "S01" or "E02" (each number at least two digits); null without either. */
+/**
+ * "S01E02" (or the air date for a date-labeled series), "S01" or "E02" (each
+ * number at least two digits); null without either.
+ */
 @Composable
-private fun formatEpisodeTag(season: Int?, episode: Int?): String? {
+private fun formatEpisodeTag(season: Int?, episode: Int?, episodeLabels: String?, airDate: String?): String? {
     val s = season?.let { LocaleFormat.codeNumber(it, minDigits = 2) }
     val e = episode?.let { LocaleFormat.codeNumber(it, minDigits = 2) }
     return when {
-        s != null && e != null -> stringResource(CommonR.string.catalog_episodeTag, s, e)
+        season != null && episode != null -> EpisodeLabel.text(season, episode, episodeLabels, airDate).text()
         s != null -> stringResource(CommonR.string.calendar_seasonShort, s)
         e != null -> stringResource(CommonR.string.calendar_episodeShort, e)
         else -> null

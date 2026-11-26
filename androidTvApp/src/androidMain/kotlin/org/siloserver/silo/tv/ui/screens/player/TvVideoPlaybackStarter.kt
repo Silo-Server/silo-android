@@ -273,6 +273,7 @@ class TvVideoPlaybackStarter(
                     allowAlternateVersions = allowAlternateVersions,
                     // Watch Party playback stays on the saved address, admission included.
                     allowsLocalRoute = request.roomId.isNullOrBlank() && room == null,
+                    pausedTimeout = true,
                 )
             ) {
                 is ApiResult.Success -> r.data
@@ -450,6 +451,8 @@ class TvVideoPlaybackStarter(
                 contentType = watchDetail.type,
                 seasonNumber = watchDetail.seasonNumber,
                 episodeNumber = watchDetail.episodeNumber,
+                episodeLabels = watchDetail.episodeLabels,
+                airDate = watchDetail.airDate,
                 resolvedEpisodeSelection = resolvedEpisodeSelection,
             )
             unpublishedSessionId = null

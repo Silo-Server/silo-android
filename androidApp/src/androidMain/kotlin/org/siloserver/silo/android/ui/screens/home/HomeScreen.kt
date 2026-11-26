@@ -129,6 +129,8 @@ fun HomeScreen(
     onPlayClick: (String, Double?) -> Unit,
     /** Opens a row's full page ("Explore all"). */
     onExploreSection: ((org.siloserver.silo.model.section.ResolvedSection) -> Unit)? = null,
+    /** Opens a card of a row of collections. */
+    onCollectionClick: ((org.siloserver.silo.model.section.SectionCollectionCard) -> Unit)? = null,
     viewModel: HomeViewModel,
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
@@ -142,6 +144,10 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
+        viewModel.onShown(refreshOnResume = true)
+        onPauseOrDispose { viewModel.onHidden() }
+    }
     val sectionPreferences: HomeSectionPreferencesStore = koinInject()
     val preferenceRevision by sectionPreferences.revision.collectAsState()
     val serverRegistry: ServerRegistry = koinInject()
@@ -150,7 +156,7 @@ fun HomeScreen(
     val sections = state.sections
     val profileScopeId = activeEntry?.profileId ?: activeProfile?.id
     val activeAccountId = activeEntry?.accountId
-    val populatedServerSections = remember(sections) { sections.filter { it.items.isNotEmpty() } }
+    val populatedServerSections = remember(sections) { sections.filter { it.hasCards } }
     // No hero billboard on phone (matches iOS): a `featured` section is just
     // another row, rendered in the order the server configured it.
     val regularSections = remember(
@@ -449,6 +455,8 @@ fun HomeScreen(
                                 onToggleWatchlist = viewModel::toggleWatchlist,
                                 onRemoveFromHome = viewModel::dismissFromHome,
                                 onExploreAllClick = onExploreSection?.let { open -> { open(section) } },
+                                onCollectionClick = onCollectionClick,
+                                activeProfileId = profileScopeId,
                             )
                         }
 

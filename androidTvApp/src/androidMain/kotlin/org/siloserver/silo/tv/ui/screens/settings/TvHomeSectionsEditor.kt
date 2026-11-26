@@ -61,6 +61,7 @@ import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.common.i18n.stringResourceWithNames
@@ -146,7 +147,6 @@ internal fun TvHomeSectionsEditor(
     // them while it is open, as they do on Home itself.
     androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
         viewModel.onShown()
-        viewModel.runPendingRealtimeRefresh()
         onPauseOrDispose { viewModel.onHidden() }
     }
 
@@ -389,7 +389,12 @@ private fun HomeSectionEditorRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = pluralStringResource(CommonR.plurals.rowPage_item, section.items.size, section.items.size),
+                    text = if (section.isCollectionRow) {
+                        val count = section.collections.size
+                        pluralStringResource(CommonR.plurals.home_editor_collectionCount, count, count, LocaleFormat.integer(count))
+                    } else {
+                        pluralStringResource(CommonR.plurals.rowPage_item, section.items.size, section.items.size)
+                    },
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

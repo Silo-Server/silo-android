@@ -135,6 +135,8 @@ import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
 
 // Geometry follows the options mockup on a 960×540dp screen: a capsule tab
 // rail 24dp from the top, and a smoked panel 10dp under it, 780dp (81%) wide
@@ -205,6 +207,9 @@ internal fun TvPlayerHud(
     durationSec: Double,
     seasonNumber: Int?,
     episodeNumber: Int?,
+    /** The series' `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers. */
+    episodeLabels: String? = null,
+    airDate: String? = null,
     audioTracks: List<PlayerTrackEntry>,
     videoQualities: List<VideoQualityOption>,
     /** The session's quality preference, named when no row is lit. */
@@ -564,6 +569,8 @@ internal fun TvPlayerHud(
                         durationSec = durationSec,
                         seasonNumber = seasonNumber,
                         episodeNumber = episodeNumber,
+                        episodeLabels = episodeLabels,
+                        airDate = airDate,
                         stats = stats,
                         playbackPlan = playbackPlan,
                         subtitleLabel = subtitlePresentation.rows
@@ -858,13 +865,16 @@ private fun HudInfoPane(
     durationSec: Double,
     seasonNumber: Int?,
     episodeNumber: Int?,
+    /** The series' `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers. */
+    episodeLabels: String? = null,
+    airDate: String? = null,
     stats: PlayerStatsSnapshot,
     playbackPlan: PlaybackExecutionPlan?,
     subtitleLabel: String,
     chapters: List<VersionChapter>,
 ) {
     val episodeTag = if (seasonNumber != null && episodeNumber != null) {
-        stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.codeNumber(seasonNumber), LocaleFormat.codeNumber(episodeNumber))
+        EpisodeLabel.text(seasonNumber, episodeNumber, episodeLabels, airDate, EpisodeCodeStyle.Spaced).text()
     } else {
         null
     }
@@ -1621,7 +1631,7 @@ private fun HudSubtitlesPane(
     // Image (PGS/DVB) and burned-in tracks ignore most of the appearance block —
     // say so instead of offering rows that silently do nothing.
     val applicability = tvSubtitleAppearanceApplicability(
-        presentation.rows.firstOrNull { row -> row.checked }?.identity,
+        presentation.committedIdentity,
     )
     val geometryEnabled = enabled && applicability.geometryApplies
     val stylingEnabled = enabled && applicability.stylingApplies

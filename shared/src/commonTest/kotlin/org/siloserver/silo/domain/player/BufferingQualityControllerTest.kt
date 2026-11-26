@@ -223,6 +223,34 @@ class BufferingQualityControllerTest {
     }
 
     @Test
+    fun `after the first play a stall lowers, but claims a slow link only with measured slow transfer`() = runTest {
+        data class Case(val name: String, val kbps: Int?, val mode: BufferingQualityMode, val source: String?)
+        val cases = listOf(
+            Case("slow transfer measured", kbps = 2_000, mode = BufferingQualityMode.ALWAYS, source = BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER),
+            // Media waited on at the server (a slow encoder) and then arrived fast, or in bursts too short to time.
+            Case("no transfer timed", kbps = null, mode = BufferingQualityMode.ALWAYS, source = null),
+            Case("media arriving above the delivered bitrate", kbps = 80_000, mode = BufferingQualityMode.ALWAYS, source = null),
+            Case("an accepted prompt without evidence", kbps = null, mode = BufferingQualityMode.ASK, source = null),
+            Case("an accepted prompt on a slow link", kbps = 2_000, mode = BufferingQualityMode.ASK, source = BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER),
+        )
+        for (case in cases) {
+            replans.clear()
+            planThroughputKbps = case.kbps
+            val controller = newController(case.mode)
+            val t0 = testScheduler.currentTime
+            controller.onPlanAdopted(plan("p1"))
+            controller.onPlaying()
+            at(t0 + 125_000)
+            controller.onWaiting()
+            at(t0 + 131_000)
+            if (case.mode == BufferingQualityMode.ASK) assertTrue(controller.selectLower(), case.name)
+            // The step-down still goes out: a smaller output helps a slow encoder too.
+            assertEquals(listOf(BufferingQualityReplan("auto", 44_100, case.source)), replans, case.name)
+            controller.reset()
+        }
+    }
+
+    @Test
     fun `a deadline lowering that comes to nothing runs the start's failure path once`() = runTest {
         data class Case(
             val name: String,

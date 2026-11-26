@@ -4,6 +4,8 @@ import androidx.compose.runtime.Composable
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.common.i18n.text
 
 /**
  * `S01E02` for a Home card or the hero marquee, or a half tag when only one
@@ -15,18 +17,41 @@ import org.siloserver.silo.common.i18n.isRightToLeftText
  * room to breathe, while these labels are scanned down a list.
  */
 @Composable
-internal fun tvEpisodeTag(season: Int?, episode: Int?): String? = tvEpisodeTagToken(season, episode)?.resolved()
+internal fun tvEpisodeTag(
+    season: Int?,
+    episode: Int?,
+    episodeLabels: String? = null,
+    airDate: String? = null,
+): String? = tvEpisodeTagToken(season, episode, episodeLabels, airDate)?.tagText()
 
-/** [tvEpisodeTag] as a catalog string, resolved when drawn, and its zero-padded code numbers (ASCII, D78). */
-internal fun tvEpisodeTagToken(season: Int?, episode: Int?): TvHeroFactToken.ResToken? {
+/**
+ * [tvEpisodeTag] as a token resolved when drawn: the zero-padded code (ASCII,
+ * D78), or for a date-labeled series ([episodeLabels] `air_date`, sports) the
+ * episode's air date in place of both numbers.
+ */
+internal fun tvEpisodeTagToken(
+    season: Int?,
+    episode: Int?,
+    episodeLabels: String? = null,
+    airDate: String? = null,
+): TvHeroFactToken? {
     val s = season?.let { LocaleFormat.codeNumber(it, minDigits = 2) }
     val e = episode?.let { LocaleFormat.codeNumber(it, minDigits = 2) }
     return when {
-        s != null && e != null -> TvHeroFactToken.ResToken(CommonR.string.catalog_episodeTag, listOf(s, e))
+        season != null && episode != null ->
+            TvHeroFactToken.UiTextToken(EpisodeLabel.text(season, episode, episodeLabels, airDate))
         s != null -> TvHeroFactToken.ResToken(CommonR.string.calendar_seasonShort, listOf(s))
         e != null -> TvHeroFactToken.ResToken(CommonR.string.calendar_episodeShort, listOf(e))
         else -> null
     }
+}
+
+/** An episode tag token's text in the app language. */
+@Composable
+internal fun TvHeroFactToken.tagText(): String? = when (this) {
+    is TvHeroFactToken.ResToken -> resolved()
+    is TvHeroFactToken.UiTextToken -> text.text()
+    else -> null
 }
 
 /**
@@ -35,8 +60,14 @@ internal fun tvEpisodeTagToken(season: Int?, episode: Int?): TvHeroFactToken.Res
  * the paragraph direction.
  */
 @Composable
-internal fun tvEpisodeTitleLine(season: Int?, episode: Int?, title: String): String? {
-    val tag = tvEpisodeTag(season, episode)
+internal fun tvEpisodeTitleLine(
+    season: Int?,
+    episode: Int?,
+    title: String,
+    episodeLabels: String? = null,
+    airDate: String? = null,
+): String? {
+    val tag = tvEpisodeTag(season, episode, episodeLabels, airDate)
     val name = title.takeIf { it.isNotBlank() }
     return when {
         tag == null -> name

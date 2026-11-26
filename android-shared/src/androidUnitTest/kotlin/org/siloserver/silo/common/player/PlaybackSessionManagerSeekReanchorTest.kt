@@ -30,6 +30,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.DELIVERY_CLASS_ORIGINAL_HTTP
+import org.siloserver.silo.model.playback.PAUSED_TIMEOUT_V1_FEATURE
 import org.siloserver.silo.model.playback.DeliveryCapability
 import org.siloserver.silo.model.playback.DeliverySubtitleCapabilities
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
@@ -107,6 +108,48 @@ class PlaybackSessionManagerSeekReanchorTest {
             capableBody["client_playback_context"]!!.jsonObject["deliveries"]!!.jsonObject[
                 DELIVERY_CLASS_ORIGINAL_HTTP
             ]!!.jsonObject["subtitles"]!!.jsonObject["sidecar_text"]!!.jsonPrimitive.content.toBoolean(),
+        )
+    }
+
+    @Test
+    fun pausedTimeoutIsAdvertisedOnlyWhenAskedAndRepeatedByEveryReplanOfTheAttempt() = runTest {
+        val pausedTimeout = MockResponse(
+            HttpStatusCode.Gone,
+            """{"type":"https://siloserver.org/docs/api/v2/problems/playback_session_paused_timeout",""" +
+                """"title":"Playback session paused too long","status":410,""" +
+                """"detail":"Playback stopped because it was paused for too long."}""",
+        )
+        // 501 settles a replan in the journal, so the next one reaches the server too.
+        val unsupported = MockResponse(
+            HttpStatusCode.NotImplemented,
+            """{"type":"https://siloserver.org/docs/api/v2/problems/capability_unsupported","title":"x","status":501}""",
+        )
+        val harness = Harness(startResponse = response(plan())) { index, _ ->
+            if (index < 2) unsupported else pausedTimeout
+        }
+        harness.manager.start(pausedTimeout = true)
+        harness.manager.recoverActiveVideoSessionAfterSeek(positionSeconds = 30.0, classification = "seek_failure")
+        harness.manager.replanActiveVideoSession(
+            classification = "transport_stall",
+            positionSeconds = 30.0,
+            audioTrackIndex = 1,
+            subtitleTrackIndex = null,
+        )
+        val reanchor = harness.manager.reanchorActiveVideoSession(positionSeconds = 90.0)
+
+        val sent = (harness.startBodies + harness.replanBodies).map { body ->
+            body.getValue("client_features").jsonArray.map { it.jsonPrimitive.content }
+        }
+        assertEquals(4, sent.size)
+        sent.forEach { assertTrue(PAUSED_TIMEOUT_V1_FEATURE in it, "$it") }
+        assertEquals(PlaybackServerEnd.PAUSED_TIMEOUT, reanchor.playbackServerEnd())
+
+        // Cast and audiobook starts take the default.
+        val other = Harness(startResponse = response(plan())) { _, _ -> error("unused") }
+        other.manager.start()
+        assertFalse(
+            PAUSED_TIMEOUT_V1_FEATURE in other.startBodies.single().getValue("client_features").jsonArray
+                .map { it.jsonPrimitive.content },
         )
     }
 
@@ -719,10 +762,10 @@ class PlaybackSessionManagerSeekReanchorTest {
         )
     }
 
-    private suspend fun PlaybackSessionManager.start(): ApiResult.Success<VideoSessionStartV3> =
-        assertIs(startResult())
+    private suspend fun PlaybackSessionManager.start(pausedTimeout: Boolean = false): ApiResult.Success<VideoSessionStartV3> =
+        assertIs(startResult(pausedTimeout))
 
-    private suspend fun PlaybackSessionManager.startResult(): ApiResult<VideoSessionStartV3> =
+    private suspend fun PlaybackSessionManager.startResult(pausedTimeout: Boolean = false): ApiResult<VideoSessionStartV3> =
         startVideoSessionV3(
                 fileId = 42,
                 profileId = "profile-1",
@@ -741,6 +784,7 @@ class PlaybackSessionManagerSeekReanchorTest {
                 qualityPreference = "original",
                 startPosition = 0.0,
                 subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
+                pausedTimeout = pausedTimeout,
         )
 
     private fun plan(): PlaybackPlanV3 = PlaybackPlanV3(

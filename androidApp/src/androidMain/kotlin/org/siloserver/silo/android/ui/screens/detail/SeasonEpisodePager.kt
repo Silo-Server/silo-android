@@ -34,6 +34,7 @@ import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.Season
 import kotlin.math.absoluteValue
+import androidx.compose.runtime.CompositionLocalProvider
 
 /**
  * Shared season selector and episode pager used by series and episode details.
@@ -57,7 +58,9 @@ internal fun SeasonEpisodePager(
     allowsSeasonPaging: Boolean = true,
     /** Tablet/fold rail selection follows taps rather than centre position. */
     tapToFocusEpisode: Boolean = false,
-) {
+    /** The series' `episode_labels`; "air_date" (sports) leads each card with its title, not its code. */
+    episodeLabels: String? = null,
+) = CompositionLocalProvider(LocalEpisodeLabels provides episodeLabels) {
     if (seasons.size <= 1 || !allowsSeasonPaging) {
         SeasonEpisodePage(
             episodes = episodes,
@@ -69,7 +72,7 @@ internal fun SeasonEpisodePager(
             selectsCenteredEpisode = selectsCenteredEpisode,
             tapToFocusEpisode = tapToFocusEpisode,
         )
-        return
+        return@CompositionLocalProvider
     }
 
     val initialPage = seasons.indexOfFirst { it.seasonNumber == selectedSeasonNumber }

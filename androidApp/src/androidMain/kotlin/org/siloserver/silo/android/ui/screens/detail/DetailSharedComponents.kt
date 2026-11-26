@@ -134,6 +134,9 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
+import org.siloserver.silo.common.i18n.text
 
 // ── Tokens ────────────────────────────────────────────────────
 
@@ -1915,6 +1918,8 @@ object HeroMetadata {
     fun episodeEyebrow(resources: Resources, detail: ItemDetail): String? {
         val s = detail.seasonNumber
         val e = detail.episodeNumber
+        // A date-labeled series (sports): the game's date stands for "Season 2026 · Episode 296".
+        if (s != null && e != null) EpisodeLabel.airDate(detail.episodeLabels, detail.airDate)?.let { return it.text(resources) }
         return when {
             s != null && e != null ->
                 resources.getString(CommonR.string.detail_episodeEyebrow, phoneSeasonNumberLabel(resources, s), LocaleFormat.integer(e))
@@ -1975,7 +1980,7 @@ internal fun phoneSeasonNumberLabel(resources: Resources, seasonNumber: Int): St
 
 /** "S1·E2", the short episode code on play buttons and party subtitles. */
 internal fun episodeCode(resources: Resources, seasonNumber: Int, episodeNumber: Int): String =
-    resources.getString(CommonR.string.detail_episodeCode, LocaleFormat.codeNumber(seasonNumber), LocaleFormat.codeNumber(episodeNumber))
+    EpisodeLabel.code(seasonNumber, episodeNumber, EpisodeCodeStyle.Dotted).text(resources)
 
 // ── Play label helper ─────────────────────────────────────────
 
@@ -1996,7 +2001,7 @@ fun computePlayLabel(
         val s = detail.seasonNumber
         val e = detail.episodeNumber
         if (s != null && e != null) {
-            val code = if (s == 0) {
+            val code = EpisodeLabel.airDate(detail.episodeLabels, detail.airDate)?.text(resources) ?: if (s == 0) {
                 // A `%d` code read without arguments: resources would print the app's digits (D75), codes stay ASCII (D78).
                 String.format(Locale.ROOT, resources.getString(CommonR.string.detail_episodeCodeNoSeason), e)
             } else {

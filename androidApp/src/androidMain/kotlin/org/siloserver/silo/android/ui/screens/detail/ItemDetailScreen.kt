@@ -113,6 +113,8 @@ import androidx.compose.ui.semantics.stateDescription
 import org.siloserver.silo.android.cast.engagedStatus
 import org.siloserver.silo.android.ui.components.SiloMenuHeader
 import org.siloserver.silo.common.audiobook.AudiobookText
+import org.siloserver.silo.model.catalog.EpisodeLabel
+import org.siloserver.silo.model.catalog.EpisodeCodeStyle
 
 internal data class SeriesDetailRedirect(
     val seriesContentId: String,
@@ -194,6 +196,13 @@ fun ItemDetailScreen(
     onBoxSetClick: (boxSetId: String, libraryId: String) -> Unit = { _, _ -> },
     /** Opens a movie from a box set row, scoped to the box set's library. */
     onBoxSetMovieClick: (contentId: String, libraryId: String) -> Unit,
+    /** Opens a collection from the collections row. */
+    onCollectionClick: (org.siloserver.silo.model.section.SectionCollectionCard) -> Unit = {},
+    /**
+     * Opens a title from a collection's preview, with no library: a
+     * collection's titles can live in other libraries, as on its own page.
+     */
+    onCollectionItemClick: (contentId: String) -> Unit = {},
     viewModel: ItemDetailViewModel,
     modifier: Modifier = Modifier,
 ) {
@@ -686,7 +695,7 @@ fun ItemDetailScreen(
                             ep.userData?.played != true
                         } ?: state.episodes.firstOrNull()
                         val nextEpisodeLabel = nextEpisode?.let { ep ->
-                            episodeCode(resources, ep.seasonNumber, ep.episodeNumber)
+                            episodeNumberText(resources, ep, detail.episodeLabels)
                         }
                         val episodeDownloadRecords by viewModel.downloads.collectAsState()
                         // Series-level roll-up across ALL seasons (state.allEpisodeFileIds
@@ -772,6 +781,9 @@ fun ItemDetailScreen(
                             translation = translationSlot,
                             detail = detail,
                             similarItems = state.similarItems,
+                            collectionsRow = state.collectionsRow,
+                            onCollectionClick = onCollectionClick,
+                            onCollectionItemClick = { item -> onCollectionItemClick(item.contentId) },
                             seasons = state.seasons,
                             selectedSeasonNumber = state.selectedSeasonNumber,
                             episodes = state.episodes,
@@ -941,7 +953,10 @@ fun ItemDetailScreen(
                                         // every member, so its fallback text stays English data.
                                         title = episode.title?.takeIf { it.isNotBlank() }
                                             ?: "Episode ${episode.episodeNumber}",
-                                        subtitle = "${detail.title} · S${episode.seasonNumber}·E${episode.episodeNumber}",
+                                        subtitle = "${detail.title} · " + EpisodeLabel.englishText(
+                                            episode.seasonNumber, episode.episodeNumber, detail.episodeLabels, episode.airDate,
+                                            EpisodeCodeStyle.Dotted,
+                                        ),
                                         posterUrl = detail.posterUrl,
                                         fileId = selectedEpisodeVersion?.fileId
                                             ?.takeIf { episode.contentId == selectedEpisode?.contentId },
@@ -1031,6 +1046,9 @@ fun ItemDetailScreen(
                             boxSet = state.boxSet,
                             onOpenBoxSet = { boxSet -> onBoxSetClick(boxSet.id, boxSet.libraryId) },
                             onBoxSetMovieClick = onBoxSetMovieClick,
+                            collectionsRow = state.collectionsRow,
+                            onCollectionClick = onCollectionClick,
+                            onCollectionItemClick = { item -> onCollectionItemClick(item.contentId) },
                             portraitArtwork = portraitArtwork,
                             isFavorite = state.isFavorite,
                             isInWatchlist = state.isInWatchlist,
@@ -1139,7 +1157,9 @@ fun ItemDetailScreen(
                                                 detail.seriesTitle?.takeIf { value -> value.isNotBlank() },
                                                 detail.seasonNumber?.let { season ->
                                                     // Sent to the server for the party: English data.
-                                                    detail.episodeNumber?.let { episode -> "S$season·E$episode" }
+                                                    detail.episodeNumber?.let { episode ->
+                                                        EpisodeLabel.englishText(season, episode, detail.episodeLabels, detail.airDate, EpisodeCodeStyle.Dotted)
+                                                    }
                                                 },
                                             ).joinToString(" · ").ifBlank { null }
                                         } else {

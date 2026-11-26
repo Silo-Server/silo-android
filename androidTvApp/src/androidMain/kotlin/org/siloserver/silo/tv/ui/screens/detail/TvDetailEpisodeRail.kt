@@ -78,6 +78,7 @@ import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.EpisodeCardCaption
+import org.siloserver.silo.model.catalog.EpisodeLabel
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
@@ -183,6 +184,8 @@ internal fun TvDetailEpisodeRail(
     carouselLoadError: Boolean = false,
     onCarouselEdgeRequested: (String, Int) -> Unit = { _, _ -> },
     onCarouselFocusLost: () -> Unit = {},
+    /** The series' `episode_labels`; "air_date" (sports) leads each caption with the title, not the code. */
+    episodeLabels: String? = null,
 ) {
     if (episodes.isEmpty()) return
 
@@ -358,6 +361,7 @@ internal fun TvDetailEpisodeRail(
                 onSetWatched = { watched -> onSetWatched(episode.contentId, watched) },
                 onSetFavorite = { favorite -> onSetFavorite(episode.contentId, favorite) },
                 usesSeriesGeometry = usesSeriesGeometry,
+                episodeLabels = episodeLabels,
                 modifier = Modifier
                     .tvRailPinOnFocus(
                         listState,
@@ -444,6 +448,7 @@ private fun TvDetailEpisodeCard(
     onSetWatched: (Boolean) -> Unit,
     onSetFavorite: (Boolean) -> Unit,
     usesSeriesGeometry: Boolean,
+    episodeLabels: String?,
     modifier: Modifier = Modifier,
 ) {
     // The combined Series page uses the exact same card footprint as Home's
@@ -575,9 +580,16 @@ private fun TvDetailEpisodeCard(
         val dateLocale = currentFormatLocale()
         // A right-to-left interface isolates the title as a catalog placeholder (D28).
         val rtl = isRightToLeftText()
-        val title = remember(episode, configuration) {
-            val episodeForCaption = if (rtl) episode else episode.copy(title = episode.title?.trim()?.let { bidiIsolated(it, false) })
-            EpisodeCardCaption.title(episodeForCaption).text(resources)
+        // A date-labeled series' title stands alone (no code before it), so it
+        // stays bare and its own script sets the direction; an untitled one
+        // shows its air date, hence the date locale key.
+        val title = remember(episode, configuration, episodeLabels, dateLocale) {
+            val episodeForCaption = if (rtl || EpisodeLabel.labelsByAirDate(episodeLabels)) {
+                episode
+            } else {
+                episode.copy(title = episode.title?.trim()?.let { bidiIsolated(it, false) })
+            }
+            EpisodeCardCaption.title(episodeForCaption, episodeLabels).text(resources)
         }
         val metadata = remember(episode, configuration, dateLocale) {
             EpisodeCardCaption.metadata(

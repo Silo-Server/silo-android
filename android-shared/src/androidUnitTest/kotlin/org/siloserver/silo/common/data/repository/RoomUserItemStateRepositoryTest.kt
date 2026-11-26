@@ -392,6 +392,16 @@ class RoomUserItemStateRepositoryTest {
     }
 
     @Test
+    fun aDownloadSampleInTheEndCreditsSyncsAsPlayedToTheEnd() = runTest {
+        repo.recordDownload("c1", fileId = 7, positionSeconds = 1160.0, durationSeconds = 1304.0, reachedEndCredits = true)
+
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
+        assertEquals(1304.0 to 1304.0, OutboxOperation.decodePositionPayload(op.payloadJson))
+        // Offline, the title still resumes where the viewer stopped.
+        assertEquals(1160.0, repo.localPlaybackProgress("c1")?.positionSeconds)
+    }
+
+    @Test
     fun audiobookSnapshotsStayLocalAndNeverOverrideTheServer() = runTest {
         repo.recordPosition("book", fileId = 3, positionSeconds = 50.0, durationSeconds = 3600.0)
 
@@ -693,11 +703,13 @@ class RoomUserItemStateRepositoryTest {
         fileId: Int,
         positionSeconds: Double,
         durationSeconds: Double?,
+        reachedEndCredits: Boolean = false,
     ) {
         val scope = checkNotNull(currentSnapshot)
         recordPosition(
             PlaybackWriteScope(scope.serverId, checkNotNull(scope.profileId), scope.credentialGenerationId, scope.identityGeneration),
             contentId, fileId, positionSeconds, durationSeconds,
+            reachedEndCredits = reachedEndCredits,
         )
     }
 

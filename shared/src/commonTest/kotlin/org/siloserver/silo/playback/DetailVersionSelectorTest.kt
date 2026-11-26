@@ -29,7 +29,7 @@ class DetailVersionSelectorTest {
     )?.fileId
 
     @Test
-    fun nothingPlayedOpensOnTheEditionHoldingTheBestFile() {
+    fun nothingPlayedOpensOnThePreferredCutWithItsBestFile() {
         assertEquals(1, select())
     }
 
@@ -74,18 +74,20 @@ class DetailVersionSelectorTest {
     }
 
     @Test
-    fun withNoHistoryEachCutsAutoFileIsComparedAcrossCuts() {
+    fun withNoHistoryTheCutIsPickedByNameThenQuality() {
         fun cut(id: Int, key: String?, resolution: String, hdr: Boolean = false, size: Long = 1) =
             FileVersion(id, resolution = resolution, hdr = hdr, fileSize = size, editionKey = key, editionRaw = key)
-        // A cut with a file within the cap beats one only above it.
+        // Name first (unnamed or standard, then theatrical, then any other cut), even over better quality.
+        assertEquals(1, select(files = listOf(cut(1, "standard", "1080p"), cut(2, "extended", "2160p", hdr = true))))
+        assertEquals(2, select(files = listOf(cut(1, "theatrical", "1080p"), cut(2, null, "1080p"))))
+        assertEquals(2, select(files = listOf(cut(1, "theatrical", "1080p"), cut(2, "standard edition", "1080p"))))
+        assertEquals(2, select(files = listOf(cut(1, "directors_cut", "1080p", size = 9_000), cut(2, "theatrical", "1080p"))))
+        // Among equally named cuts, a file within the cap beats one only above it.
         assertEquals(2, select(preferredQuality = "1080p", files = listOf(cut(1, "imax", "2160p"), cut(2, "extended", "720p"))))
         // Above the cap, the closer one wins.
         assertEquals(2, select(preferredQuality = "480p", files = listOf(cut(1, "imax", "2160p"), cut(2, "extended", "720p"))))
-        // Same resolution: HDR, then edition preference (unnamed or standard, then theatrical); never file size.
-        assertEquals(2, select(files = listOf(cut(1, "theatrical", "1080p"), cut(2, "directors_cut", "1080p", hdr = true))))
-        assertEquals(2, select(files = listOf(cut(1, "directors_cut", "1080p", size = 9_000), cut(2, "theatrical", "1080p"))))
-        assertEquals(2, select(files = listOf(cut(1, "theatrical", "1080p"), cut(2, null, "1080p"))))
-        assertEquals(2, select(files = listOf(cut(1, "theatrical", "1080p"), cut(2, "standard edition", "1080p"))))
+        // Same resolution: HDR; never file size.
+        assertEquals(2, select(files = listOf(cut(1, "extended", "1080p", size = 9_000), cut(2, "directors_cut", "1080p", hdr = true))))
         // A full tie keeps server order.
         assertEquals(1, select(files = listOf(cut(1, "extended", "1080p"), cut(2, "directors_cut", "1080p", size = 9_000))))
     }

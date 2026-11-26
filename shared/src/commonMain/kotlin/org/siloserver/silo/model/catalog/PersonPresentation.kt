@@ -74,14 +74,21 @@ fun personMetadataBadges(person: Person, todayIso: String? = null): List<UiText>
 /** An ISO `YYYY-MM-DD` date with the month as a word ("Jan 5, 1980"), or the server's text as it came. */
 fun formattedPersonDate(raw: String?): UiText? {
     val value = raw?.trim()?.takeIf { it.isNotBlank() } ?: return null
-    val parts = value.split("-")
-    if (parts.size != 3) return UiText.Raw(value)
-    val year = parts[0].toIntOrNull() ?: return UiText.Raw(value)
-    val month = parts[1].toIntOrNull() ?: return UiText.Raw(value)
-    val day = parts[2].toIntOrNull() ?: return UiText.Raw(value)
-    if (year !in 1..9999 || month !in 1..12 || day !in 1..31) return UiText.Raw(value)
-    // A day the month doesn't have (Feb 30) can't be formatted; keep the server's text.
-    if (day > daysInMonth(year, month)) return UiText.Raw(value)
+    return calendarDateOrNull(value) ?: UiText.Raw(value)
+}
+
+/**
+ * An ISO `YYYY-MM-DD` date (a timestamp's date part) as a calendar date, or
+ * null when it isn't one. A day the month doesn't have (Feb 30) is null too:
+ * it can't be formatted.
+ */
+fun calendarDateOrNull(raw: String): UiText.CalendarDate? {
+    val parts = raw.trim().substringBefore('T').substringBefore(' ').split("-")
+    if (parts.size != 3) return null
+    val year = parts[0].toIntOrNull() ?: return null
+    val month = parts[1].toIntOrNull() ?: return null
+    val day = parts[2].toIntOrNull() ?: return null
+    if (year !in 1..9999 || month !in 1..12 || day !in 1..daysInMonth(year, month)) return null
     return UiText.CalendarDate(year, month, day)
 }
 

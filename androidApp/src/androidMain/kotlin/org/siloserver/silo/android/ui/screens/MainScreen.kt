@@ -75,6 +75,7 @@ import org.siloserver.silo.android.ui.navigation.tabSwitchNavOptions
 import org.siloserver.silo.android.ui.navigation.bottomMostTabRoute
 import org.siloserver.silo.android.ui.navigation.fallbackMobileTab
 import org.siloserver.silo.android.ui.navigation.libraryCollectionDetailRoute
+import org.siloserver.silo.android.ui.navigation.sectionCollectionCardRoute
 import org.siloserver.silo.android.ui.navigation.scopedLocalDownloadBytes
 import org.siloserver.silo.android.ui.navigation.shouldShowDownloadsTab
 import org.siloserver.silo.android.ui.navigation.visibleMobileTabs
@@ -633,6 +634,9 @@ fun MainScreen(
                             onExploreSection = { section ->
                                 navController.navigate(Route.SectionBrowse(section.id, context.sectionTitle(section)).route)
                             },
+                            onCollectionClick = { card ->
+                                sectionCollectionCardRoute(card)?.let { navController.navigate(it) }
+                            },
                             viewModel = homeViewModel,
                             activeProfile = headerState.activeProfile,
                             onSearchClick = { navController.navigate(Route.Search().route) },
@@ -663,6 +667,9 @@ fun MainScreen(
                                 navController.navigate(
                                     libraryCollectionDetailRoute(collection, libraryId, mediaScope),
                                 )
+                            },
+                            onPersonalCollectionClick = { collectionId ->
+                                navController.navigate(Route.CollectionDetail(collectionId).route)
                             },
                             onExploreSection = { section, libraryId, mediaScope ->
                                 navController.navigate(

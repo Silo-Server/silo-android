@@ -3,7 +3,10 @@ package org.siloserver.silo.model.download
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.siloserver.silo.domain.player.MarkerTimeline
 import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.model.catalog.MarkerSegment
+import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.playback.orNullIfBlank
 
 /**
@@ -64,6 +67,12 @@ data class OfflineTrackInfo(
      * order (Matroska can differ), so originals select by catalog identity.
      */
     val audioByPosition: Boolean = false,
+    /**
+     * Where the downloaded file's end credits start, in seconds, when the
+     * manifest placed credits in its end window. Offline playback that reaches
+     * it counts as watched. Null on downloads captured before this existed.
+     */
+    val endCreditsStartSeconds: Double? = null,
 ) {
     /** The default audio position: the manifest's pick, else the default flag, else the first. */
     fun defaultAudioPosition(): Int {
@@ -136,13 +145,40 @@ fun decodeOfflineManifestTracks(body: String): OfflineManifestTracks? =
     runCatching { offlineManifestJson.decodeFromString(OfflineManifestTracks.serializer(), body) }.getOrNull()
 
 /** Builds the persisted track data from a manifest and the sidecars saved from it. */
-fun OfflineManifestTracks.toOfflineTrackInfo(savedSubtitles: List<OfflineSubtitleFile>): OfflineTrackInfo =
+fun OfflineManifestTracks.toOfflineTrackInfo(
+    savedSubtitles: List<OfflineSubtitleFile>,
+    endCreditsStartSeconds: Double? = null,
+): OfflineTrackInfo =
     OfflineTrackInfo(
         audioTracks = audioTracks,
         selectedAudioTrackIndex = selectedAudioTrackIndex?.takeIf { it in audioTracks.indices },
         subtitles = savedSubtitles,
         audioByPosition = !deliveryFormat.equals(DELIVERY_FORMAT_ORIGINAL, ignoreCase = true),
+        endCreditsStartSeconds = endCreditsStartSeconds,
     )
+
+/** The manifest fields that say where the downloaded file's end credits start. */
+@Serializable
+private data class OfflineManifestCredits(
+    @SerialName("episode_id") val episodeId: String? = null,
+    @SerialName("duration_seconds") val durationSeconds: Double? = null,
+    val credits: TimeRange? = null,
+    @SerialName("marker_segments") val markerSegments: List<MarkerSegment>? = null,
+)
+
+/**
+ * Where the manifest's file ends its credits ([MarkerTimeline.endCreditsStart]),
+ * or null. Decoded apart from the tracks, so markers the client can't read never
+ * cost the download its audio and subtitle data.
+ */
+fun decodeOfflineManifestEndCreditsStart(body: String): Double? {
+    val manifest = runCatching { offlineManifestJson.decodeFromString(OfflineManifestCredits.serializer(), body) }
+        .getOrNull() ?: return null
+    val duration = manifest.durationSeconds ?: return null
+    val timeline = MarkerTimeline.resolve(manifest.markerSegments, intro = null, credits = manifest.credits, recap = null, preview = null)
+    // The server bounds a file linked to an episode as an episode, and anything else as a movie.
+    return timeline.endCreditsStart(duration, isEpisode = !manifest.episodeId.isNullOrBlank())
+}
 
 private const val DELIVERY_FORMAT_ORIGINAL = "original"
 

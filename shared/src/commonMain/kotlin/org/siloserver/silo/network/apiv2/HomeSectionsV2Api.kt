@@ -10,9 +10,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.*
 import org.siloserver.silo.model.section.SectionsResponse
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.SectionCollectionCard
 import org.siloserver.silo.model.section.HomeSectionItemsResponse
 import org.siloserver.silo.model.section.HomeLayoutRow
 import org.siloserver.silo.network.*
@@ -20,10 +22,30 @@ import org.siloserver.silo.network.*
 /** One v2 section row: `items` is required on the wire even though the domain model defaults it. */
 internal fun decodeSectionV2(row: JsonObject): ResolvedSection {
     require(row["items"] is JsonArray) { "Missing section items." }
-    val section = SiloJson.decodeFromJsonElement<ResolvedSection>(row)
+    val cardElements = row["collections"] as? JsonArray
+    val section = SiloJson.decodeFromJsonElement<ResolvedSection>(
+        if (cardElements == null) row else JsonObject(row - "collections"),
+    )
     require(section.id.isNotBlank() && section.items.all { it.contentId.isNotBlank() }) { "Blank section identity." }
-    return section
+    if (cardElements.isNullOrEmpty()) return section
+    return section.copy(collections = decodeCollectionCardsV2(cardElements))
 }
+
+/**
+ * Collection cards, each decoded on its own. A card this client can't read or
+ * open is left out, as the server leaves out one the viewer can't see; the
+ * rest of the row, and of the page, still shows.
+ */
+internal fun decodeCollectionCardsV2(elements: JsonArray): List<SectionCollectionCard> =
+    elements.mapNotNull { element ->
+        try {
+            SiloJson.decodeFromJsonElement<SectionCollectionCard>(element).takeIf { it.isOpenable }
+        } catch (_: SerializationException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    }.distinctBy { it.rowKey }
 
 internal fun decodeSectionsV2(body: JsonObject): SectionsResponse {
     val rows = body["sections"] as? JsonArray ?: throw IllegalArgumentException("Missing sections.")

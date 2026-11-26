@@ -262,7 +262,7 @@ object AppLocales {
                 buildList {
                     while (parser.next() != XmlPullParser.END_DOCUMENT) {
                         if (parser.eventType == XmlPullParser.START_TAG && parser.name == "locale") {
-                            parser.getAttributeValue(ANDROID_NS, "name")?.let(::add)
+                            parser.getAttributeValue(ANDROID_NS, "name")?.let { add(modernTag(it)) }
                         }
                     }
                 }
@@ -272,6 +272,22 @@ object AppLocales {
     }
 
     private const val ANDROID_NS = "http://schemas.android.com/apk/res/android"
+
+    /**
+     * [tag] with Android's legacy language codes replaced by the ones devices,
+     * the server and the other apps use. Resource folders must use the old
+     * codes (`values-iw`, `values-in`), so the generated localeConfig lists
+     * `iw` and `in`, but a Hebrew or Indonesian phone reports `he` or `id`,
+     * and [AppLanguage.match] compares language codes as written. Android
+     * resolves `he` and `id` to those folders.
+     */
+    internal fun modernTag(tag: String): String {
+        val language = tag.substringBefore('-')
+        val modern = LEGACY_LANGUAGES[language] ?: return tag
+        return modern + tag.substring(language.length)
+    }
+
+    private val LEGACY_LANGUAGES = mapOf("iw" to "he", "in" to "id", "ji" to "yi")
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     private fun localeManager(context: Context): LocaleManager =

@@ -15,6 +15,10 @@ data class SectionItem(
     @SerialName("series_title") val seriesTitle: String? = null,
     @SerialName("season_number") val seasonNumber: Int? = null,
     @SerialName("episode_number") val episodeNumber: Int? = null,
+    /** The series' episode labels: "air_date" when its numbers are synthetic (sports); absent shows numbers. */
+    @SerialName("episode_labels") val episodeLabels: String? = null,
+    /** An episode card's air date, YYYY-MM-DD, sent when [episodeLabels] is air_date. */
+    @SerialName("air_date") val airDate: String? = null,
     val year: Int = 0,
     val genres: List<String> = emptyList(),
     val status: String? = null,
@@ -74,10 +78,91 @@ data class ResolvedSection(
     @SerialName("total_count") val totalCount: Int = 0,
     @SerialName("is_custom") val isCustom: Boolean = false,
     val customized: Boolean = false,
-    val items: List<SectionItem> = emptyList()
+    val items: List<SectionItem> = emptyList(),
+    /**
+     * A row of collections' cards ([isCollectionRow]), in the row's order.
+     * Such a row has no [items], its [totalCount] counts these cards, and
+     * [itemLimit] does not apply. Empty on every other row.
+     */
+    val collections: List<SectionCollectionCard> = emptyList(),
 ) {
     /** Convenience alias for [sectionType] used by domain layer. */
     val type: String get() = sectionType
+
+    /** A row whose cards are collections, not titles (`collection_posters`). */
+    val isCollectionRow: Boolean get() = sectionType == COLLECTION_POSTERS_SECTION_TYPE
+
+    /**
+     * Whether the row has anything to show: its collections for a row of
+     * collections, its titles for every other row.
+     */
+    val hasCards: Boolean get() = if (isCollectionRow) collections.isNotEmpty() else items.isNotEmpty()
+}
+
+/** `section_type` of a row of collections. */
+const val COLLECTION_POSTERS_SECTION_TYPE = "collection_posters"
+
+/**
+ * One card of a row of collections. A [SOURCE_LIBRARY] card opens the server
+ * collection [id] in library [libraryId]; a [SOURCE_USER] card opens the
+ * personal collection [id], made by [creatorProfileId].
+ */
+@Serializable
+data class SectionCollectionCard(
+    // Defaults keep one malformed card from failing the whole Home read;
+    // [isOpenable] then leaves it out.
+    val id: String = "",
+    val source: String = "",
+    val title: String = "",
+    /** The assigned poster or the viewer's collage; blank means the collection placeholder. */
+    @SerialName("poster_url") val posterUrl: String? = null,
+    @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
+    @SerialName("poster_is_collage") val posterIsCollage: Boolean = false,
+    /**
+     * Server collections with a backdrop: presigned at the size a collection
+     * page's hero uses. Absent on servers before silo-server#4415, on a
+     * collection without one, and always on a personal collection.
+     */
+    @SerialName("backdrop_url") val backdropUrl: String? = null,
+    @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
+    /** The titles the viewer sees in the collection. */
+    @SerialName("item_count") val itemCount: Int = 0,
+    /** Server collections: a library the viewer can open that holds it. */
+    @SerialName("library_id") val libraryId: String? = null,
+    /** Personal collections: the profile that made it. */
+    @SerialName("creator_profile_id") val creatorProfileId: String? = null,
+) {
+    val isUserCollection: Boolean get() = source == SOURCE_USER
+
+    /** [libraryId] as this client's library id; null for a personal collection. */
+    val libraryIdInt: Int? get() = libraryId?.toIntOrNull()
+
+    /** Unique within a row: a server and a personal collection may share an id. */
+    val rowKey: String get() = "$source:$id"
+
+    /** Whether this client can open the card: a known source, and a library for a server collection. */
+    val isOpenable: Boolean
+        get() = id.isNotBlank() && when (source) {
+            SOURCE_LIBRARY -> libraryIdInt != null
+            SOURCE_USER -> true
+            else -> false
+        }
+
+    /** The card as a library collection, for the collection cards and routes that take one. */
+    fun toLibraryCollection(): LibraryCollection = LibraryCollection(
+        id = id,
+        name = title,
+        itemCount = itemCount,
+        posterUrl = posterUrl?.takeIf { it.isNotBlank() },
+        posterThumbhash = posterThumbhash?.takeIf { it.isNotBlank() },
+        kind = if (isUserCollection) "user_collections" else "regular",
+        creatorProfileId = creatorProfileId,
+    )
+
+    companion object {
+        const val SOURCE_LIBRARY = "library"
+        const val SOURCE_USER = "user"
+    }
 }
 
 @Serializable

@@ -78,8 +78,11 @@ interface UserItemStatePort {
      * [eventTimeMs] is when the sample was taken (default: now). Samples from one
      * playback run, identified by [runStartedAtMs], coalesce to the latest; each
      * run's last sample is sent, so a finished offline watch reaches the server
-     * even if a rewatch follows before reconnecting. Returns true only when the
-     * write was accepted.
+     * even if a rewatch follows before reconnecting. [reachedEndCredits] marks a
+     * sample at or past the file's end credits: the server receives the full
+     * [durationSeconds] for it, so it counts the title watched, while the local
+     * resume point stays at [positionSeconds]. Returns true only when the write
+     * was accepted.
      */
     suspend fun recordPosition(
         scope: PlaybackWriteScope,
@@ -89,6 +92,7 @@ interface UserItemStatePort {
         durationSeconds: Double?,
         eventTimeMs: Long? = null,
         runStartedAtMs: Long? = null,
+        reachedEndCredits: Boolean = false,
     ): Boolean = false
 
     /**

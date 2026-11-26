@@ -121,7 +121,7 @@ internal fun rememberTvStagedPreview(
 private fun tvDetailSubtitle(detail: ItemDetail): String? = when (detail.type) {
     "episode" -> listOfNotNull(
         detail.seriesTitle?.takeIf { it.isNotBlank() },
-        detail.seasonNumber?.let { season -> detail.episodeNumber?.let { watchPartyEpisodeCode(season, it) } },
+        detail.seasonNumber?.let { season -> detail.episodeNumber?.let { watchPartyEpisodeCode(season, it, detail.episodeLabels, detail.airDate) } },
     ).joinToString(" · ").ifBlank { null }
     else -> null
 }

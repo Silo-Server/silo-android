@@ -28,6 +28,10 @@ data class TvOnDeckItem(
     val seriesBackdropThumbhash: String? = null,
     val seasonNumber: Int? = null,
     val episodeNumber: Int? = null,
+    /** The series' `episode_labels`; "air_date" (sports) shows [airDate] in place of the numbers. */
+    val episodeLabels: String? = null,
+    /** The episode's air date, YYYY-MM-DD. */
+    val airDate: String? = null,
 )
 
 /**
@@ -66,6 +70,8 @@ internal fun List<ResolvedSection>.toTvOnDeckItems(contentId: String, seriesId: 
                 year = item.year.takeIf { it > 0 && (item.seasonNumber == null || item.episodeNumber == null) },
                 seasonNumber = item.seasonNumber.takeIf { item.episodeNumber != null },
                 episodeNumber = item.episodeNumber.takeIf { item.seasonNumber != null },
+                episodeLabels = item.episodeLabels,
+                airDate = item.airDate,
                 artUrl = item.backdropUrl,
                 artThumbhash = item.backdropThumbhash,
                 progressFraction = progress,

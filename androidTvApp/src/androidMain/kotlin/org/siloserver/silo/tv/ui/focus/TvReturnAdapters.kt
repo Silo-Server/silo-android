@@ -42,7 +42,7 @@ internal fun List<ResolvedSection>.toTvReturnSections(
         TvReturnSection(
             id = section.id,
             itemIds = if (exploreAll(section)) itemIds + TvExploreAllItemId else itemIds,
-            isComplete = section.items.isNotEmpty() || section.totalCount == 0,
+            isComplete = section.hasCards || section.totalCount == 0,
         )
     }
 
@@ -56,10 +56,15 @@ internal fun List<ResolvedSection>.toTvReturnSections(
  * by then held a different show. These are the row's own lazy-list keys
  * ([tvMediaRowSlotKeys]), which name the show while it has a single card, so
  * focus follows the show to its new position. A show with two cards keeps
- * episode ids, as do all other rows.
+ * episode ids, as do all other rows. A row of collections names each card by
+ * its [org.siloserver.silo.model.section.SectionCollectionCard.rowKey].
  */
 internal fun ResolvedSection.tvReturnItemIds(): List<String> =
-    tvMediaRowSlotKeys(items, keyEpisodesBySeries = isTvProgressRow())
+    if (isCollectionRow) {
+        collections.map { it.rowKey }
+    } else {
+        tvMediaRowSlotKeys(items, keyEpisodesBySeries = isTvProgressRow())
+    }
 
 /** The return identity of [item] in this row; see [tvReturnItemIds]. */
 internal fun ResolvedSection.tvReturnItemId(item: SectionItem): String =

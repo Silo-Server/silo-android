@@ -12,8 +12,8 @@ import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.StartParams
 import org.siloserver.silo.common.player.TrackSelectionPresets
 import org.siloserver.silo.common.player.VideoSessionStartV3
+import org.siloserver.silo.common.player.networkTier
 import org.siloserver.silo.common.player.qualityPair
-import org.siloserver.silo.common.player.usesCellularQuality
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlaybackStartResult
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
@@ -242,7 +242,7 @@ internal class MobileVideoPlaybackStarter(
             // quality picked in the player or named by the route replaces only
             // the resolution.
             val qualityPair = playerSettingsStore.qualityPair(
-                cellular = networkEvidenceProvider.snapshot().usesCellularQuality,
+                tier = networkEvidenceProvider.snapshot().networkTier,
             )
             // Never "original" for video: older servers read it as never convert.
             val preferredQuality = videoQualityPreference(
@@ -414,6 +414,7 @@ internal class MobileVideoPlaybackStarter(
                     expectedMetadataOwner = expectedMetadataOwner,
                     allowAlternateVersions = allowAlternateVersions,
                     allowsLocalRoute = allowsLocalRoute,
+                    pausedTimeout = true,
                 )
             ) {
                 is ApiResult.Success -> r.data

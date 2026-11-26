@@ -169,7 +169,7 @@ class TvHomeSectionPreferences(
         ): List<ResolvedSection> {
             val rank = layout.orderedSectionIds.withIndex().associate { it.value to it.index }
             val arranged = sections
-                .filter { it.items.isNotEmpty() }
+                .filter { it.hasCards }
                 .withIndex()
                 .sortedWith { left, right ->
                     val leftRank = rank[left.value.id]

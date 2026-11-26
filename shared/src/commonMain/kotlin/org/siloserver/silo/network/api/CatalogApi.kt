@@ -110,6 +110,9 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
     suspend fun getItemBoxSet(id: String, libraryId: Int? = null, widths: ArtworkWidths? = null): ApiResult<CatalogBoxSetDetail?> =
         v2.itemBoxSet(id, libraryId, widths)
 
+    suspend fun getItemCollections(id: String, libraryId: Int? = null, widths: ArtworkWidths? = null): ApiResult<ItemCollections> =
+        v2.itemCollections(id, libraryId, widths)
+
     suspend fun searchBoxSets(query: String, limit: Int = 5): ApiResult<List<CatalogBoxSet>> = v2.searchBoxSets(query, limit)
 
     suspend fun searchPeople(query: String? = null, mediaScope: String? = null): ApiResult<List<Person>> =
