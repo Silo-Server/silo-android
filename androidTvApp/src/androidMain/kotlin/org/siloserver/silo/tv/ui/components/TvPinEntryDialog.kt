@@ -43,6 +43,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,6 +68,21 @@ import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 
 private const val PIN_LENGTH = 4
 private val PinKeySize = 50.dp
+
+/** The digit a remote's number key types (0–9 or the numeric keypad's 0–9), or null. */
+private fun pinDigitFor(key: Key): Char? = when (key) {
+    Key.Zero, Key.NumPad0 -> '0'
+    Key.One, Key.NumPad1 -> '1'
+    Key.Two, Key.NumPad2 -> '2'
+    Key.Three, Key.NumPad3 -> '3'
+    Key.Four, Key.NumPad4 -> '4'
+    Key.Five, Key.NumPad5 -> '5'
+    Key.Six, Key.NumPad6 -> '6'
+    Key.Seven, Key.NumPad7 -> '7'
+    Key.Eight, Key.NumPad8 -> '8'
+    Key.Nine, Key.NumPad9 -> '9'
+    else -> null
+}
 
 /**
  * Full-screen, remote-first PIN prompt over the brand light: the person's
@@ -88,6 +108,14 @@ fun TvPinEntryDialog(
             pin = ""
         }
     }
+    val enterDigit: (Char) -> Unit = { digit ->
+        if (pin.length < PIN_LENGTH && !isVerifying) {
+            val next = pin + digit
+            pin = next
+            if (next.length == PIN_LENGTH) onPinEntered(next)
+        }
+    }
+    val eraseDigit: () -> Unit = { if (pin.isNotEmpty() && !isVerifying) pin = pin.dropLast(1) }
 
     Popup(
         alignment = Alignment.Center,
@@ -112,7 +140,25 @@ fun TvPinEntryDialog(
                     // (issue #64's fix, now shared). Exits as soon as ANYTHING
                     // in the dialog holds focus, so a user who reaches Cancel
                     // before the first grab lands is never yanked back.
-                    .then(rememberTvDialogInitialFocus(fiveFocusRequester)),
+                    .then(rememberTvDialogInitialFocus(fiveFocusRequester))
+                    // A remote's number keys type the PIN wherever focus is, and
+                    // Delete erases a digit, like the on-screen keys. A held
+                    // number key types once.
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        val digit = pinDigitFor(event.key)
+                        when {
+                            digit != null -> {
+                                if (event.nativeKeyEvent.repeatCount == 0) enterDigit(digit)
+                                true
+                            }
+                            event.key == Key.Backspace || event.key == Key.Delete -> {
+                                eraseDigit()
+                                true
+                            }
+                            else -> false
+                        }
+                    },
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 MarqueeProfileAvatar(profile, size = 80.dp, baseSize = 110.dp, showsBadges = false)
@@ -138,14 +184,8 @@ fun TvPinEntryDialog(
                 PinKeypad(
                     fiveFocusRequester = fiveFocusRequester,
                     enabled = !isVerifying,
-                    onDigitPressed = { digit ->
-                        if (pin.length < PIN_LENGTH && !isVerifying) {
-                            val next = pin + digit
-                            pin = next
-                            if (next.length == PIN_LENGTH) onPinEntered(next)
-                        }
-                    },
-                    onBackspacePressed = { if (pin.isNotEmpty() && !isVerifying) pin = pin.dropLast(1) },
+                    onDigitPressed = enterDigit,
+                    onBackspacePressed = eraseDigit,
                 )
                 // Not disabled while the PIN is checked: on TV a disabled
                 // control loses focus. The view model drops a late answer.
