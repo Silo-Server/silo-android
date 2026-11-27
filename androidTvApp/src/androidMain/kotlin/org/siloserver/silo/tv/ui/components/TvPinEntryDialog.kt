@@ -115,7 +115,11 @@ fun TvPinEntryDialog(
             if (next.length == PIN_LENGTH) onPinEntered(next)
         }
     }
-    val eraseDigit: () -> Unit = { if (pin.isNotEmpty() && !isVerifying) pin = pin.dropLast(1) }
+    // A full PIN has already been submitted: erasing it could leave a partial
+    // PIN behind that the wrong-PIN reset above does not clear.
+    val eraseDigit: () -> Unit = {
+        if (pin.isNotEmpty() && pin.length < PIN_LENGTH && !isVerifying) pin = pin.dropLast(1)
+    }
 
     Popup(
         alignment = Alignment.Center,
